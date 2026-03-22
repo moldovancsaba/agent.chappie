@@ -23,6 +23,7 @@ OpenClaw is installed and running locally. Its current config already contains a
 ## Workspace layout
 
 - `src/agent_chappie/` core implementation
+- `apps/consultant-followup-web/` thin public test app layer
 - `tests/` unit tests
 - `config/` config examples
 - `scripts/` helper scripts
@@ -51,6 +52,15 @@ python scripts/run_workflow.py \
   --task "Fetch https://example.com and summarise it" \
   --url "https://example.com" \
   --dry-run
+```
+
+Run the thin public test app:
+
+```bash
+cd apps/consultant-followup-web
+cp .env.example .env.local
+npm install
+npm run dev
 ```
 
 Run against a live Ollama instance:
@@ -90,3 +100,5 @@ Implemented in:
 ## Notes on local verification
 
 This coding environment cannot open loopback network connections to `127.0.0.1`, so live Ollama/OpenClaw calls are blocked inside the sandbox even though the host has those services installed. The code includes a dry-run model stub and mocked tests so the project is still verifiable here.
+
+The public test app intentionally defers auth in Phase 4 and uses demo-safe anonymous identifiers until a later auth phase is introduced.

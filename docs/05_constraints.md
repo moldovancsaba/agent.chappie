@@ -24,6 +24,7 @@
 - no app-specific orchestration inside the core layer
 - no second domain during the MVP-contract pass
 - no second user type during the MVP-contract pass
+- no auth implementation is required during the first public test app pass
 
 ## Layering constraints
 
@@ -34,6 +35,7 @@
 - scheduler foundation work remains docs, contracts, and examples only until explicitly promoted to implementation
 - MVP-contract work remains scope, examples, and contracts only until explicitly promoted to app implementation
 - contract-formalization work remains schema, validation, and documentation only until explicitly promoted to implementation
+- the public test app may use anonymous demo identifiers, but it must not pretend to be a secure multi-user product
 
 ## Execution discipline
 

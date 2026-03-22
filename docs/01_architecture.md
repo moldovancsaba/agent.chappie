@@ -258,3 +258,17 @@ Implementation status:
 - scheduler implementation deferred
 - app implementation deferred
 - core remains app-agnostic
+
+## Phase 4 public test app
+
+The first implementation-bearing app phase is intentionally public and unauthenticated.
+
+App-layer rules for Phase 4:
+
+- no login
+- no OIDC or OAuth wiring
+- no JWT verification path
+- use anonymous demo identifiers instead of real user accounts
+- use demo-safe content only
+
+This keeps the app thin while preserving the accepted core, scheduler, and contract boundaries.

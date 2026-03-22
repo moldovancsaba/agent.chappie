@@ -183,12 +183,33 @@ Acceptance criteria:
 - app submits jobs through accepted contracts
 - app receives results and captures feedback
 - no orchestration or model logic is embedded in the app
+- auth is explicitly deferred for the public test release
+- anonymous demo identifiers are used instead of authenticated ownership
 
 Proof requirements:
 
 - app boundary implementation
 - contract integration evidence
 - feedback capture evidence
+
+## Phase 4.5 - Auth integration
+
+Status:
+
+- planned, not implemented
+
+Acceptance criteria:
+
+- external SSO/OIDC is integrated
+- authenticated ownership is added above the app boundary
+- protected feedback attribution exists
+- access control is enforced without changing the core contracts
+
+Proof requirements:
+
+- auth integration docs
+- verified callback/logout flow
+- protected project access evidence
 
 ## Phase 5 - execution observability enhancements
 
