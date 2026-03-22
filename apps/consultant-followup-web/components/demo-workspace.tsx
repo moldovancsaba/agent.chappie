@@ -2,11 +2,11 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-import { feedbackSchema, type JobRequest, type JobResult } from "@/lib/contracts";
+import { feedbackSchema, type JobRequest, type JobResult, type RecommendedTask } from "@/lib/contracts";
 import { generateId } from "@/lib/ids";
 
-const SAMPLE_SUMMARY = `ACME is reviewing a milestone plan that slipped after a vendor dependency changed. The consultant needs a short, prioritized follow-up list after the review meeting.`;
-const SAMPLE_NOTES = `The client reviewed the current milestone plan and called out a likely delay caused by a vendor dependency. The consultant agreed to send a recap, revise the milestone plan, and clarify ownership for three open actions before the next checkpoint.`;
+const SAMPLE_SUMMARY = `We run a soccer academy for talented boys and need practical decisions from regional competitor signals, not generic advice.`;
+const SAMPLE_NOTES = `Saw a competitor update their homepage and LinkedIn messaging this week. They now emphasize “Go live in 7 days”, “No engineering required”, and multiple customer logos and testimonials above the fold. Our current positioning talks about flexibility and customization, but not speed. Sales calls now include questions about onboarding time and complexity.`;
 
 type FeedbackDraft = {
   done: string[];
@@ -16,7 +16,7 @@ type FeedbackDraft = {
 
 function isCompleteResultWithTasks(
   result: JobResult | null
-): result is JobResult & { result_payload: { recommended_tasks: string[]; summary: string } } {
+): result is JobResult & { result_payload: { recommended_tasks: RecommendedTask[]; summary: string } } {
   return Boolean(
     result &&
       result.status === "complete" &&
@@ -40,11 +40,24 @@ function readOrCreateSessionId() {
   return created;
 }
 
+function tasksToLines(tasks: RecommendedTask[]) {
+  return tasks.map((task) => task.title);
+}
+
+function updateDraftBucket(text: string) {
+  return text
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export function DemoWorkspace() {
   const [sessionId, setSessionId] = useState("anonymous-loading");
   const [projectId, setProjectId] = useState("");
   const [projectSummary, setProjectSummary] = useState(SAMPLE_SUMMARY);
   const [contextNotes, setContextNotes] = useState(SAMPLE_NOTES);
+  const [competitor, setCompetitor] = useState("FlowOps");
+  const [region, setRegion] = useState("region_unknown");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [submissionError, setSubmissionError] = useState("");
@@ -63,7 +76,7 @@ export function DemoWorkspace() {
     }
     setFeedbackDraft({
       done: [],
-      edited: [...jobResult.result_payload.recommended_tasks],
+      edited: tasksToLines(jobResult.result_payload.recommended_tasks),
       declined: [],
     });
     setFeedbackStatus("");
@@ -76,7 +89,7 @@ export function DemoWorkspace() {
     setFeedbackStatus("");
 
     try {
-      const response = await fetch("/api/demo/jobs", {
+      const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -85,11 +98,13 @@ export function DemoWorkspace() {
           projectSummary,
           contextNotes,
           contextType: "meeting_notes",
+          competitor: competitor || undefined,
+          region: region || undefined,
         }),
       });
       const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.detail ?? "The demo job submission failed.");
+        throw new Error(body.detail ?? "The job submission failed.");
       }
 
       setProjectId(body.project_id);
@@ -131,7 +146,7 @@ export function DemoWorkspace() {
         linked_result_status: jobResult.status,
       });
 
-      const response = await fetch("/api/demo/feedback", {
+      const response = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(feedback),
@@ -140,8 +155,7 @@ export function DemoWorkspace() {
       if (!response.ok) {
         throw new Error(body.detail ?? "The feedback payload could not be saved.");
       }
-
-      setFeedbackStatus(`Feedback saved as ${body.feedback_id}.`);
+      setFeedbackStatus(JSON.stringify(body, null, 2));
     } catch (error) {
       setFeedbackStatus(error instanceof Error ? error.message : "Unknown feedback error.");
     } finally {
@@ -150,21 +164,17 @@ export function DemoWorkspace() {
   }
 
   function updateDraft(bucket: keyof FeedbackDraft, value: string) {
-    const lines = value
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    setFeedbackDraft((current) => ({ ...current, [bucket]: lines }));
+    setFeedbackDraft((current) => ({
+      ...current,
+      [bucket]: updateDraftBucket(value),
+    }));
   }
 
   return (
-    <section className="workspace">
+    <section className="workspace-shell">
       <form className="panel section-card" onSubmit={handleSubmit}>
-        <h2>Submit one public demo job</h2>
-        <p className="lead">
-          This page uses anonymous demo identifiers only. It validates the contract shape, stores the payload through a
-          demo-safe boundary, and returns a contract-shaped result without adding auth or scheduler code.
-        </p>
+        <h2>Competitive action input</h2>
+        <p className="lead">Paste one messy source package. The private worker learns from hidden observations and returns only the top external actions.</p>
 
         <div className="field">
           <label htmlFor="project-summary">Project summary</label>
@@ -172,27 +182,34 @@ export function DemoWorkspace() {
             id="project-summary"
             value={projectSummary}
             onChange={(event) => setProjectSummary(event.target.value)}
-            placeholder="Describe the client project in one short paragraph."
+            placeholder="Describe the academy, the client, or the project pressure in one short paragraph."
           />
         </div>
 
         <div className="field">
-          <label htmlFor="context-notes">Meeting notes or context</label>
+          <label htmlFor="context-notes">Competitive context</label>
           <textarea
             id="context-notes"
             value={contextNotes}
             onChange={(event) => setContextNotes(event.target.value)}
-            placeholder="Paste demo-safe client context here."
+            placeholder="Paste messy notes, competitor messaging, URL summary, or raw market context here."
           />
-          <span className="hint">
-            Use only demo-safe material here. This public test version intentionally has no login, no access control,
-            and no trusted user ownership.
-          </span>
+          <span className="hint">The worker stores internal observations, but the UI only shows the final 3 recommended actions.</span>
+        </div>
+
+        <div className="field">
+          <label htmlFor="competitor">Competitor (optional)</label>
+          <input id="competitor" value={competitor} onChange={(event) => setCompetitor(event.target.value)} />
+        </div>
+
+        <div className="field">
+          <label htmlFor="region">Region (optional)</label>
+          <input id="region" value={region} onChange={(event) => setRegion(event.target.value)} />
         </div>
 
         <div className="button-row">
           <button className="button-primary" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Submitting job..." : "Submit follow-up recommendation job"}
+            {isSubmitting ? "Submitting job..." : "Submit competitive action job"}
           </button>
           <button
             className="button-secondary"
@@ -200,6 +217,8 @@ export function DemoWorkspace() {
             onClick={() => {
               setProjectSummary(SAMPLE_SUMMARY);
               setContextNotes(SAMPLE_NOTES);
+              setCompetitor("FlowOps");
+              setRegion("region_unknown");
             }}
           >
             Load sample dataset
@@ -216,11 +235,11 @@ export function DemoWorkspace() {
       <div className="stack">
         <div className="panel section-card">
           <h2>Result path</h2>
-          <p className="lead">The app submits a Job Request, retrieves a Job Result, and then lets the public tester submit Feedback.</p>
+          <p className="lead">The app submits one Job Request and only exposes the final decision-support output, not the hidden observation layer.</p>
 
           <div className="status-grid">
-            <span className="status-pill">Auth deferred · demo only</span>
-            <span className="status-pill">Scheduler state handled as UI metadata</span>
+            <span className="status-pill">Auth deferred · public test MVP</span>
+            <span className="status-pill">Observation layer hidden from UI</span>
           </div>
 
           {submissionError ? (
@@ -237,6 +256,27 @@ export function DemoWorkspace() {
             </div>
           ) : null}
 
+          {isCompleteResultWithTasks(jobResult) ? (
+            <div className="data-card">
+              <h3>Recommended tasks</h3>
+              <div className="task-list">
+                {jobResult.result_payload.recommended_tasks.map((task) => (
+                  <div className="task-card" key={task.rank}>
+                    <strong>
+                      {task.rank}. {task.title}
+                    </strong>
+                    <p>{task.why_now}</p>
+                    <p>
+                      <em>{task.expected_advantage}</em>
+                    </p>
+                    <pre>{JSON.stringify({ evidence_refs: task.evidence_refs }, null, 2)}</pre>
+                  </div>
+                ))}
+              </div>
+              <pre>{jobResult.result_payload.summary}</pre>
+            </div>
+          ) : null}
+
           {jobResult ? (
             <div className="data-card">
               <h3>Job Result v1</h3>
@@ -247,7 +287,7 @@ export function DemoWorkspace() {
 
         <div className="panel section-card">
           <h2>Feedback path</h2>
-          <p className="lead">Edit the returned tasks into demo feedback buckets, then save one contract-shaped Feedback payload.</p>
+          <p className="lead">Edit the 3 returned task titles into done, edited, or declined buckets and submit one feedback object.</p>
 
           {isCompleteResultWithTasks(jobResult) ? (
             <>
@@ -282,7 +322,7 @@ export function DemoWorkspace() {
           ) : (
             <div className="data-card">
               <h3>Waiting for a result</h3>
-              <pre>Submit a demo job to populate the feedback flow.</pre>
+              <pre>Submit a job to populate the feedback flow.</pre>
             </div>
           )}
         </div>

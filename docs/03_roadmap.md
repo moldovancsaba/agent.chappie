@@ -175,7 +175,7 @@ Proof requirements:
 
 Status:
 
-- planned, not implemented
+- implemented and accepted as a thin public test app
 
 Acceptance criteria:
 
@@ -211,7 +211,30 @@ Proof requirements:
 - verified callback/logout flow
 - protected project access evidence
 
-## Phase 5 - execution observability enhancements
+## Phase 5 - Private worker bridge and continuous observation model
+
+Status:
+
+- partially accepted
+
+Acceptance criteria:
+
+- the demo bridge is replaced by a real private worker bridge path
+- hidden `SystemObservation v1` signals are extracted and stored
+- system observations are deduplicated and persisted in a local Mac mini database
+- worker-side knowledge state is refreshed continuously
+- visible task output remains bounded to ranked user-facing actions
+- evidence refs in visible tasks map back to stored observations
+
+Proof requirements:
+
+- worker bridge code
+- app API bridge code
+- local observation-store schema
+- local bridge verification output
+- updated architecture and app runbooks
+
+## Phase 6 - execution observability enhancements
 
 Status:
 
@@ -227,7 +250,7 @@ Proof requirements:
 - observability design or implementation evidence
 - example operator workflows
 
-## Phase 6 - task engine
+## Phase 7 - task engine
 
 Status:
 
@@ -243,7 +266,7 @@ Proof requirements:
 - task state model
 - example task transitions
 
-## Phase 7 - skills
+## Phase 8 - skills
 
 Status:
 

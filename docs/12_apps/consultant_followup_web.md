@@ -7,7 +7,7 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 ## What the app does
 
 - accepts one demo-safe client project summary
-- accepts one meeting-notes style context input
+- accepts one raw competitive context input
 - submits one `Job Request v1`
 - retrieves one `Job Result v1`
 - submits one `Feedback v1`
@@ -19,6 +19,7 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 - no direct model calls
 - no scheduler logic
 - no public exposure of the Mac mini core
+- no direct UI for internal observations
 
 ## Identity model for the public test
 
@@ -43,11 +44,26 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 
 ## Worker boundary
 
-Phase 4 uses a demo bridge mode in the app layer so the public test can run without exposing the private Mac mini worker. This keeps the app runnable while preserving the long-term boundary:
+Phase 5 upgrades the app to support the first real private worker bridge while keeping the worker private:
 
 `Vercel app -> durable data layer -> private worker on the Mac mini`
 
-The demo bridge is intentionally a temporary implementation convenience, not a replacement for the core runtime.
+The app-side bridge entrypoint is:
+
+- `POST /api/jobs`
+
+The worker remains protected by a shared-secret header and returns only user-facing ranked tasks.
+
+Shared state can still live in Neon for the app layer, but internal intelligence state remains local to the Mac mini worker.
+
+## Observation model
+
+The app now depends on a two-layer intelligence model:
+
+- hidden `SystemObservation v1` signals persisted on the worker side
+- visible ranked `recommended_tasks` returned to the app
+
+The app must not expose the internal observation layer directly.
 
 ## Local development
 

@@ -6,6 +6,18 @@ export const resultStatusSchema = z.enum(["complete", "failed", "blocked"]);
 export const contextTypeSchema = z.enum(["meeting_notes", "call_summary", "working_document"]);
 export const artifactTypeSchema = z.enum(["upload"]);
 export const decisionRouteSchema = z.enum(["proceed", "revise", "stop"]);
+export const businessImpactSchema = z.enum(["low", "medium", "high"]);
+export const signalTypeSchema = z.enum([
+  "pricing_change",
+  "opening",
+  "closure",
+  "staffing",
+  "offer",
+  "asset_sale",
+  "messaging_shift",
+  "proof_signal",
+  "vendor_adoption",
+]);
 
 export const jobRequestArtifactSchema = z.object({
   type: artifactTypeSchema,
@@ -39,8 +51,49 @@ export const decisionSummarySchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
+export const systemObservationSchema = z.object({
+  signal_id: z.string().min(1),
+  signal_type: signalTypeSchema,
+  competitor: z.string().min(1),
+  region: z.string().min(1),
+  summary: z.string().min(1),
+  source_ref: z.string().min(1),
+  observed_at: z.string().datetime({ offset: true }),
+  confidence: z.number().min(0).max(1),
+  business_impact: businessImpactSchema,
+});
+
+export const recommendedTaskSchema = z.object({
+  rank: z.number().int().min(1).max(3),
+  title: z.string().min(1),
+  why_now: z.string().min(1),
+  expected_advantage: z.string().min(1),
+  evidence_refs: z.array(z.string().min(1)).min(1),
+});
+
 export const jobResultCompletePayloadSchema = z.object({
-  recommended_tasks: z.array(z.string()).min(1),
+  recommended_tasks: z
+    .array(recommendedTaskSchema)
+    .min(1)
+    .max(3)
+    .superRefine((tasks, ctx) => {
+      const ranks = tasks.map((task) => task.rank);
+      if (new Set(ranks).size !== ranks.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "recommended_tasks ranks must be unique",
+        });
+      }
+      for (const expected of ranks.map((_, index) => index + 1)) {
+        if (!ranks.includes(expected)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "recommended_tasks ranks must be sequential starting at 1",
+          });
+          break;
+        }
+      }
+    }),
   summary: z.string().min(1),
 });
 
@@ -87,8 +140,12 @@ export const demoJobSubmissionSchema = z.object({
   contextType: contextTypeSchema,
   sessionId: z.string().min(1),
   projectId: z.string().min(1).optional(),
+  competitor: z.string().min(1).optional(),
+  region: z.string().min(1).optional(),
 });
 
 export type JobRequest = z.infer<typeof jobRequestSchema>;
 export type JobResult = z.infer<typeof jobResultSchema>;
 export type Feedback = z.infer<typeof feedbackSchema>;
+export type SystemObservation = z.infer<typeof systemObservationSchema>;
+export type RecommendedTask = z.infer<typeof recommendedTaskSchema>;

@@ -14,4 +14,7 @@ traces/
 .env.*.local
 private/
 .neon
+.venv/
 apps/consultant-followup-web/.vercel/
+.vercel
+.env*.local

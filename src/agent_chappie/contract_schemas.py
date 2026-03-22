@@ -8,6 +8,18 @@ FEEDBACK_TYPE = {"task_response"}
 CONTEXT_TYPE = {"meeting_notes", "call_summary", "working_document"}
 ARTIFACT_TYPE = {"upload"}
 DECISION_ROUTE = {"proceed", "revise", "stop"}
+BUSINESS_IMPACT = {"low", "medium", "high"}
+SIGNAL_TYPE = {
+    "pricing_change",
+    "opening",
+    "closure",
+    "staffing",
+    "offer",
+    "asset_sale",
+    "messaging_shift",
+    "proof_signal",
+    "vendor_adoption",
+}
 
 
 JOB_REQUEST_SCHEMA = {
@@ -32,6 +44,28 @@ JOB_REQUEST_INPUT_PAYLOAD_SCHEMA = {
 JOB_REQUEST_ARTIFACT_SCHEMA = {
     "type": ARTIFACT_TYPE,
     "ref": str,
+}
+
+
+SYSTEM_OBSERVATION_SCHEMA = {
+    "signal_id": str,
+    "signal_type": SIGNAL_TYPE,
+    "competitor": str,
+    "region": str,
+    "summary": str,
+    "source_ref": str,
+    "observed_at": str,
+    "confidence": (int, float),
+    "business_impact": BUSINESS_IMPACT,
+}
+
+
+TASK_SCHEMA = {
+    "rank": int,
+    "title": str,
+    "why_now": str,
+    "expected_advantage": str,
+    "evidence_refs": list,
 }
 
 

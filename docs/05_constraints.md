@@ -25,6 +25,10 @@
 - no second domain during the MVP-contract pass
 - no second user type during the MVP-contract pass
 - no auth implementation is required during the first public test app pass
+- no observation dashboard or analytics UI during the private-worker bridge pass
+- no leakage of internal system observations into the user-facing UI
+- no autonomous self-modifying behavior during the continuous-observation pass
+- no authoritative internal intelligence storage in Neon
 
 ## Layering constraints
 
@@ -36,6 +40,8 @@
 - MVP-contract work remains scope, examples, and contracts only until explicitly promoted to app implementation
 - contract-formalization work remains schema, validation, and documentation only until explicitly promoted to implementation
 - the public test app may use anonymous demo identifiers, but it must not pretend to be a secure multi-user product
+- the private worker bridge may add hidden observation memory, but user-visible output must stay bounded to ranked actions
+- the Mac mini local database is the authoritative store for internal intelligence state
 
 ## Execution discipline
 

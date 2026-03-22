@@ -7,23 +7,23 @@ export default function HomePage() {
       <section className="hero">
         <div className="panel hero-copy">
           <div className="eyebrow">Public test MVP · no login</div>
-          <h1>Client follow-up, without platform drag.</h1>
+          <h1>Competitive action engine, without app-layer sprawl.</h1>
           <p>
-            This first app layer is intentionally narrow: paste a client project summary, drop in meeting notes, and
-            send one contract-shaped job through the demo boundary. The core remains private. The app stays thin.
+            This app stays intentionally narrow: submit one messy competitive context package, let the private worker
+            accumulate internal observations, and expose only the top three ranked actions back to the user.
           </p>
           <div className="hero-points">
             <div className="hero-point">
               <strong>What this proves</strong>
-              <span>We can exercise the accepted Job Request, Job Result, and Feedback contracts without leaking UI logic into the core.</span>
+              <span>We can exercise the accepted Job Request, Job Result, and Feedback contracts without leaking observation logic into the UI.</span>
             </div>
             <div className="hero-point">
               <strong>What is intentionally missing</strong>
-              <span>No auth, no scheduler implementation, no model calls in the app, and no attempt to expose the Mac mini worker publicly.</span>
+              <span>No auth, no scheduler implementation, no chat interface, and no attempt to expose internal system observations to the user.</span>
             </div>
             <div className="hero-point">
               <strong>What happens next</strong>
-              <span>After the public test loop is stable, auth and the real worker bridge can be added without breaking the contract layer.</span>
+              <span>The user loop stays simple while the private worker learns continuously from stored competitor signals in the background.</span>
             </div>
           </div>
         </div>

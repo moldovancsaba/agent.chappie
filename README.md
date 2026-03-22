@@ -63,6 +63,14 @@ npm install
 npm run dev
 ```
 
+Run the private worker bridge locally:
+
+```bash
+cp .env.example .env.local
+source .venv/bin/activate
+python scripts/worker_bridge.py
+```
+
 Run against a live Ollama instance:
 
 ```bash
@@ -102,3 +110,5 @@ Implemented in:
 This coding environment cannot open loopback network connections to `127.0.0.1`, so live Ollama/OpenClaw calls are blocked inside the sandbox even though the host has those services installed. The code includes a dry-run model stub and mocked tests so the project is still verifiable here.
 
 The public test app intentionally defers auth in Phase 4 and uses demo-safe anonymous identifiers until a later auth phase is introduced.
+
+Phase 5 adds a private worker bridge plus a continuous observation layer. The app remains thin, while the Mac mini worker ingests market signals, stores hidden system observations, and returns only ranked user-facing actions.

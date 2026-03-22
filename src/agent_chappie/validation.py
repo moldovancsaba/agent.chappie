@@ -14,6 +14,8 @@ from agent_chappie.contract_schemas import (
     JOB_RESULT_BLOCKED_PAYLOAD_SCHEMA,
     JOB_RESULT_COMPLETE_PAYLOAD_SCHEMA,
     JOB_RESULT_SCHEMA,
+    SYSTEM_OBSERVATION_SCHEMA,
+    TASK_SCHEMA,
 )
 from agent_chappie.schemas import (
     DECISION_COMPONENTS_SCHEMA,
@@ -111,7 +113,18 @@ def validate_job_request(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(artifact, dict):
             raise ValidationError(f"JobRequest input_payload artifact {index} must be an object")
         _validate_schema(artifact, JOB_REQUEST_ARTIFACT_SCHEMA, f"JobRequest input_payload artifact {index}")
-        _validate_non_empty_string("ref", artifact["ref"])
+    return data
+
+
+def validate_system_observation(data: dict[str, Any]) -> dict[str, Any]:
+    _validate_schema(data, SYSTEM_OBSERVATION_SCHEMA, "SystemObservation")
+    _validate_non_empty_string("signal_id", data["signal_id"])
+    _validate_non_empty_string("competitor", data["competitor"])
+    _validate_non_empty_string("region", data["region"])
+    _validate_non_empty_string("summary", data["summary"])
+    _validate_non_empty_string("source_ref", data["source_ref"])
+    _validate_iso8601_timestamp("observed_at", data["observed_at"])
+    _validate_confidence("confidence", data["confidence"])
     return data
 
 
@@ -121,13 +134,14 @@ def validate_job_result(data: dict[str, Any]) -> dict[str, Any]:
     _validate_non_empty_string("app_id", data["app_id"])
     _validate_non_empty_string("project_id", data["project_id"])
     _validate_iso8601_timestamp("completed_at", data["completed_at"])
+
     if not isinstance(data["result_payload"], dict):
         raise ValidationError("JobResult result_payload must be an object")
 
     status = data["status"]
     if status == "complete":
         _validate_schema(data["result_payload"], JOB_RESULT_COMPLETE_PAYLOAD_SCHEMA, "JobResult result_payload")
-        _validate_string_list("recommended_tasks", data["result_payload"]["recommended_tasks"])
+        _validate_recommended_tasks(data["result_payload"]["recommended_tasks"])
         _validate_non_empty_string("summary", data["result_payload"]["summary"])
         if "decision_summary" in data:
             if not isinstance(data["decision_summary"], dict):
@@ -162,6 +176,30 @@ def validate_feedback(data: dict[str, Any]) -> dict[str, Any]:
     _validate_string_list("edited", data["feedback_payload"]["edited"])
     _validate_string_list("declined", data["feedback_payload"]["declined"])
     return data
+
+
+def _validate_recommended_tasks(value: Any) -> None:
+    if not isinstance(value, list) or not value:
+        raise ValidationError("Field 'recommended_tasks' must be a non-empty list")
+    if len(value) > 3:
+        raise ValidationError("Field 'recommended_tasks' must not contain more than 3 tasks")
+    seen_ranks: set[int] = set()
+    for index, task in enumerate(value):
+        if not isinstance(task, dict):
+            raise ValidationError(f"recommended_tasks item {index} must be an object")
+        _validate_schema(task, TASK_SCHEMA, f"recommended_tasks item {index}")
+        rank = task["rank"]
+        if rank in seen_ranks:
+            raise ValidationError("recommended_tasks ranks must be unique")
+        seen_ranks.add(rank)
+        if rank != index + 1:
+            raise ValidationError("recommended_tasks ranks must be sequential starting at 1")
+        _validate_non_empty_string("title", task["title"])
+        _validate_non_empty_string("why_now", task["why_now"])
+        _validate_non_empty_string("expected_advantage", task["expected_advantage"])
+        _validate_string_list("evidence_refs", task["evidence_refs"])
+        if not task["evidence_refs"]:
+            raise ValidationError("recommended_tasks evidence_refs must not be empty")
 
 
 def _validate_schema(data: dict[str, Any], schema: dict[str, Any], artifact_name: str) -> None:

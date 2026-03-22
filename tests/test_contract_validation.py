@@ -15,6 +15,7 @@ from agent_chappie.validation import (
     validate_feedback,
     validate_job_request,
     validate_job_result,
+    validate_system_observation,
 )
 
 
@@ -47,17 +48,68 @@ class ContractValidationTests(unittest.TestCase):
             "completed_at": "2026-03-22T08:02:00+00:00",
             "result_payload": {
                 "recommended_tasks": [
-                    "Send recap email to the client",
-                    "Draft the revised milestone plan",
+                    {
+                        "rank": 1,
+                        "title": "Adjust pricing against the nearest academy",
+                        "why_now": "A competitor pricing signal was detected this week.",
+                        "expected_advantage": "Protects enrollment against price pressure.",
+                        "evidence_refs": ["sig_price_001"],
+                    },
+                    {
+                        "rank": 2,
+                        "title": "Check if the closing academy is available for acquisition",
+                        "why_now": "A closure signal suggests a near-term growth opportunity.",
+                        "expected_advantage": "Creates a faster route to player and asset growth.",
+                        "evidence_refs": ["sig_close_001"],
+                    },
                 ],
-                "summary": "The uploaded meeting notes indicate several unresolved client follow-up tasks.",
+                "summary": "Two competitive actions were prioritized from stored market signals.",
             },
             "decision_summary": {"route": "proceed", "confidence": 0.86},
             "trace_run_id": "20260322T080200Z_mvp00001",
-            "trace_refs": ["01_request.json", "05_outcome.json"],
+            "trace_refs": ["sig_price_001", "sig_close_001"],
         }
         validated = validate_job_result(payload)
         self.assertEqual(validated["status"], "complete")
+
+    def test_system_observation_accepts_valid_signal(self) -> None:
+        payload = {
+            "signal_id": "sig_001",
+            "signal_type": "pricing_change",
+            "competitor": "FlowOps",
+            "region": "north_cluster",
+            "summary": "pricing change: FlowOps introduced a spring voucher",
+            "source_ref": "source_001",
+            "observed_at": "2026-03-22T08:02:00+00:00",
+            "confidence": 0.84,
+            "business_impact": "high",
+        }
+        validated = validate_system_observation(payload)
+        self.assertEqual(validated["signal_type"], "pricing_change")
+
+    def test_job_result_rejects_non_sequential_ranks(self) -> None:
+        payload = {
+            "job_id": "job_bad_0001",
+            "app_id": "app_consultant_followup",
+            "project_id": "client_acme_q2",
+            "status": "complete",
+            "completed_at": "2026-03-22T08:02:00+00:00",
+            "result_payload": {
+                "recommended_tasks": [
+                    {
+                        "rank": 2,
+                        "title": "Late-ranked task",
+                        "why_now": "A signal exists.",
+                        "expected_advantage": "Still invalid because the ordering is wrong.",
+                        "evidence_refs": ["sig_bad_001"],
+                    }
+                ],
+                "summary": "Bad ordering",
+            },
+        }
+        with self.assertRaises(ValidationError) as context:
+            validate_job_result(payload)
+        self.assertIn("sequential", str(context.exception))
 
     def test_feedback_accepts_done_vocabulary(self) -> None:
         payload = {

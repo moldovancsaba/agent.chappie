@@ -236,6 +236,12 @@ These schema definitions standardize:
 - MVP payload shapes
 - validation failure behavior
 
+Phase 5 extends the formal schema layer with:
+
+- `SystemObservation v1`
+- strict ranked-task result validation
+- evidence linkage from visible tasks back to hidden observation identifiers
+
 ## Scheduler design references
 
 - `docs/10_scheduler/foundation_v1.md`
@@ -258,6 +264,64 @@ Implementation status:
 - scheduler implementation deferred
 - app implementation deferred
 - core remains app-agnostic
+
+## Phase 5 private worker bridge
+
+Phase 5 introduces the first real private worker bridge:
+
+`Vercel app -> app API -> private Mac mini worker -> Neon-backed observations -> Job Result`
+
+### Hidden System Observation layer
+
+Purpose:
+
+- continuously ingest raw market or competitor context
+- normalize signals into `SystemObservation v1`
+- deduplicate recent overlapping signals
+- persist signals in Neon
+- update lightweight project knowledge state on the worker
+
+This layer is internal only. It must not be rendered directly in the app UI.
+
+Authoritative storage:
+
+- local SQLite database on the Mac mini worker
+
+May be mirrored or summarized elsewhere only if explicitly treated as non-authoritative.
+
+### Visible user-facing task layer
+
+Purpose:
+
+- convert the strongest stored signals into user-facing actions
+- return exactly 3 ranked tasks when enough strong evidence exists
+- keep recommendations action-oriented instead of research-oriented
+
+Each visible task includes:
+
+- `rank`
+- `title`
+- `why_now`
+- `expected_advantage`
+- `evidence_refs`
+
+### Worker bridge boundary
+
+Current worker interface:
+
+- `POST /jobs`
+- `GET /health`
+
+Current protection:
+
+- shared-secret header via `x-agent-shared-secret`
+
+Current behavior:
+
+- app submits a `Job Request v1`
+- worker enriches the request with observations stored in the local Mac mini database
+- worker returns a validated `Job Result v1`
+- observation details remain internal and are not exposed directly to the app
 
 ## Phase 4 public test app
 

@@ -38,21 +38,59 @@ Defines the platform-to-app result envelope returned after a job completes or fa
   "completed_at": "2026-03-22T07:02:00+00:00",
   "result_payload": {
     "recommended_tasks": [
-      "Review source upload",
-      "Draft next action list"
-    ]
+      {
+        "rank": 1,
+        "title": "Adjust academy pricing and offer positioning against FlowOps",
+        "why_now": "Pricing movement was detected for FlowOps and is likely to affect parent comparison shopping.",
+        "expected_advantage": "Protects enrollment and reduces switching risk caused by competitor price pressure.",
+        "evidence_refs": [
+          "sig_0775a2c2f78d"
+        ]
+      },
+      {
+        "rank": 2,
+        "title": "Investigate whether FlowOps is available for acquisition or player transfer capture",
+        "why_now": "Closure or distress signals were detected for FlowOps.",
+        "expected_advantage": "Creates a faster path to growth through acquisition, player capture, or facility access.",
+        "evidence_refs": [
+          "sig_fdd325070fac"
+        ]
+      },
+      {
+        "rank": 3,
+        "title": "Check for discounted equipment or infrastructure purchase opportunities",
+        "why_now": "An asset-sale signal was detected in the current region.",
+        "expected_advantage": "Improves margin and frees budget for coaching quality or promotion.",
+        "evidence_refs": [
+          "sig_08cfdd451f33"
+        ]
+      }
+    ],
+    "summary": "Three competitive actions were prioritized from current source input and stored market observations."
   },
   "decision_summary": {
     "route": "proceed",
-    "confidence": 0.85
+    "confidence": 0.82
   },
-  "trace_run_id": "20260322T070200Z_abc12345",
+  "trace_run_id": "worker-job_0001",
   "trace_refs": [
-    "01_request.json",
-    "05_outcome.json"
+    "sig_0775a2c2f78d",
+    "sig_fdd325070fac",
+    "sig_08cfdd451f33"
   ]
 }
 ```
+
+## Ranked task rules
+
+For the current MVP capability:
+
+- return exactly 3 tasks when strong evidence exists
+- rank values must be `1`, `2`, `3`
+- `evidence_refs` must map to stored signal identifiers or source refs
+- user-visible output must not expose the full internal observation list
+
+If strong evidence is insufficient, the result may return a blocked or no-strong-action response instead of hallucinated tasks.
 
 ## Allowed statuses
 
