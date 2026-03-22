@@ -11,6 +11,22 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 - submits one `Job Request v1`
 - retrieves one `Job Result v1`
 - submits one `Feedback v1`
+- presents the product as a single decision surface, not a dashboard
+
+## Surface structure
+
+The app now uses three sections only:
+
+- `Your Checklist` as the default view with exactly 3 ranked task cards
+- `Know More` as compressed read-only intelligence behind the checklist
+- `Sources & Jobs` as the operator-side ingestion and recurring-job surface
+
+The main checklist view must:
+
+- show cards, not tables
+- show exactly 3 visible task cards
+- expose decision actions as `Done`, `Adjust`, and `Reject`
+- include a confidence indicator for the current ranked output
 
 ## What the app does not do
 

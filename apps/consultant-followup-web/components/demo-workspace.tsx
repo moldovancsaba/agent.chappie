@@ -5,18 +5,23 @@ import { FormEvent, useEffect, useState } from "react";
 import { feedbackSchema, type JobRequest, type JobResult, type RecommendedTask } from "@/lib/contracts";
 import { generateId } from "@/lib/ids";
 
-const SAMPLE_SUMMARY = `We run a soccer academy for talented boys and need practical decisions from regional competitor signals, not generic advice.`;
-const SAMPLE_NOTES = `Saw a competitor update their homepage and LinkedIn messaging this week. They now emphasize “Go live in 7 days”, “No engineering required”, and multiple customer logos and testimonials above the fold. Our current positioning talks about flexibility and customization, but not speed. Sales calls now include questions about onboarding time and complexity.`;
+const SAMPLE_SUMMARY = "We run a soccer academy for talented boys and need practical decisions from regional competitor signals, not generic advice.";
+const SAMPLE_NOTES =
+  "FlowOps raised prices again, a nearby academy may close, and there is talk of a local equipment sell-off before the next intake cycle.";
 
-type FeedbackDraft = {
-  done: string[];
-  edited: string[];
-  declined: string[];
+type AppView = "checklist" | "know-more" | "sources-jobs";
+type DecisionStatus = "done" | "edited" | "declined";
+type TaskDecision = {
+  status: DecisionStatus | null;
+  adjustedText: string;
 };
 
 function isCompleteResultWithTasks(
   result: JobResult | null
-): result is JobResult & { result_payload: { recommended_tasks: RecommendedTask[]; summary: string } } {
+): result is JobResult & {
+  result_payload: { recommended_tasks: RecommendedTask[]; summary: string };
+  decision_summary?: { confidence: number };
+} {
   return Boolean(
     result &&
       result.status === "complete" &&
@@ -40,31 +45,88 @@ function readOrCreateSessionId() {
   return created;
 }
 
-function tasksToLines(tasks: RecommendedTask[]) {
-  return tasks.map((task) => task.title);
+function humanizeRegion(region: string) {
+  return region.replaceAll("_", " ");
 }
 
-function updateDraftBucket(text: string) {
-  return text
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
+function confidenceLabel(confidence: number | undefined) {
+  if (confidence === undefined) {
+    return "Pending";
+  }
+  if (confidence >= 0.85) {
+    return "High";
+  }
+  if (confidence >= 0.65) {
+    return "Medium";
+  }
+  return "Low";
+}
+
+function deriveSignalCounts(notes: string) {
+  const normalized = notes.toLowerCase();
+  return {
+    pricing: normalized.includes("price") || normalized.includes("pricing") || normalized.includes("fee") ? 1 : 0,
+    closure: normalized.includes("close") || normalized.includes("closure") ? 1 : 0,
+    offers:
+      normalized.includes("discount") || normalized.includes("voucher") || normalized.includes("trial")
+        ? 1
+        : 0,
+    equipment:
+      normalized.includes("equipment") || normalized.includes("sell-off") || normalized.includes("asset sale")
+        ? 1
+        : 0,
+  };
+}
+
+function buildDefaultDecisions(tasks: RecommendedTask[]) {
+  return tasks.reduce<Record<number, TaskDecision>>((current, task) => {
+    current[task.rank] = {
+      status: null,
+      adjustedText: task.title,
+    };
+    return current;
+  }, {});
+}
+
+function buildFeedbackPayload(tasks: RecommendedTask[], decisions: Record<number, TaskDecision>) {
+  return tasks.reduce(
+    (current, task) => {
+      const decision = decisions[task.rank];
+      if (!decision?.status) {
+        return current;
+      }
+      if (decision.status === "done") {
+        current.done.push(task.title);
+      } else if (decision.status === "edited") {
+        current.edited.push(decision.adjustedText.trim() || task.title);
+      } else {
+        current.declined.push(task.title);
+      }
+      return current;
+    },
+    { done: [] as string[], edited: [] as string[], declined: [] as string[] }
+  );
+}
+
+function allTasksDecided(tasks: RecommendedTask[], decisions: Record<number, TaskDecision>) {
+  return tasks.every((task) => Boolean(decisions[task.rank]?.status));
 }
 
 export function DemoWorkspace() {
+  const [activeView, setActiveView] = useState<AppView>("checklist");
   const [sessionId, setSessionId] = useState("anonymous-loading");
   const [projectId, setProjectId] = useState("");
   const [projectSummary, setProjectSummary] = useState(SAMPLE_SUMMARY);
   const [contextNotes, setContextNotes] = useState(SAMPLE_NOTES);
   const [competitor, setCompetitor] = useState("FlowOps");
-  const [region, setRegion] = useState("region_unknown");
+  const [region, setRegion] = useState("north_cluster");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [submissionError, setSubmissionError] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [jobRequest, setJobRequest] = useState<JobRequest | null>(null);
   const [jobResult, setJobResult] = useState<JobResult | null>(null);
-  const [feedbackDraft, setFeedbackDraft] = useState<FeedbackDraft>({ done: [], edited: [], declined: [] });
+  const [taskDecisions, setTaskDecisions] = useState<Record<number, TaskDecision>>({});
 
   useEffect(() => {
     setSessionId(readOrCreateSessionId());
@@ -74,12 +136,9 @@ export function DemoWorkspace() {
     if (!isCompleteResultWithTasks(jobResult)) {
       return;
     }
-    setFeedbackDraft({
-      done: [],
-      edited: tasksToLines(jobResult.result_payload.recommended_tasks),
-      declined: [],
-    });
+    setTaskDecisions(buildDefaultDecisions(jobResult.result_payload.recommended_tasks));
     setFeedbackStatus("");
+    setActiveView("checklist");
   }, [jobResult]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -124,15 +183,18 @@ export function DemoWorkspace() {
   }
 
   async function handleSaveFeedback() {
-    if (!jobResult) {
+    if (!isCompleteResultWithTasks(jobResult)) {
       return;
     }
+
+    const feedbackPayload = buildFeedbackPayload(jobResult.result_payload.recommended_tasks, taskDecisions);
+    const fallbackAction: DecisionStatus =
+      feedbackPayload.done.length > 0 ? "done" : feedbackPayload.declined.length > 0 ? "declined" : "edited";
 
     setIsSavingFeedback(true);
     setFeedbackStatus("");
 
     try {
-      const action = feedbackDraft.done.length > 0 ? "done" : feedbackDraft.declined.length > 0 ? "declined" : "edited";
       const feedback = feedbackSchema.parse({
         feedback_id: generateId("feedback"),
         job_id: jobResult.job_id,
@@ -140,8 +202,8 @@ export function DemoWorkspace() {
         project_id: jobResult.project_id,
         feedback_type: "task_response",
         submitted_at: new Date().toISOString(),
-        user_action: action,
-        feedback_payload: feedbackDraft,
+        user_action: fallbackAction,
+        feedback_payload: feedbackPayload,
         actor_id: `anonymous:${sessionId}`,
         linked_result_status: jobResult.status,
       });
@@ -155,7 +217,16 @@ export function DemoWorkspace() {
       if (!response.ok) {
         throw new Error(body.detail ?? "The feedback payload could not be saved.");
       }
-      setFeedbackStatus(JSON.stringify(body, null, 2));
+
+      const summary = [
+        feedbackPayload.done.length > 0 ? `${feedbackPayload.done.length} done` : null,
+        feedbackPayload.edited.length > 0 ? `${feedbackPayload.edited.length} adjusted` : null,
+        feedbackPayload.declined.length > 0 ? `${feedbackPayload.declined.length} rejected` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+      setFeedbackStatus(`Feedback saved: ${summary || "no changes recorded"}.`);
     } catch (error) {
       setFeedbackStatus(error instanceof Error ? error.message : "Unknown feedback error.");
     } finally {
@@ -163,170 +234,428 @@ export function DemoWorkspace() {
     }
   }
 
-  function updateDraft(bucket: keyof FeedbackDraft, value: string) {
-    setFeedbackDraft((current) => ({
+  function setDecision(rank: number, status: DecisionStatus, fallbackTitle: string) {
+    setTaskDecisions((current) => ({
       ...current,
-      [bucket]: updateDraftBucket(value),
+      [rank]: {
+        status,
+        adjustedText: current[rank]?.adjustedText ?? fallbackTitle,
+      },
     }));
   }
 
+  function setAdjustedText(rank: number, value: string) {
+    setTaskDecisions((current) => ({
+      ...current,
+      [rank]: {
+        status: "edited",
+        adjustedText: value,
+      },
+    }));
+  }
+
+  const completeResult = isCompleteResultWithTasks(jobResult) ? jobResult : null;
+  const tasks = completeResult?.result_payload.recommended_tasks ?? [];
+  const signalCounts = deriveSignalCounts(contextNotes);
+  const confidence = completeResult?.decision_summary?.confidence;
+  const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
+
   return (
-    <section className="workspace-shell">
-      <form className="panel section-card" onSubmit={handleSubmit}>
-        <h2>Competitive action input</h2>
-        <p className="lead">Paste one messy source package. The private worker learns from hidden observations and returns only the top external actions.</p>
-
-        <div className="field">
-          <label htmlFor="project-summary">Project summary</label>
-          <textarea
-            id="project-summary"
-            value={projectSummary}
-            onChange={(event) => setProjectSummary(event.target.value)}
-            placeholder="Describe the academy, the client, or the project pressure in one short paragraph."
-          />
+    <section className="decision-shell">
+      <header className="decision-header panel">
+        <div className="decision-header-copy">
+          <div className="eyebrow">Public test MVP · no login</div>
+          <h1>Your next move, not more noise.</h1>
+          <p>
+            Agent.Chappie keeps the observation layer hidden, learns from competitive context in the background, and
+            shows only the next three actions worth making.
+          </p>
         </div>
 
-        <div className="field">
-          <label htmlFor="context-notes">Competitive context</label>
-          <textarea
-            id="context-notes"
-            value={contextNotes}
-            onChange={(event) => setContextNotes(event.target.value)}
-            placeholder="Paste messy notes, competitor messaging, URL summary, or raw market context here."
-          />
-          <span className="hint">The worker stores internal observations, but the UI only shows the final 3 recommended actions.</span>
+        <div className="project-status">
+          <div className="status-stack">
+            <span className="status-label">Project</span>
+            <strong>{projectId || "North Cluster Soccer Academy"}</strong>
+          </div>
+          <div className="status-stack">
+            <span className="status-label">Status</span>
+            <strong>{completeResult ? "Monitoring active" : "Waiting for first signal set"}</strong>
+          </div>
+          <div className="status-stack">
+            <span className="status-label">Confidence</span>
+            <strong>
+              {confidenceLabel(confidence)}
+              {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
+            </strong>
+          </div>
         </div>
+      </header>
 
-        <div className="field">
-          <label htmlFor="competitor">Competitor (optional)</label>
-          <input id="competitor" value={competitor} onChange={(event) => setCompetitor(event.target.value)} />
-        </div>
+      <nav className="surface-nav" aria-label="Primary product sections">
+        <button
+          className={`surface-tab ${activeView === "checklist" ? "active" : ""}`}
+          onClick={() => setActiveView("checklist")}
+          type="button"
+        >
+          Your Checklist
+        </button>
+        <button
+          className={`surface-tab ${activeView === "know-more" ? "active" : ""}`}
+          onClick={() => setActiveView("know-more")}
+          type="button"
+        >
+          Know More
+        </button>
+        <button
+          className={`surface-tab ${activeView === "sources-jobs" ? "active" : ""}`}
+          onClick={() => setActiveView("sources-jobs")}
+          type="button"
+        >
+          Sources &amp; Jobs
+        </button>
+      </nav>
 
-        <div className="field">
-          <label htmlFor="region">Region (optional)</label>
-          <input id="region" value={region} onChange={(event) => setRegion(event.target.value)} />
-        </div>
+      {activeView === "checklist" ? (
+        <section className="content-grid">
+          <div className="primary-column">
+            <section className="panel section-card">
+              <div className="section-head">
+                <div>
+                  <span className="section-kicker">Your Checklist</span>
+                  <h2>Exactly three actions. No dashboard clutter.</h2>
+                </div>
+                <span className="status-pill">{completeResult ? "Monitoring active" : "Waiting for input"}</span>
+              </div>
 
-        <div className="button-row">
-          <button className="button-primary" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Submitting job..." : "Submit competitive action job"}
-          </button>
-          <button
-            className="button-secondary"
-            type="button"
-            onClick={() => {
-              setProjectSummary(SAMPLE_SUMMARY);
-              setContextNotes(SAMPLE_NOTES);
-              setCompetitor("FlowOps");
-              setRegion("region_unknown");
-            }}
-          >
-            Load sample dataset
-          </button>
-        </div>
+              {submissionError ? (
+                <div className="notice error">
+                  <strong>Submission error</strong>
+                  <p>{submissionError}</p>
+                </div>
+              ) : null}
 
-        <p className="footer-note">
-          <strong>Anonymous session:</strong> {sessionId}
-          <br />
-          <strong>Project ID:</strong> {projectId || "Will be generated on first submit"}
-        </p>
-      </form>
+              {completeResult ? (
+                <div className="task-card-list">
+                  {tasks.map((task) => {
+                    const decision = taskDecisions[task.rank];
+                    return (
+                      <article className="checklist-card" key={task.rank}>
+                        <div className="task-rank">{task.rank}</div>
+                        <div className="task-content">
+                          <h3>{task.title}</h3>
+                          <div className="task-meta">When: this week</div>
+                          <div className="task-block">
+                            <span>Why now</span>
+                            <p>{task.why_now}</p>
+                          </div>
+                          <div className="task-block impact">
+                            <span>Expected impact</span>
+                            <p>{task.expected_advantage}</p>
+                          </div>
+                          <div className="task-evidence">
+                            <span>Evidence</span>
+                            <div className="evidence-chip-list">
+                              {task.evidence_refs.map((ref) => (
+                                <span className="evidence-chip" key={ref}>
+                                  {ref}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
 
-      <div className="stack">
-        <div className="panel section-card">
-          <h2>Result path</h2>
-          <p className="lead">The app submits one Job Request and only exposes the final decision-support output, not the hidden observation layer.</p>
+                          <div className="task-actions">
+                            <button
+                              className={`decision-button done ${decision?.status === "done" ? "selected" : ""}`}
+                              type="button"
+                              onClick={() => setDecision(task.rank, "done", task.title)}
+                            >
+                              ✓ Done
+                            </button>
+                            <button
+                              className={`decision-button adjust ${decision?.status === "edited" ? "selected" : ""}`}
+                              type="button"
+                              onClick={() => setDecision(task.rank, "edited", task.title)}
+                            >
+                              ✎ Adjust
+                            </button>
+                            <button
+                              className={`decision-button reject ${decision?.status === "declined" ? "selected" : ""}`}
+                              type="button"
+                              onClick={() => setDecision(task.rank, "declined", task.title)}
+                            >
+                              ✕ Reject
+                            </button>
+                          </div>
 
-          <div className="status-grid">
-            <span className="status-pill">Auth deferred · public test MVP</span>
-            <span className="status-pill">Observation layer hidden from UI</span>
+                          {decision?.status === "edited" ? (
+                            <div className="adjust-shell">
+                              <label htmlFor={`adjust-${task.rank}`}>Adjusted action</label>
+                              <textarea
+                                id={`adjust-${task.rank}`}
+                                value={decision.adjustedText}
+                                onChange={(event) => setAdjustedText(task.rank, event.target.value)}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <h3>No checklist yet</h3>
+                  <p>Open Sources &amp; Jobs, submit one context package, and Agent.Chappie will return the top three actions.</p>
+                </div>
+              )}
+            </section>
           </div>
 
-          {submissionError ? (
-            <div className="data-card">
-              <h3>Submission error</h3>
-              <pre>{submissionError}</pre>
-            </div>
-          ) : null}
-
-          {jobRequest ? (
-            <div className="data-card">
-              <h3>Job Request v1</h3>
-              <pre>{JSON.stringify(jobRequest, null, 2)}</pre>
-            </div>
-          ) : null}
-
-          {isCompleteResultWithTasks(jobResult) ? (
-            <div className="data-card">
-              <h3>Recommended tasks</h3>
-              <div className="task-list">
-                {jobResult.result_payload.recommended_tasks.map((task) => (
-                  <div className="task-card" key={task.rank}>
-                    <strong>
-                      {task.rank}. {task.title}
-                    </strong>
-                    <p>{task.why_now}</p>
-                    <p>
-                      <em>{task.expected_advantage}</em>
-                    </p>
-                    <pre>{JSON.stringify({ evidence_refs: task.evidence_refs }, null, 2)}</pre>
-                  </div>
-                ))}
+          <aside className="secondary-column">
+            <section className="panel section-card">
+              <div className="section-head compact">
+                <div>
+                  <span className="section-kicker">Decision Summary</span>
+                  <h2>Confidence and response state</h2>
+                </div>
               </div>
-              <pre>{jobResult.result_payload.summary}</pre>
-            </div>
-          ) : null}
 
-          {jobResult ? (
-            <div className="data-card">
-              <h3>Job Result v1</h3>
-              <pre>{JSON.stringify(jobResult, null, 2)}</pre>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="panel section-card">
-          <h2>Feedback path</h2>
-          <p className="lead">Edit the 3 returned task titles into done, edited, or declined buckets and submit one feedback object.</p>
-
-          {isCompleteResultWithTasks(jobResult) ? (
-            <>
-              <div className="task-list">
-                <div className="task-card">
-                  <strong>Done</strong>
-                  <textarea value={feedbackDraft.done.join("\n")} onChange={(event) => updateDraft("done", event.target.value)} />
+              <div className="summary-stack">
+                <div className="summary-row">
+                  <span>Confidence</span>
+                  <strong>
+                    {confidenceLabel(confidence)}
+                    {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
+                  </strong>
                 </div>
-                <div className="task-card">
-                  <strong>Edited</strong>
-                  <textarea value={feedbackDraft.edited.join("\n")} onChange={(event) => updateDraft("edited", event.target.value)} />
+                <div className="summary-row">
+                  <span>Bridge mode</span>
+                  <strong>Worker</strong>
                 </div>
-                <div className="task-card">
-                  <strong>Declined</strong>
-                  <textarea value={feedbackDraft.declined.join("\n")} onChange={(event) => updateDraft("declined", event.target.value)} />
+                <div className="summary-row">
+                  <span>Storage</span>
+                  <strong>Neon + local brain</strong>
+                </div>
+              </div>
+
+              {completeResult ? <p className="surface-summary">{completeResult.result_payload.summary}</p> : null}
+
+              <div className="feedback-panel">
+                <h3>Decision capture</h3>
+                <p>Mark each card as Done, Adjust, or Reject. The app stores only the final feedback object.</p>
+                <div className="feedback-totals">
+                  <span>{buildFeedbackPayload(tasks, taskDecisions).done.length} done</span>
+                  <span>{buildFeedbackPayload(tasks, taskDecisions).edited.length} adjusted</span>
+                  <span>{buildFeedbackPayload(tasks, taskDecisions).declined.length} rejected</span>
+                </div>
+                <button
+                  className="button-primary wide"
+                  disabled={!canSubmitFeedback || isSavingFeedback}
+                  onClick={handleSaveFeedback}
+                  type="button"
+                >
+                  {isSavingFeedback ? "Saving decisions..." : "Submit decisions"}
+                </button>
+                {feedbackStatus ? <div className="notice success"><p>{feedbackStatus}</p></div> : null}
+              </div>
+            </section>
+          </aside>
+        </section>
+      ) : null}
+
+      {activeView === "know-more" ? (
+        <section className="content-grid single">
+          <div className="primary-column">
+            <section className="panel section-card intelligence-layout">
+              <div className="section-head">
+                <div>
+                  <span className="section-kicker">Know More</span>
+                  <h2>Compressed intelligence behind the checklist</h2>
+                </div>
+              </div>
+
+              <div className="intel-columns">
+                <article className="intel-card">
+                  <h3>Project Summary</h3>
+                  <ul>
+                    <li>{signalCounts.pricing} competitor pricing change detected</li>
+                    <li>{signalCounts.closure} closure or distress signal detected</li>
+                    <li>{signalCounts.offers + signalCounts.equipment} commercial offer or asset signal detected</li>
+                  </ul>
+                </article>
+
+                <article className="intel-card">
+                  <h3>Market Situation</h3>
+                  <ul>
+                    <li>{competitor || "Regional competitor"} is creating comparison pressure in {humanizeRegion(region)}.</li>
+                    <li>Enrollment risk rises when parents see better offers, faster proof, or cheaper alternatives.</li>
+                    <li>The current response window is measured in days, not quarters.</li>
+                  </ul>
+                </article>
+
+                <article className="intel-card">
+                  <h3>Recent Signals</h3>
+                  {completeResult ? (
+                    <ul>
+                      {completeResult.result_payload.recommended_tasks.map((task) => (
+                        <li key={task.rank}>{task.why_now}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <ul>
+                      <li>Submit one context package to populate the signal summary.</li>
+                    </ul>
+                  )}
+                </article>
+              </div>
+            </section>
+          </div>
+        </section>
+      ) : null}
+
+      {activeView === "sources-jobs" ? (
+        <section className="content-grid">
+          <div className="primary-column">
+            <form className="panel section-card" onSubmit={handleSubmit}>
+              <div className="section-head">
+                <div>
+                  <span className="section-kicker">Sources &amp; Jobs</span>
+                  <h2>Ingestion layer for recurring, triggered, and ad hoc context</h2>
+                </div>
+                <button
+                  className="button-secondary"
+                  type="button"
+                  onClick={() => {
+                    setProjectSummary(SAMPLE_SUMMARY);
+                    setContextNotes(SAMPLE_NOTES);
+                    setCompetitor("FlowOps");
+                    setRegion("north_cluster");
+                  }}
+                >
+                  Load sample dataset
+                </button>
+              </div>
+
+              <div className="operator-grid">
+                <article className="operator-card">
+                  <div className="operator-head">
+                    <h3>Recurring Monitoring</h3>
+                    <button className="operator-add" type="button">
+                      + Add Job
+                    </button>
+                  </div>
+                  <div className="job-item">
+                    <strong>Check competitor website</strong>
+                    <span>Every Tuesday · 03:00</span>
+                    <p>Last: 3 updates detected · last action: pricing adjustment triggered · impact: high</p>
+                  </div>
+                </article>
+
+                <article className="operator-card">
+                  <div className="operator-head">
+                    <h3>Event-Based Jobs</h3>
+                    <button className="operator-add" type="button">
+                      + Add Job
+                    </button>
+                  </div>
+                  <div className="job-item">
+                    <strong>Google Sheet update</strong>
+                    <span>Trigger: new row</span>
+                    <p>Last: 2 signals extracted · last action: none</p>
+                  </div>
+                </article>
+              </div>
+
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor="project-summary">Project summary</label>
+                  <textarea
+                    id="project-summary"
+                    value={projectSummary}
+                    onChange={(event) => setProjectSummary(event.target.value)}
+                    placeholder="Describe the academy, the client, or the project pressure in one short paragraph."
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor="context-notes">Context package</label>
+                  <textarea
+                    id="context-notes"
+                    value={contextNotes}
+                    onChange={(event) => setContextNotes(event.target.value)}
+                    placeholder="Paste one messy source package: notes, URL summary, file summary, or copied competitor copy."
+                  />
+                </div>
+              </div>
+
+              <div className="field-triple">
+                <div className="field">
+                  <label htmlFor="competitor">Competitor</label>
+                  <input id="competitor" value={competitor} onChange={(event) => setCompetitor(event.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="region">Region</label>
+                  <input id="region" value={region} onChange={(event) => setRegion(event.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Anonymous session</label>
+                  <div className="read-only-field">{sessionId}</div>
                 </div>
               </div>
 
               <div className="button-row">
-                <button className="button-primary" type="button" onClick={handleSaveFeedback} disabled={isSavingFeedback}>
-                  {isSavingFeedback ? "Saving feedback..." : "Submit feedback"}
+                <button className="button-primary" type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Submitting source package..." : "Run decision job"}
                 </button>
               </div>
+            </form>
+          </div>
 
-              {feedbackStatus ? (
-                <div className="data-card">
-                  <h3>Feedback status</h3>
-                  <pre>{feedbackStatus}</pre>
+          <aside className="secondary-column">
+            <section className="panel section-card">
+              <div className="section-head compact">
+                <div>
+                  <span className="section-kicker">Context Library</span>
+                  <h2>Source material used by the system</h2>
+                </div>
+              </div>
+
+              <div className="library-list">
+                <article className="library-item">
+                  <strong>Long_Island_Soccer.pdf</strong>
+                  <span>Extracted: pricing table</span>
+                  <p>Last used: 2 tasks ago</p>
+                </article>
+                <article className="library-item">
+                  <strong>Untitled.md</strong>
+                  <span>Extracted: competitor list</span>
+                  <p>Last used: 1 task ago</p>
+                </article>
+                <article className="library-item current">
+                  <strong>Current inline context</strong>
+                  <span>Competitor: {competitor || "not set"}</span>
+                  <p>{contextNotes.slice(0, 130)}{contextNotes.length > 130 ? "..." : ""}</p>
+                </article>
+              </div>
+
+              {jobRequest ? (
+                <div className="compact-meta">
+                  <h3>Latest Job</h3>
+                  <p>
+                    <strong>Job ID:</strong> {jobRequest.job_id}
+                  </p>
+                  <p>
+                    <strong>Project ID:</strong> {jobRequest.project_id}
+                  </p>
+                  <p>
+                    <strong>Capability:</strong> {jobRequest.requested_capability}
+                  </p>
                 </div>
               ) : null}
-            </>
-          ) : (
-            <div className="data-card">
-              <h3>Waiting for a result</h3>
-              <pre>Submit a job to populate the feedback flow.</pre>
-            </div>
-          )}
-        </div>
-      </div>
+            </section>
+          </aside>
+        </section>
+      ) : null}
     </section>
   );
 }
