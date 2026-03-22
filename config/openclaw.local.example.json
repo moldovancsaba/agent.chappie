@@ -1,0 +1,44 @@
+{
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://127.0.0.1:11434",
+        "apiKey": "OLLAMA_API_KEY",
+        "api": "ollama",
+        "models": [
+          {
+            "id": "llama3:8b-instruct",
+            "name": "llama3:8b-instruct",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 8192,
+            "maxTokens": 2048
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "ollama/llama3:8b-instruct"
+      },
+      "models": {
+        "ollama/llama3:8b-instruct": {}
+      }
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "bind": "loopback"
+  }
+}

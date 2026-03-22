@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+SRC = os.path.join(ROOT, "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
+
+from agent_chappie.validation import (
+    ValidationError,
+    validate_feedback,
+    validate_job_request,
+    validate_job_result,
+)
+
+
+class ContractValidationTests(unittest.TestCase):
+    def test_job_request_accepts_valid_mvp_payload(self) -> None:
+        payload = {
+            "job_id": "job_mvp_0001",
+            "app_id": "app_consultant_followup",
+            "project_id": "client_acme_q2",
+            "priority_class": "normal",
+            "job_class": "heavy",
+            "submitted_at": "2026-03-22T08:00:00+00:00",
+            "requested_capability": "followup_task_recommendation",
+            "input_payload": {
+                "context_type": "meeting_notes",
+                "prompt": "Recommend the next follow-up tasks for this client project.",
+                "artifacts": [{"type": "upload", "ref": "upload_meeting_notes_001"}],
+            },
+            "requested_by": "consultant_001",
+        }
+        validated = validate_job_request(payload)
+        self.assertEqual(validated["requested_capability"], "followup_task_recommendation")
+
+    def test_job_result_accepts_valid_complete_payload(self) -> None:
+        payload = {
+            "job_id": "job_mvp_0001",
+            "app_id": "app_consultant_followup",
+            "project_id": "client_acme_q2",
+            "status": "complete",
+            "completed_at": "2026-03-22T08:02:00+00:00",
+            "result_payload": {
+                "recommended_tasks": [
+                    "Send recap email to the client",
+                    "Draft the revised milestone plan",
+                ],
+                "summary": "The uploaded meeting notes indicate several unresolved client follow-up tasks.",
+            },
+            "decision_summary": {"route": "proceed", "confidence": 0.86},
+            "trace_run_id": "20260322T080200Z_mvp00001",
+            "trace_refs": ["01_request.json", "05_outcome.json"],
+        }
+        validated = validate_job_result(payload)
+        self.assertEqual(validated["status"], "complete")
+
+    def test_feedback_accepts_done_vocabulary(self) -> None:
+        payload = {
+            "feedback_id": "feedback_mvp_0001",
+            "job_id": "job_mvp_0001",
+            "app_id": "app_consultant_followup",
+            "project_id": "client_acme_q2",
+            "feedback_type": "task_response",
+            "submitted_at": "2026-03-22T08:10:00+00:00",
+            "user_action": "edited",
+            "feedback_payload": {
+                "done": ["Send recap email to the client"],
+                "edited": ["Draft the revised milestone plan with updated target dates"],
+                "declined": ["Confirm ownership for the open action items"],
+            },
+            "actor_id": "consultant_001",
+            "linked_result_status": "complete",
+        }
+        validated = validate_feedback(payload)
+        self.assertEqual(validated["feedback_payload"]["done"][0], "Send recap email to the client")
+
+    def test_feedback_rejects_old_accepted_vocabulary(self) -> None:
+        payload = {
+            "feedback_id": "feedback_bad_0001",
+            "job_id": "job_mvp_0001",
+            "app_id": "app_consultant_followup",
+            "project_id": "client_acme_q2",
+            "feedback_type": "task_response",
+            "submitted_at": "2026-03-22T08:10:00+00:00",
+            "user_action": "edited",
+            "feedback_payload": {
+                "accepted": ["Send recap email to the client"],
+                "edited": [],
+                "declined": [],
+            },
+        }
+        with self.assertRaises(ValidationError) as context:
+            validate_feedback(payload)
+        self.assertIn("missing required field 'done'", str(context.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
