@@ -72,6 +72,9 @@ class ObservationEngineTests(unittest.TestCase):
         result_payload = generate_recommended_tasks(source, observations)
         self.assertEqual(result_payload["recommended_tasks"][0]["rank"], 1)
         self.assertLessEqual(len(result_payload["recommended_tasks"]), 3)
+        self.assertIn("publish", result_payload["recommended_tasks"][0]["title"].lower())
+        self.assertIn("enrollment", result_payload["recommended_tasks"][0]["expected_advantage"].lower())
+        self.assertIn("raised prices", result_payload["recommended_tasks"][0]["why_now"].lower())
 
     def test_local_store_persists_observations_and_knowledge(self) -> None:
         source = SourcePackage(

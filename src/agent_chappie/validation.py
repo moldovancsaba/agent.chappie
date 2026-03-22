@@ -200,6 +200,7 @@ def _validate_recommended_tasks(value: Any) -> None:
         _validate_string_list("evidence_refs", task["evidence_refs"])
         if not task["evidence_refs"]:
             raise ValidationError("recommended_tasks evidence_refs must not be empty")
+        _validate_task_quality(task)
 
 
 def _validate_schema(data: dict[str, Any], schema: dict[str, Any], artifact_name: str) -> None:
@@ -276,3 +277,80 @@ def _validate_optional_result_status(name: str, value: Any) -> None:
         return
     if value not in JOB_RESULT_SCHEMA["status"]:
         raise ValidationError(f"Field '{name}' must be one of {sorted(JOB_RESULT_SCHEMA['status'])}")
+
+
+def _validate_task_quality(task: dict[str, Any]) -> None:
+    title = task["title"].strip()
+    why_now = task["why_now"].strip()
+    expected_advantage = task["expected_advantage"].strip()
+    normalized_title = title.lower()
+    normalized_advantage = expected_advantage.lower()
+    normalized_why = why_now.lower()
+
+    weak_starts = (
+        "adjust ",
+        "strengthen ",
+        "investigate ",
+        "evaluate ",
+        "review ",
+        "check ",
+        "monitor ",
+        "research ",
+        "improve ",
+        "enhance ",
+    )
+    if normalized_title.startswith(weak_starts):
+        raise ValidationError("recommended_tasks title must be a concrete action, not generic strategy wording")
+
+    required_action_tokens = (
+        "publish",
+        "launch",
+        "contact",
+        "call",
+        "send",
+        "rewrite",
+        "reduce",
+        "raise",
+        "request",
+        "place a bid",
+        "run a 7-day pilot",
+        "introduce",
+        "update",
+        "add ",
+    )
+    if not any(token in normalized_title for token in required_action_tokens):
+        raise ValidationError("recommended_tasks title must describe a concrete executable action")
+
+    time_scope_tokens = ("7-day", "this week", "before", "by friday", "next sign-up cycle", "next intake cycle")
+    if not any(token in normalized_title or token in normalized_why for token in time_scope_tokens):
+        raise ValidationError("recommended_tasks must be scoped to an immediate execution window")
+
+    measurable_tokens = (
+        "enrollment",
+        "revenue",
+        "cost",
+        "margin",
+        "conversion",
+        "win rate",
+        "positioning",
+        "retention",
+        "intake",
+    )
+    if not any(token in normalized_advantage for token in measurable_tokens):
+        raise ValidationError("recommended_tasks expected_advantage must describe a measurable business effect")
+
+    signal_tokens = (
+        "raised",
+        "changed",
+        "detected",
+        "signal",
+        "opened",
+        "closing",
+        "closure",
+        "sell-off",
+        "discount",
+        "price",
+        "pricing",
+    )
+    if not any(token in normalized_why for token in signal_tokens):
+        raise ValidationError("recommended_tasks why_now must reference a concrete signal change")

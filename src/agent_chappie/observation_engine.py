@@ -20,6 +20,17 @@ class SourcePackage:
     region: str | None = None
 
 
+@dataclass
+class TaskCandidate:
+    task: dict[str, Any]
+    total_score: int
+    competitive_relevance: int
+    urgency: int
+    actionability_this_week: int
+    strategic_leverage: int
+    evidence_strength: int
+
+
 SIGNAL_RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     ("pricing_change", ("price", "pricing", "fee", "fees", "raised pricing", "discount", "voucher"), "high", "high"),
     ("opening", ("open", "opening", "launch", "new school", "new academy"), "medium", "high"),
@@ -43,10 +54,17 @@ def extract_observations(source: SourcePackage, observed_at: str | None = None) 
     region = source.region or infer_region(source.project_summary, text)
     timestamp = observed_at or utc_now_iso()
     observations: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    clauses = extract_clauses(text)
 
     for signal_type, keywords, impact, confidence_band in SIGNAL_RULES:
-        if any(keyword in normalized for keyword in keywords):
-            summary = build_summary(signal_type, text)
+        matching_clause = first_matching_clause(clauses, keywords)
+        if matching_clause:
+            summary = build_summary(signal_type, matching_clause)
+            dedupe_key = (signal_type, summary.lower())
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
             observation = {
                 "signal_id": build_signal_id(source.project_id, signal_type, competitor, summary, source.source_ref),
                 "signal_type": signal_type,
@@ -81,16 +99,16 @@ def generate_recommended_tasks(
     source: SourcePackage,
     observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    scored = []
+    scored: list[TaskCandidate] = []
     for observation in observations:
-        task = observation_to_task(observation)
-        score = score_observation(observation)
-        if task and score >= 7:
-            scored.append((score, task))
+        candidate = observation_to_task(source, observation)
+        if candidate and candidate.total_score >= 15:
+            scored.append(candidate)
 
-    scored.sort(key=lambda item: item[0], reverse=True)
+    scored.sort(key=lambda item: item.total_score, reverse=True)
     tasks = []
-    for index, (_, task) in enumerate(scored[:3], start=1):
+    for index, candidate in enumerate(scored[:3], start=1):
+        task = dict(candidate.task)
         task["rank"] = index
         tasks.append(task)
 
@@ -116,69 +134,87 @@ def generate_recommended_tasks(
     }
 
 
-def observation_to_task(observation: dict[str, Any]) -> dict[str, Any] | None:
+def observation_to_task(source: SourcePackage, observation: dict[str, Any]) -> TaskCandidate | None:
     signal_type = observation["signal_type"]
     evidence = [observation["signal_id"]]
     competitor = observation["competitor"]
     summary = observation["summary"]
+    region = humanize_region(observation["region"])
+    domain = infer_domain(source)
+    signal_phrase = extract_signal_phrase(summary)
+
+    task: dict[str, Any] | None = None
 
     if signal_type == "pricing_change":
-        return {
+        task = {
             "rank": 0,
-            "title": f"Adjust academy pricing and offer positioning against {competitor}",
-            "why_now": f"Pricing movement was detected for {competitor}: {summary}",
-            "expected_advantage": "Protects enrollment and reduces parent switching risk caused by competitor price pressure.",
+            "title": f"Publish a 7-day comparison offer and update the pricing page against {competitor}'s latest fee change",
+            "why_now": f"{competitor} changed pricing in {region}: {signal_phrase}. Launching a visible counter-offer this week addresses the exact comparison parents or buyers are making right now.",
+            "expected_advantage": measurable_advantage(domain, "pricing"),
             "evidence_refs": evidence,
         }
-    if signal_type == "closure":
-        return {
+    elif signal_type == "closure":
+        task = {
             "rank": 0,
-            "title": f"Investigate whether {competitor} is available for acquisition or player transfer capture",
-            "why_now": f"Closure or distress signals were detected for {competitor}: {summary}",
-            "expected_advantage": "Creates a faster path to growth through acquisition, player capture, or facility access.",
+            "title": f"Contact {competitor}'s owner this week about acquiring released customers, staff, or equipment",
+            "why_now": f"{competitor} is showing a closure or distress signal in {region}: {signal_phrase}. Direct outreach this week is time-sensitive before another operator captures the same assets.",
+            "expected_advantage": measurable_advantage(domain, "acquisition"),
             "evidence_refs": evidence,
         }
-    if signal_type == "asset_sale":
-        return {
+    elif signal_type == "asset_sale":
+        task = {
             "rank": 0,
-            "title": "Check for discounted equipment or infrastructure purchase opportunities",
-            "why_now": f"An asset-sale signal was detected: {summary}",
-            "expected_advantage": "Improves margin and frees budget for coaching quality or promotion.",
+            "title": "Request the asset list and place a bid on discounted equipment before the sell-off closes",
+            "why_now": f"An asset-sale signal was detected in {region}: {signal_phrase}. Acting this week turns a competitor event into a fast cost-saving move instead of a missed bargain.",
+            "expected_advantage": measurable_advantage(domain, "cost"),
             "evidence_refs": evidence,
         }
-    if signal_type == "opening":
-        return {
+    elif signal_type == "opening":
+        task = {
             "rank": 0,
-            "title": f"Review local catchment messaging before {competitor} expands in the region",
-            "why_now": f"A local opening or expansion signal was detected: {summary}",
-            "expected_advantage": "Helps defend territory and pre-empt competitor momentum before the next intake cycle.",
+            "title": f"Send a local comparison campaign before {competitor} opens in {region}",
+            "why_now": f"{competitor} is signaling an opening or expansion in {region}: {signal_phrase}. A local comparison push this week helps lock in prospects before the new option gains momentum.",
+            "expected_advantage": measurable_advantage(domain, "conversion"),
             "evidence_refs": evidence,
         }
-    if signal_type in {"offer", "proof_signal", "messaging_shift"}:
-        return {
+    elif signal_type in {"offer", "proof_signal", "messaging_shift"}:
+        task = {
             "rank": 0,
-            "title": f"Strengthen proof and onboarding messaging against {competitor}",
-            "why_now": f"A competitor positioning signal was detected: {summary}",
-            "expected_advantage": "Improves conversion and reduces hesitation around ease of joining your academy.",
+            "title": f"Rewrite the homepage hero and sales script this week to answer {competitor}'s latest claim",
+            "why_now": f"{competitor} changed customer-facing messaging in {region}: {signal_phrase}. Rewriting the first impression now prevents the competitor narrative from owning the buying conversation.",
+            "expected_advantage": measurable_advantage(domain, "positioning"),
             "evidence_refs": evidence,
         }
-    if signal_type == "vendor_adoption":
-        return {
+    elif signal_type == "vendor_adoption":
+        task = {
             "rank": 0,
-            "title": "Evaluate the new sport-tech signal for a fast competitive advantage test",
-            "why_now": f"A sport-tech adoption signal was detected: {summary}",
-            "expected_advantage": "Helps the academy adopt tools that improve development quality or parent trust before rivals do.",
+            "title": "Run a 7-day pilot of the surfaced sport-tech tool and decide buy-or-skip by Friday",
+            "why_now": f"A vendor-adoption signal appeared in {region}: {signal_phrase}. A short pilot this week is enough to test whether the tool creates a real execution edge before competitors normalize it.",
+            "expected_advantage": measurable_advantage(domain, "retention"),
             "evidence_refs": evidence,
         }
-    return None
+    if not task:
+        return None
+
+    scores = score_task_candidate(observation, task)
+    return TaskCandidate(task=task, **scores)
 
 
-def score_observation(observation: dict[str, Any]) -> int:
-    impact_score = {"low": 1, "medium": 2, "high": 3}[observation["business_impact"]]
-    confidence_score = int(round(observation["confidence"] * 3))
-    urgency_bonus = 3 if observation["signal_type"] in {"pricing_change", "closure", "offer"} else 1
-    leverage_bonus = 3 if observation["signal_type"] in {"pricing_change", "closure", "asset_sale"} else 2
-    return impact_score + confidence_score + urgency_bonus + leverage_bonus
+def score_task_candidate(observation: dict[str, Any], task: dict[str, Any]) -> dict[str, int]:
+    competitive_relevance = 5 if observation["signal_type"] in {"pricing_change", "closure", "offer", "asset_sale"} else 4
+    urgency = 5 if observation["signal_type"] in {"pricing_change", "closure", "asset_sale"} else 3
+    actionability_this_week = 5 if contains_week_specific_action(task["title"]) else 2
+    strategic_leverage = 5 if observation["business_impact"] == "high" else 3 if observation["business_impact"] == "medium" else 2
+    evidence_strength = max(2, min(5, int(round(observation["confidence"] * 5))))
+    total_score = competitive_relevance + urgency + actionability_this_week + strategic_leverage + evidence_strength
+    return {
+        "total_score": total_score,
+        "competitive_relevance": competitive_relevance,
+        "urgency": urgency,
+        "actionability_this_week": actionability_this_week,
+        "strategic_leverage": strategic_leverage,
+        "evidence_strength": evidence_strength,
+    }
 
 
 def deduplicate_observations(
@@ -248,6 +284,84 @@ def build_summary(signal_type: str, raw_text: str) -> str:
 def summarize_text(raw_text: str) -> str:
     text = " ".join(raw_text.strip().split())
     return text[:180]
+
+
+def extract_clauses(raw_text: str) -> list[str]:
+    chunks = re.split(r"[.!?;\n]+", raw_text)
+    clauses: list[str] = []
+    for chunk in chunks:
+        parts = re.split(r",|\band\b|\bbut\b", chunk, flags=re.IGNORECASE)
+        for part in parts:
+            cleaned = " ".join(part.strip().split())
+            if cleaned:
+                clauses.append(cleaned)
+    return clauses
+
+
+def first_matching_clause(clauses: list[str], keywords: tuple[str, ...]) -> str | None:
+    for clause in clauses:
+        normalized = clause.lower()
+        if any(keyword in normalized for keyword in keywords):
+            return clause
+    return None
+
+
+def humanize_region(region: str) -> str:
+    return region.replace("_", " ")
+
+
+def extract_signal_phrase(summary: str) -> str:
+    if ":" in summary:
+        return summary.split(":", 1)[1].strip()
+    return summary
+
+
+def infer_domain(source: SourcePackage) -> str:
+    text = f"{source.project_summary} {source.raw_text}".lower()
+    if any(term in text for term in {"academy", "soccer", "football school", "sport school", "parents", "players"}):
+        return "academy"
+    return "general"
+
+
+def measurable_advantage(domain: str, advantage_type: str) -> str:
+    academy_advantages = {
+        "pricing": "Protects enrollment and improves intake conversion before the next sign-up cycle.",
+        "acquisition": "Increases player capacity, local revenue, or facility access faster than organic growth.",
+        "cost": "Reduces equipment cost this month and protects operating margin for coaching or promotion.",
+        "conversion": "Improves inquiry-to-enrollment conversion before prospects compare the new entrant.",
+        "positioning": "Improves parent conversion and reduces onboarding or proof objections in active conversations.",
+        "retention": "Improves player-development quality or parent retention without waiting for a long rollout.",
+    }
+    general_advantages = {
+        "pricing": "Protects revenue and conversion against a competitor price move in the current buying cycle.",
+        "acquisition": "Creates a faster growth path through acquired customers, assets, or operating capacity.",
+        "cost": "Reduces near-term operating cost and frees budget for higher-leverage growth moves.",
+        "conversion": "Improves conversion before the competitor gains traction with the same audience.",
+        "positioning": "Improves win rate by countering the competitor narrative with a stronger market-facing response.",
+        "retention": "Improves delivery or retention fast enough to matter in the current decision window.",
+    }
+    lookup = academy_advantages if domain == "academy" else general_advantages
+    return lookup[advantage_type]
+
+
+def contains_week_specific_action(title: str) -> bool:
+    normalized = title.lower()
+    return any(
+        phrase in normalized
+        for phrase in (
+            "7-day",
+            "this week",
+            "before",
+            "by friday",
+            "place a bid",
+            "publish",
+            "contact",
+            "rewrite",
+            "request",
+            "send",
+            "run a 7-day pilot",
+        )
+    )
 
 
 def normalize_summary(summary: str) -> set[str]:

@@ -50,16 +50,16 @@ class ContractValidationTests(unittest.TestCase):
                 "recommended_tasks": [
                     {
                         "rank": 1,
-                        "title": "Adjust pricing against the nearest academy",
-                        "why_now": "A competitor pricing signal was detected this week.",
-                        "expected_advantage": "Protects enrollment against price pressure.",
+                        "title": "Publish a 7-day comparison offer against the nearest academy price change",
+                        "why_now": "A competitor pricing change was detected this week after the nearest academy raised fees.",
+                        "expected_advantage": "Protects enrollment conversion against price pressure before the next intake cycle.",
                         "evidence_refs": ["sig_price_001"],
                     },
                     {
                         "rank": 2,
-                        "title": "Check if the closing academy is available for acquisition",
-                        "why_now": "A closure signal suggests a near-term growth opportunity.",
-                        "expected_advantage": "Creates a faster route to player and asset growth.",
+                        "title": "Contact the closing academy owner this week about acquiring released players and equipment",
+                        "why_now": "A closure signal was detected this week and the window for a low-cost acquisition move is short.",
+                        "expected_advantage": "Creates a faster route to enrollment and revenue growth through released players and assets.",
                         "evidence_refs": ["sig_close_001"],
                     },
                 ],
@@ -110,6 +110,30 @@ class ContractValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError) as context:
             validate_job_result(payload)
         self.assertIn("sequential", str(context.exception))
+
+    def test_job_result_rejects_generic_task_titles(self) -> None:
+        payload = {
+            "job_id": "job_bad_0002",
+            "app_id": "app_consultant_followup",
+            "project_id": "client_acme_q2",
+            "status": "complete",
+            "completed_at": "2026-03-22T08:02:00+00:00",
+            "result_payload": {
+                "recommended_tasks": [
+                    {
+                        "rank": 1,
+                        "title": "Adjust pricing strategy",
+                        "why_now": "A competitor pricing change was detected this week.",
+                        "expected_advantage": "Protects enrollment conversion against price pressure.",
+                        "evidence_refs": ["sig_bad_002"],
+                    }
+                ],
+                "summary": "Bad task quality",
+            },
+        }
+        with self.assertRaises(ValidationError) as context:
+            validate_job_result(payload)
+        self.assertIn("concrete action", str(context.exception))
 
     def test_feedback_accepts_done_vocabulary(self) -> None:
         payload = {

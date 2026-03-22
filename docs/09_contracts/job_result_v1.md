@@ -40,27 +40,27 @@ Defines the platform-to-app result envelope returned after a job completes or fa
     "recommended_tasks": [
       {
         "rank": 1,
-        "title": "Adjust academy pricing and offer positioning against FlowOps",
-        "why_now": "Pricing movement was detected for FlowOps and is likely to affect parent comparison shopping.",
-        "expected_advantage": "Protects enrollment and reduces switching risk caused by competitor price pressure.",
+        "title": "Publish a 7-day comparison offer and update the pricing page against FlowOps's latest fee change",
+        "why_now": "FlowOps changed pricing this week and the move is likely to affect parent comparison shopping before the next intake cycle.",
+        "expected_advantage": "Protects enrollment and improves intake conversion before the next sign-up cycle.",
         "evidence_refs": [
           "sig_0775a2c2f78d"
         ]
       },
       {
         "rank": 2,
-        "title": "Investigate whether FlowOps is available for acquisition or player transfer capture",
-        "why_now": "Closure or distress signals were detected for FlowOps.",
-        "expected_advantage": "Creates a faster path to growth through acquisition, player capture, or facility access.",
+        "title": "Contact FlowOps's owner this week about acquiring released customers, staff, or equipment",
+        "why_now": "FlowOps is showing a closure or distress signal and the asset window is time-sensitive.",
+        "expected_advantage": "Increases player capacity, local revenue, or facility access faster than organic growth.",
         "evidence_refs": [
           "sig_fdd325070fac"
         ]
       },
       {
         "rank": 3,
-        "title": "Check for discounted equipment or infrastructure purchase opportunities",
-        "why_now": "An asset-sale signal was detected in the current region.",
-        "expected_advantage": "Improves margin and frees budget for coaching quality or promotion.",
+        "title": "Request the asset list and place a bid on discounted equipment before the sell-off closes",
+        "why_now": "An asset-sale signal was detected in the current region this week.",
+        "expected_advantage": "Reduces equipment cost this month and protects operating margin for coaching or promotion.",
         "evidence_refs": [
           "sig_08cfdd451f33"
         ]
@@ -87,6 +87,8 @@ For the current MVP capability:
 
 - return exactly 3 tasks when strong evidence exists
 - rank values must be `1`, `2`, `3`
+- every task must be executable within 7 days
+- every task title must describe a concrete action, not generic strategy wording
 - `evidence_refs` must map to stored signal identifiers or source refs
 - user-visible output must not expose the full internal observation list
 

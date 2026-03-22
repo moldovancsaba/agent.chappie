@@ -36,11 +36,35 @@
   "completed_at": "2026-03-22T08:02:00+00:00",
   "result_payload": {
     "recommended_tasks": [
-      "Send recap email to the client",
-      "Draft the revised milestone plan",
-      "Confirm ownership for the open action items"
+      {
+        "rank": 1,
+        "title": "Publish a 7-day comparison offer and update the pricing page against FlowOps's latest fee change",
+        "why_now": "FlowOps raised pricing this week and the move is likely to affect parent comparison shopping before the next intake cycle.",
+        "expected_advantage": "Protects enrollment and improves intake conversion before the next sign-up cycle.",
+        "evidence_refs": [
+          "sig_price_001"
+        ]
+      },
+      {
+        "rank": 2,
+        "title": "Contact FlowOps's owner this week about acquiring released customers, staff, or equipment",
+        "why_now": "FlowOps is showing a closure signal this week and the asset window is time-sensitive.",
+        "expected_advantage": "Increases player capacity, local revenue, or facility access faster than organic growth.",
+        "evidence_refs": [
+          "sig_close_001"
+        ]
+      },
+      {
+        "rank": 3,
+        "title": "Request the asset list and place a bid on discounted equipment before the sell-off closes",
+        "why_now": "An asset-sale signal was detected in the region this week.",
+        "expected_advantage": "Reduces equipment cost this month and protects operating margin for coaching or promotion.",
+        "evidence_refs": [
+          "sig_sale_001"
+        ]
+      }
     ],
-    "summary": "The uploaded meeting notes indicate several unresolved client follow-up tasks."
+    "summary": "Three competitive actions were prioritized from current source input and stored market observations."
   },
   "decision_summary": {
     "route": "proceed",
