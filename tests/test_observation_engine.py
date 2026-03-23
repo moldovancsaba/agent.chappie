@@ -68,6 +68,21 @@ class ObservationEngineTests(unittest.TestCase):
         self.assertTrue(any("raised U14 prices by 15%" in summary for summary in summaries))
         self.assertTrue(any("free-trial campaign" in summary for summary in summaries))
 
+    def test_extract_observations_ignores_negated_signal_clauses(self) -> None:
+        source = SourcePackage(
+            project_id="project_negated",
+            source_kind="manual_text",
+            project_summary="Managed on worker",
+            raw_text=(
+                "There is no pricing change this month, no discount campaign, and no closure signal. "
+                "Fortitude AI added testimonials and customer logos above the fold."
+            ),
+            source_ref="source_negated",
+        )
+        observations = extract_observations(source)
+        signal_types = {observation["signal_type"] for observation in observations}
+        self.assertEqual(signal_types, {"messaging_shift", "proof_signal"})
+
     def test_deduplicate_observations_ignores_similar_recent_signal(self) -> None:
         source = SourcePackage(
             project_id="project_001",

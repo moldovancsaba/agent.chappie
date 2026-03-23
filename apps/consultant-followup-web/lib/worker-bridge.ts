@@ -15,6 +15,14 @@ type SourcePackage = {
 
 export type WorkerWorkspacePayload = {
   project_id: string;
+  fact_chips: Array<{
+    fact_id: string;
+    category: string;
+    label: string;
+    confidence: number;
+    source_refs: string[];
+    evidence_refs: string[];
+  }>;
   source_cards: Array<{
     source_ref: string;
     label: string;
@@ -200,6 +208,7 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
         closure_signals: 0,
         offer_signals: 0,
       },
+      fact_chips: [],
       competitive_snapshot: {
         pricing_position: "Still forming",
         acquisition_strategy_comparison: "Still forming",

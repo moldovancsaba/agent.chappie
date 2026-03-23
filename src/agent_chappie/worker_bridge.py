@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -40,9 +41,11 @@ from agent_chappie.observation_engine import (
     build_source_hash,
     clean_entity,
     deduplicate_observations,
+    extract_action_detail,
     extract_clauses,
     extract_named_entities,
     extract_observations,
+    extract_signal_phrase,
     generate_recommended_tasks,
     humanize_region,
     normalize_source_package,
@@ -180,11 +183,15 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     observations = sync_observations_for_source(source_package, config)
     aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
     result_payload = generate_recommended_tasks(source_package, aggregated or observations)
+    refreshed_sources = list_recent_source_snapshots(source_package.project_id, path=config.local_db_path)
+    refreshed_knowledge = fetch_knowledge_rows(source_package.project_id, path=config.local_db_path)
+    fact_chips = build_fact_chips(refreshed_sources, aggregated or observations, refreshed_knowledge)
     knowledge_cards = build_knowledge_cards(
-        list_recent_source_snapshots(source_package.project_id, path=config.local_db_path),
+        refreshed_sources,
         aggregated or observations,
-        fetch_knowledge_rows(source_package.project_id, path=config.local_db_path),
+        refreshed_knowledge,
         fetch_knowledge_feedback_rows(source_package.project_id, path=config.local_db_path),
+        fact_chips,
     )
     used_source_refs: set[str] = set()
 
@@ -414,7 +421,8 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     knowledge_rows = fetch_knowledge_rows(project_id, path=config.local_db_path)
     knowledge_feedback_rows = fetch_knowledge_feedback_rows(project_id, path=config.local_db_path)
     monitor_rows = list_monitor_rows(path=config.local_db_path)
-    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows)
+    fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
+    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
     competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows)
 
@@ -454,6 +462,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             "closure_signals": sum(1 for row in observation_rows if row["signal_type"] == "closure"),
             "offer_signals": sum(1 for row in observation_rows if row["signal_type"] in {"offer", "asset_sale"}),
         },
+        "fact_chips": fact_chips,
         "competitive_snapshot": competitive_snapshot,
         "knowledge_summary": knowledge_summary_rows[:5],
         "monitor_jobs": [
@@ -488,11 +497,16 @@ def reprocess_source_snapshot(project_id: str, source_ref: str, config: WorkerBr
     )
     normalized = normalize_source_package(source)
     observations = sync_observations_for_source(normalized, config)
+    refreshed_sources = list_recent_source_snapshots(project_id, path=config.local_db_path)
+    refreshed_observations = list_recent_observations(project_id, path=config.local_db_path)
+    refreshed_knowledge = fetch_knowledge_rows(project_id, path=config.local_db_path)
+    fact_chips = build_fact_chips(refreshed_sources, refreshed_observations, refreshed_knowledge)
     knowledge_cards = build_knowledge_cards(
-        list_recent_source_snapshots(project_id, path=config.local_db_path),
-        list_recent_observations(project_id, path=config.local_db_path),
-        fetch_knowledge_rows(project_id, path=config.local_db_path),
+        refreshed_sources,
+        refreshed_observations,
+        refreshed_knowledge,
         fetch_knowledge_feedback_rows(project_id, path=config.local_db_path),
+        fact_chips,
     )
     source_insights = build_source_insights(
         list_recent_source_snapshots(project_id, path=config.local_db_path),
@@ -552,11 +566,12 @@ def build_knowledge_cards(
     observation_rows: list[dict[str, Any]],
     knowledge_rows: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     feedback_lookup = {row["knowledge_id"]: row for row in feedback_rows}
-    clauses = unique_clauses(source_rows)
     entities = unique_entities(source_rows, observation_rows, knowledge_rows)
     cards: list[dict[str, Any]] = []
+    facts_by_category = group_fact_chips(fact_chips)
 
     market_items = []
     if source_rows:
@@ -564,7 +579,7 @@ def build_knowledge_cards(
     if observation_rows:
         market_items.append(f"{sum(1 for row in observation_rows if row['signal_type'] == 'pricing_change')} pricing signal(s) are active.")
         market_items.append(f"{sum(1 for row in observation_rows if row['signal_type'] in {'offer', 'asset_sale'})} offer or asset signal(s) are active.")
-    topic_items = derive_topic_items(" ".join(row["raw_text"] for row in source_rows))
+    topic_items = summarize_market_fact_patterns(fact_chips) or derive_topic_items(" ".join(row["raw_text"] for row in source_rows))
     market_items.extend(topic_items[:3])
     cards.append(
         knowledge_card(
@@ -585,12 +600,13 @@ def build_knowledge_cards(
         )
     )
 
+    competitor_items = [fact["label"] for fact in facts_by_category.get("competitor", [])] or entities[:6]
     cards.append(
         knowledge_card(
             "competitors_detected",
             "Competitors Detected",
             "Named companies, schools, clubs, or products the worker has extracted from the source set.",
-            entities[:6] or ["No named competitors have been extracted with enough confidence yet."],
+            competitor_items[:6] or ["No named competitors have been extracted with enough confidence yet."],
             "The source set points to the competitors most likely shaping the current comparison set.",
             "These names should anchor who you benchmark, monitor, and position against first.",
             [
@@ -598,16 +614,14 @@ def build_knowledge_cards(
                 "Add one competitor-specific source if the detected list feels too thin.",
             ],
             observation_rows[:4],
-            [row["source_ref"] for row in source_rows[:4]],
-            0.74 if entities else 0.28,
+            flatten_fact_source_refs(facts_by_category.get("competitor", [])) or [row["source_ref"] for row in source_rows[:4]],
+            0.74 if competitor_items else 0.28,
             feedback_lookup,
         )
     )
 
-    pricing_items = filter_clauses(
-        clauses,
-        ("price", "pricing", "fee", "plan", "package", "packaging", "bundle", "subscription", "onboarding"),
-    )
+    pricing_facts = facts_by_category.get("pricing", [])
+    pricing_items = [fact["label"] for fact in pricing_facts]
     cards.append(
         knowledge_card(
             "pricing_packaging",
@@ -621,16 +635,14 @@ def build_knowledge_cards(
                 "Prepare one pricing-page adjustment if a competitor pattern keeps repeating.",
             ],
             [row for row in observation_rows if row["signal_type"] == "pricing_change"][:4],
-            source_refs_for_items(pricing_items[:5], source_rows),
+            flatten_fact_source_refs(pricing_facts[:5]) or source_refs_for_items(pricing_items[:5], source_rows),
             0.71 if pricing_items else 0.24,
             feedback_lookup,
         )
     )
 
-    positioning_items = filter_clauses(
-        clauses,
-        ("offer", "trial", "discount", "voucher", "no engineering", "no-code", "speed", "faster", "implementation", "position"),
-    )
+    positioning_facts = facts_by_category.get("offer", []) + facts_by_category.get("positioning", []) + facts_by_category.get("segment", [])
+    positioning_items = [fact["label"] for fact in positioning_facts]
     cards.append(
         knowledge_card(
             "offer_positioning",
@@ -644,13 +656,14 @@ def build_knowledge_cards(
                 "Check whether your enrollment or landing-page copy reflects the same buyer pressure.",
             ],
             [row for row in observation_rows if row["signal_type"] in {"offer", "messaging_shift"}][:4],
-            source_refs_for_items(positioning_items[:5], source_rows),
+            flatten_fact_source_refs(positioning_facts[:5]) or source_refs_for_items(positioning_items[:5], source_rows),
             0.73 if positioning_items else 0.25,
             feedback_lookup,
         )
     )
 
-    proof_items = filter_clauses(clauses, ("testimonial", "logo", "proof", "case study", "integration", "customer"))
+    proof_facts = facts_by_category.get("proof", [])
+    proof_items = [fact["label"] for fact in proof_facts]
     cards.append(
         knowledge_card(
             "proof_signals",
@@ -664,7 +677,7 @@ def build_knowledge_cards(
                 "Add a stronger proof source if the current evidence is still weak.",
             ],
             [row for row in observation_rows if row["signal_type"] == "proof_signal"][:4],
-            source_refs_for_items(proof_items[:5], source_rows),
+            flatten_fact_source_refs(proof_facts[:5]) or source_refs_for_items(proof_items[:5], source_rows),
             0.69 if proof_items else 0.21,
             feedback_lookup,
         )
@@ -699,6 +712,238 @@ def build_knowledge_cards(
     )
 
     return cards
+
+
+def build_fact_chips(
+    source_rows: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    knowledge_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    chips: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_chip(
+        category: str,
+        label: str,
+        confidence: float,
+        source_refs: list[str],
+        evidence_refs: list[str] | None = None,
+    ) -> None:
+        normalized_label = normalize_fact_label(label)
+        if not normalized_label:
+            return
+        key = (category, normalized_label.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        chips.append(
+            {
+                "fact_id": f"{category}:{len(chips)+1}",
+                "category": category,
+                "label": normalized_label,
+                "confidence": round(confidence, 2),
+                "source_refs": unique_values(source_refs),
+                "evidence_refs": unique_values(evidence_refs or []),
+            }
+        )
+
+    for row in observation_rows:
+        phrase = normalize_fact_label(extract_signal_phrase(row["summary"]))
+        if not phrase:
+            continue
+        detail = extract_action_detail(phrase)
+        category = observation_to_fact_category(row["signal_type"])
+        label = phrase_to_fact_label(category, row["competitor"], phrase, detail, row["region"])
+        add_chip(category, label, float(row["confidence"]), [row["source_ref"]], [row["signal_id"]])
+
+    all_text = " ".join(row["raw_text"] for row in source_rows)
+    for entity in unique_entities(source_rows, observation_rows, knowledge_rows)[:6]:
+        competitor_label = normalize_competitor_fact(entity)
+        if competitor_label:
+            add_chip("competitor", competitor_label, 0.74, [row["source_ref"] for row in source_rows[:4]])
+
+    clause_sets = [
+        ("pricing", ("price", "pricing", "fee", "plan", "package", "packaging", "bundle", "subscription", "onboarding")),
+        ("offer", ("offer", "trial", "discount", "voucher", "scholarship", "free onboarding")),
+        ("positioning", ("no engineering", "no-code", "speed", "faster", "implementation", "ai", "automation", "position")),
+        ("proof", ("testimonial", "logo", "proof", "case study", "integration", "customer")),
+        ("timing", ("this week", "this month", "before", "next intake", "renewal", "last week")),
+    ]
+    clauses = unique_clauses(source_rows)
+    for category, tokens in clause_sets:
+        for clause in filter_clauses(clauses, tokens)[:6]:
+            label = clause_to_fact_label(category, clause)
+            add_chip(category, label, 0.61, source_refs_for_items([clause], source_rows))
+
+    if any(token in all_text.lower() for token in ("pricing", "bundle", "packaging", "subscription", "onboarding")):
+        add_chip("pricing", "Pricing bundles, packaging terms, or onboarding friction appear in the source set.", 0.59, [row["source_ref"] for row in source_rows[:4]])
+    if any(token in all_text.lower() for token in ("trial", "discount", "offer", "voucher", "scholarship")):
+        add_chip("offer", "Offer-led acquisition pressure appears in the source set.", 0.59, [row["source_ref"] for row in source_rows[:4]])
+    if any(token in all_text.lower() for token in ("testimonial", "case study", "customer", "integration", "logo")):
+        add_chip("proof", "Proof language appears in the source set and may shape buyer trust.", 0.59, [row["source_ref"] for row in source_rows[:4]])
+
+    for segment in extract_segment_facts(all_text):
+        add_chip("segment", segment, 0.63, [row["source_ref"] for row in source_rows[:4]])
+
+    return chips[:18]
+
+
+def group_fact_chips(fact_chips: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for chip in fact_chips:
+        grouped.setdefault(str(chip["category"]), []).append(chip)
+    return grouped
+
+
+def flatten_fact_source_refs(fact_chips: list[dict[str, Any]]) -> list[str]:
+    refs: list[str] = []
+    for chip in fact_chips:
+        refs.extend(chip.get("source_refs", []))
+    return unique_values(refs)
+
+
+def observation_to_fact_category(signal_type: str) -> str:
+    mapping = {
+        "pricing_change": "pricing",
+        "offer": "offer",
+        "proof_signal": "proof",
+        "messaging_shift": "positioning",
+        "closure": "opportunity",
+        "asset_sale": "opportunity",
+        "opening": "opportunity",
+        "vendor_adoption": "positioning",
+    }
+    return mapping.get(signal_type, "market")
+
+
+def phrase_to_fact_label(
+    category: str,
+    competitor: str,
+    phrase: str,
+    detail: dict[str, Any],
+    region: str,
+) -> str:
+    if category == "pricing":
+        tier = detail.get("tier")
+        percent = detail.get("percent")
+        if tier and percent:
+            return f"{competitor} moved {tier} pricing by {percent} in {humanize_region(region)}."
+        if percent:
+            return f"{competitor} moved pricing by {percent} in {humanize_region(region)}."
+        return f"{competitor} changed pricing or packaging terms in {humanize_region(region)}."
+    if category == "offer":
+        offer = detail.get("offer") or "offer-led"
+        return f"{competitor} is using {offer} acquisition pressure in {humanize_region(region)}."
+    if category == "proof":
+        return f"{competitor} is leaning on proof signals to win comparison-stage buyers."
+    if category == "positioning":
+        return f"{competitor} is shifting buyer-facing positioning in {humanize_region(region)}."
+    if category == "opportunity":
+        return phrase.rstrip(".") + "."
+    return phrase.rstrip(".") + "."
+
+
+def clause_to_fact_label(category: str, clause: str) -> str:
+    normalized = normalize_fact_label(clause)
+    if not normalized:
+        return ""
+    if category == "pricing":
+        if any(token in normalized.lower() for token in ("bundle", "packaging", "package", "subscription")):
+            return "Pricing bundles or packaging structure are part of the current comparison set."
+        if "onboarding" in normalized.lower():
+            return "Onboarding terms are part of the commercial comparison set."
+        return normalized
+    if category == "offer":
+        if "trial" in normalized.lower():
+            return "Trial-based acquisition pressure is visible in the source set."
+        if any(token in normalized.lower() for token in ("discount", "voucher", "scholarship")):
+            return "Discount-led acquisition pressure is visible in the source set."
+        return normalized
+    if category == "positioning":
+        if any(token in normalized.lower() for token in ("ai", "automation", "intelligence")):
+            return "AI or automation-led positioning appears in the source set."
+        if any(token in normalized.lower() for token in ("speed", "faster", "implementation", "no code", "no engineering")):
+            return "Speed or ease-of-implementation claims appear in the source set."
+        return normalized
+    if category == "proof":
+        if any(token in normalized.lower() for token in ("testimonial", "customer", "case study", "logo")):
+            return "Proof language like testimonials or customer examples appears in the source set."
+        if "integration" in normalized.lower():
+            return "Integration claims are being used as proof in the source set."
+        return normalized
+    if category == "timing":
+        return normalized
+    return normalized
+
+
+def normalize_fact_label(value: str) -> str | None:
+    cleaned = " ".join(value.strip().split())
+    if not cleaned or len(cleaned) < 12:
+        return None
+    lowered = cleaned.lower()
+    for prefix in (
+        "uploaded file:",
+        "extracted content:",
+        "fetched content:",
+        "the document compares",
+        "this document compares",
+        "the report compares",
+        "the document highlights",
+        "the document reviews",
+        "competitive analysis in",
+        "competitive analysis of",
+        "industry memo about",
+    ):
+        if lowered.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip(" :.-")
+            lowered = cleaned.lower()
+    if not cleaned or len(cleaned) < 12 or is_technical_residue(cleaned):
+        return None
+    if cleaned[-1] not in ".!?":
+        cleaned = f"{cleaned}."
+    return cleaned[:180]
+
+
+def normalize_competitor_fact(value: str) -> str | None:
+    cleaned = clean_entity(re.sub(r"\bfocus\b$", "", value, flags=re.IGNORECASE).strip(" .:-"))
+    if not cleaned:
+        return None
+    return cleaned
+
+
+def summarize_market_fact_patterns(fact_chips: list[dict[str, Any]]) -> list[str]:
+    categories = {chip["category"] for chip in fact_chips}
+    items: list[str] = []
+    if "pricing" in categories:
+        items.append("Pricing or packaging pressure is visible in the current source set.")
+    if "offer" in categories:
+        items.append("Offer-led acquisition pressure is visible in the current source set.")
+    if "proof" in categories:
+        items.append("Proof signals are shaping buyer trust in the current comparison set.")
+    if "positioning" in categories:
+        items.append("Positioning language is converging around clear buyer-facing claims.")
+    if "opportunity" in categories:
+        items.append("At least one asymmetric opportunity is visible in the competitive landscape.")
+    return items
+
+
+def extract_segment_facts(text: str) -> list[str]:
+    patterns = (
+        r"\b(U\d{1,2}\s+(?:families|players|segment))\b",
+        r"\b(agency customers?|seo teams?|mid-market buyers?|enterprise buyers?|comparison-stage buyers?|parents)\b",
+        r"\b(smb plans?|local families|renewal-stage customers?)\b",
+    )
+    segments: list[str] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            value = " ".join(match.group(1).split())
+            normalized = value.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            segments.append(f"Buyer segment in play: {value}.")
+    return segments[:4]
 
 
 def build_competitive_snapshot(

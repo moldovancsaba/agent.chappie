@@ -75,6 +75,14 @@ type ManagementStatus = {
 } | null;
 type WorkspaceSnapshot = {
   project_id: string;
+  fact_chips: Array<{
+    fact_id: string;
+    category: string;
+    label: string;
+    confidence: number;
+    source_refs: string[];
+    evidence_refs: string[];
+  }>;
   source_cards: SourceCard[];
   knowledge_cards: KnowledgeCard[];
   recent_sources: Array<{
@@ -210,6 +218,34 @@ function titleCaseWords(value: string) {
 }
 
 function humanizeSignalType(value: string) {
+  return titleCaseWords(value.replaceAll("_", " "));
+}
+
+function humanizeFactCategory(value: string) {
+  if (value === "pricing") {
+    return "Pricing";
+  }
+  if (value === "offer") {
+    return "Offer";
+  }
+  if (value === "positioning") {
+    return "Positioning";
+  }
+  if (value === "proof") {
+    return "Proof";
+  }
+  if (value === "segment") {
+    return "Segment";
+  }
+  if (value === "timing") {
+    return "Timing";
+  }
+  if (value === "opportunity") {
+    return "Opportunity";
+  }
+  if (value === "competitor") {
+    return "Competitor";
+  }
   return titleCaseWords(value.replaceAll("_", " "));
 }
 
@@ -1222,6 +1258,28 @@ export function DemoWorkspace() {
                   </ul>
                 </div>
               </article>
+
+              {workspace?.fact_chips.length ? (
+                <article className="intel-card">
+                  <div className="operator-head">
+                    <h3>Business Facts In Play</h3>
+                    <span>{workspace.fact_chips.length} normalized facts</span>
+                  </div>
+                  <p>These chips are worker-normalized business facts derived from the current source set. They feed the knowledge cards and future checklist moves.</p>
+                  <div className="evidence-chip-list">
+                    {workspace.fact_chips.map((chip) => (
+                      <button
+                        className="evidence-chip"
+                        key={chip.fact_id}
+                        type="button"
+                        onClick={() => setFocusedSourceRef(chip.source_refs[0] ?? null)}
+                      >
+                        {humanizeFactCategory(chip.category)}: {chip.label}
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              ) : null}
 
               <div className="intel-columns">
                 {filteredKnowledgeCards.length ? (

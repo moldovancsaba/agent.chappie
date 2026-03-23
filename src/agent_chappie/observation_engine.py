@@ -93,6 +93,20 @@ ENTITY_NOISE_WORDS = {
     "vendors",
 }
 REGION_TERMS = ("cluster", "region", "county", "city", "area", "district", "zone")
+NEGATION_PATTERNS = (
+    "no",
+    "not",
+    "without",
+    "does not",
+    "did not",
+    "is not",
+    "are not",
+    "never",
+    "lack",
+    "lacks",
+    "lacking",
+    "absence of",
+)
 
 
 def extract_observations(source: SourcePackage, observed_at: str | None = None) -> list[dict[str, Any]]:
@@ -113,6 +127,8 @@ def extract_observations(source: SourcePackage, observed_at: str | None = None) 
 
     for signal_type, keywords, impact, confidence_band in SIGNAL_RULES:
         for clause in matching_clauses(clauses, keywords):
+            if is_negated_signal_clause(clause, keywords):
+                continue
             clause_context = infer_context(clause, source.project_summary)
             clause_competitor = source.competitor or clause_context["competitor"] or competitor
             clause_region = source.region or clause_context["region"] or region
@@ -720,6 +736,22 @@ def matching_clauses(clauses: list[str], keywords: tuple[str, ...]) -> list[str]
         if any(keyword in normalized for keyword in keywords):
             matches.append(clause)
     return matches
+
+
+def is_negated_signal_clause(clause: str, keywords: tuple[str, ...]) -> bool:
+    normalized = " ".join(clause.lower().split())
+    if not any(keyword in normalized for keyword in keywords):
+        return False
+    for keyword in keywords:
+        escaped = re.escape(keyword)
+        if re.search(
+            rf"\b(?:{'|'.join(re.escape(pattern) for pattern in NEGATION_PATTERNS)})\b(?:\s+\w+){{0,3}}\s+{escaped}\b",
+            normalized,
+        ):
+            return True
+        if re.search(rf"\b{escaped}\b(?:\s+\w+){{0,3}}\s+\b(?:missing|absent|unavailable)\b", normalized):
+            return True
+    return False
 
 
 def humanize_region(region: str) -> str:
