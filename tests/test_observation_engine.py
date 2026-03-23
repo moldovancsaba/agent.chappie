@@ -16,6 +16,7 @@ from agent_chappie.observation_engine import (
     deduplicate_observations,
     extract_observations,
     generate_recommended_tasks,
+    infer_context,
 )
 from agent_chappie.local_store import (
     fetch_knowledge_rows,
@@ -44,6 +45,23 @@ class ObservationEngineTests(unittest.TestCase):
         self.assertIn("offer", signal_types)
         self.assertIn("proof_signal", signal_types)
 
+    def test_extract_observations_keeps_atomic_competitor_specific_signals(self) -> None:
+        source = SourcePackage(
+            project_id="project_002",
+            source_kind="manual_text",
+            project_summary="North Cluster soccer academy",
+            raw_text="FlowOps raised U14 prices by 15%, Essex County Club launched a free-trial campaign, and Westover Academy may close before the next intake.",
+            source_ref="source_002",
+        )
+        observations = extract_observations(source)
+        summaries = {observation["summary"] for observation in observations}
+        competitors = {observation["competitor"] for observation in observations}
+        self.assertIn("FlowOps", competitors)
+        self.assertIn("Essex County Club", competitors)
+        self.assertIn("Westover Academy", competitors)
+        self.assertTrue(any("raised U14 prices by 15%" in summary for summary in summaries))
+        self.assertTrue(any("free-trial campaign" in summary for summary in summaries))
+
     def test_deduplicate_observations_ignores_similar_recent_signal(self) -> None:
         source = SourcePackage(
             project_id="project_001",
@@ -71,10 +89,20 @@ class ObservationEngineTests(unittest.TestCase):
         observations = extract_observations(source)
         result_payload = generate_recommended_tasks(source, observations)
         self.assertEqual(result_payload["recommended_tasks"][0]["rank"], 1)
-        self.assertLessEqual(len(result_payload["recommended_tasks"]), 3)
-        self.assertIn("publish", result_payload["recommended_tasks"][0]["title"].lower())
+        self.assertEqual(len(result_payload["recommended_tasks"]), 3)
+        self.assertIn("update the", result_payload["recommended_tasks"][0]["title"].lower())
         self.assertIn("enrollment", result_payload["recommended_tasks"][0]["expected_advantage"].lower())
         self.assertIn("raised prices", result_payload["recommended_tasks"][0]["why_now"].lower())
+        self.assertNotIn("improve", result_payload["recommended_tasks"][0]["title"].lower())
+
+    def test_infer_context_recovers_competitor_and_region_for_fresh_project(self) -> None:
+        inferred = infer_context(
+            "Essex County Club launched a free-trial campaign for North Cluster families.",
+            "managed_on_worker",
+        )
+        self.assertEqual(inferred["competitor"], "Essex County Club")
+        self.assertEqual(inferred["region"], "north_cluster")
+        self.assertGreaterEqual(float(inferred["confidence"]), 0.9)
 
     def test_local_store_persists_observations_and_knowledge(self) -> None:
         source = SourcePackage(

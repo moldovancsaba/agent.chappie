@@ -35,7 +35,7 @@ class TaskCandidate:
 
 SIGNAL_RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     ("pricing_change", ("price", "pricing", "fee", "fees", "raised pricing", "discount", "voucher"), "high", "high"),
-    ("opening", ("open", "opening", "launch", "new school", "new academy"), "medium", "high"),
+    ("opening", ("open", "opening", "opened", "new school", "new academy"), "medium", "high"),
     ("closure", ("close", "closure", "shut down", "for sale", "sale of school"), "high", "high"),
     ("staffing", ("coach", "staff", "hiring", "academy director"), "low", "medium"),
     ("offer", ("offer", "trial", "scholarship", "discount", "voucher", "free onboarding"), "medium", "high"),
@@ -46,6 +46,23 @@ SIGNAL_RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
 )
 SIGNAL_KEYWORDS = tuple({keyword for _, keywords, _, _ in SIGNAL_RULES for keyword in keywords})
 URL_MIN_CONTENT_CHARS = 280
+GENERIC_ENTITY_WORDS = {
+    "The",
+    "Our",
+    "Current",
+    "Sales",
+    "Context",
+    "Source",
+    "URL",
+    "Host",
+    "Fetched",
+    "Title",
+    "Content",
+    "Map",
+    "Home",
+    "Page",
+}
+REGION_TERMS = ("cluster", "region", "county", "city", "area", "district", "zone")
 
 
 def extract_observations(source: SourcePackage, observed_at: str | None = None) -> list[dict[str, Any]]:
@@ -65,22 +82,24 @@ def extract_observations(source: SourcePackage, observed_at: str | None = None) 
     clauses = extract_clauses(text)
 
     for signal_type, keywords, impact, confidence_band in SIGNAL_RULES:
-        matching_clause = first_matching_clause(clauses, keywords)
-        if matching_clause:
-            summary = build_summary(signal_type, matching_clause)
-            dedupe_key = (signal_type, summary.lower())
+        for clause in matching_clauses(clauses, keywords):
+            clause_context = infer_context(clause, source.project_summary)
+            clause_competitor = source.competitor or clause_context["competitor"] or competitor
+            clause_region = source.region or clause_context["region"] or region
+            summary = build_summary(signal_type, clause)
+            dedupe_key = (signal_type, clause_competitor.lower(), summary.lower())
             if dedupe_key in seen_keys:
                 continue
             seen_keys.add(dedupe_key)
             observation = {
-                "signal_id": build_signal_id(source.project_id, signal_type, competitor, summary, source.source_ref),
+                "signal_id": build_signal_id(source.project_id, signal_type, clause_competitor, summary, source.source_ref),
                 "signal_type": signal_type,
-                "competitor": competitor,
-                "region": region,
+                "competitor": clause_competitor,
+                "region": clause_region,
                 "summary": summary,
                 "source_ref": source.source_ref,
                 "observed_at": timestamp,
-                "confidence": band_to_confidence(confidence_band),
+                "confidence": max(band_to_confidence(confidence_band), float(clause_context["confidence"])),
                 "business_impact": impact,
             }
             observations.append(validate_system_observation(observation))
@@ -141,29 +160,30 @@ def observation_to_task(source: SourcePackage, observation: dict[str, Any]) -> T
     region = humanize_region(observation["region"])
     domain = infer_domain(source)
     signal_phrase = extract_signal_phrase(summary)
+    detail = extract_action_detail(signal_phrase)
 
     task: dict[str, Any] | None = None
 
     if signal_type == "pricing_change":
         task = {
             "rank": 0,
-            "title": f"Publish a 7-day comparison offer and update the pricing page against {competitor}'s latest fee change",
-            "why_now": f"{competitor} changed pricing in {region}: {signal_phrase}. Launching a visible counter-offer this week addresses the exact comparison parents or buyers are making right now.",
+            "title": build_pricing_task_title(competitor, detail, domain),
+            "why_now": f"{competitor} changed pricing in {region}: {signal_phrase}. Matching the move with a concrete offer this week gives buyers a direct alternative before the next comparison cycle closes.",
             "expected_advantage": measurable_advantage(domain, "pricing"),
             "evidence_refs": evidence,
         }
     elif signal_type == "closure":
         task = {
             "rank": 0,
-            "title": f"Contact {competitor}'s owner this week about acquiring released customers, staff, or equipment",
-            "why_now": f"{competitor} is showing a closure or distress signal in {region}: {signal_phrase}. Direct outreach this week is time-sensitive before another operator captures the same assets.",
+            "title": build_closure_task_title(competitor, detail),
+            "why_now": f"{competitor} is showing a closure or distress signal in {region}: {signal_phrase}. Direct outreach this week is time-sensitive before another operator captures the same families, staff, or assets.",
             "expected_advantage": measurable_advantage(domain, "acquisition"),
             "evidence_refs": evidence,
         }
     elif signal_type == "asset_sale":
         task = {
             "rank": 0,
-            "title": "Request the asset list and place a bid on discounted equipment before the sell-off closes",
+            "title": build_asset_sale_task_title(detail),
             "why_now": f"An asset-sale signal was detected in {region}: {signal_phrase}. Acting this week turns a competitor event into a fast cost-saving move instead of a missed bargain.",
             "expected_advantage": measurable_advantage(domain, "cost"),
             "evidence_refs": evidence,
@@ -171,16 +191,16 @@ def observation_to_task(source: SourcePackage, observation: dict[str, Any]) -> T
     elif signal_type == "opening":
         task = {
             "rank": 0,
-            "title": f"Send a local comparison campaign before {competitor} opens in {region}",
-            "why_now": f"{competitor} is signaling an opening or expansion in {region}: {signal_phrase}. A local comparison push this week helps lock in prospects before the new option gains momentum.",
+            "title": build_opening_task_title(competitor, region, detail),
+            "why_now": f"{competitor} is signaling an opening or expansion in {region}: {signal_phrase}. A specific comparison push this week helps lock in prospects before the new option gains momentum.",
             "expected_advantage": measurable_advantage(domain, "conversion"),
             "evidence_refs": evidence,
         }
     elif signal_type in {"offer", "proof_signal", "messaging_shift"}:
         task = {
             "rank": 0,
-            "title": f"Rewrite the homepage hero and sales script this week to answer {competitor}'s latest claim",
-            "why_now": f"{competitor} changed customer-facing messaging in {region}: {signal_phrase}. Rewriting the first impression now prevents the competitor narrative from owning the buying conversation.",
+            "title": build_positioning_task_title(competitor, signal_type, detail, domain),
+            "why_now": f"{competitor} changed customer-facing messaging in {region}: {signal_phrase}. Updating the highest-exposure conversion touchpoint this week prevents the competitor narrative from owning the buying conversation.",
             "expected_advantage": measurable_advantage(domain, "positioning"),
             "evidence_refs": evidence,
         }
@@ -340,21 +360,37 @@ def infer_context(source_text: str, project_summary: str) -> dict[str, str | flo
 
 
 def infer_competitor(project_summary: str, raw_text: str) -> str:
-    for text in (raw_text, project_summary):
-        matches = re.findall(r"\b[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,2}\b", text)
-        for match in matches:
-            if match.lower() not in {"The", "Our", "Current", "Sales", "Context"}:
-                return match
+    explicit = extract_named_entity_after_labels(raw_text, ("competitor", "academy", "club", "school"))
+    if explicit:
+        return explicit
+
+    host = extract_labeled_field(raw_text, "Source Host")
+    if host:
+        host_name = host_to_entity(host)
+        if host_name:
+            return host_name
+
+    title = extract_labeled_field(raw_text, "Fetched Title")
+    for text in (title, raw_text, project_summary):
+        entity = first_viable_entity(extract_named_entities(text))
+        if entity:
+            return entity
     return "regional_competitor_unknown"
 
 
 def infer_region(project_summary: str, raw_text: str) -> str:
-    explicit_match = re.search(r"\b(region|area|city)\s*[:\-]\s*([A-Za-z0-9\s]+)", f"{project_summary}\n{raw_text}", re.IGNORECASE)
+    region_tail = r"(cluster|region|county|city|area|district|zone)"
+    not_entity_suffix = r"(?!\s+(club|academy|school|fc|foundation)\b)"
+    explicit_match = re.search(
+        rf"\b(region|area|city|county|cluster|district|zone)\s*[:\-]\s*([A-Za-z0-9\s]+)",
+        f"{project_summary}\n{raw_text}",
+        re.IGNORECASE,
+    )
     if explicit_match:
-        return explicit_match.group(2).strip().lower().replace(" ", "_")
+        return re.sub(r"^(in|at|near|for)_", "", explicit_match.group(2).strip().lower().replace(" ", "_"))
 
     project_summary_match = re.search(
-        r"\b([A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)\s+(cluster|region|county|city|area)\b",
+        rf"\b([A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)\s+{region_tail}\b{not_entity_suffix}",
         project_summary,
         re.IGNORECASE,
     )
@@ -362,9 +398,24 @@ def infer_region(project_summary: str, raw_text: str) -> str:
         region_name = f"{project_summary_match.group(1)}_{project_summary_match.group(2)}".strip().lower().replace(" ", "_")
         return re.sub(r"^(in|at|near)_", "", region_name)
 
-    raw_text_match = re.search(r"\b(region|area|city)\s*[:\-]\s*([A-Za-z0-9\s]+)", raw_text, re.IGNORECASE)
+    raw_text_match = re.search(
+        rf"\b(region|area|city|county|cluster|district|zone)\s*[:\-]\s*([A-Za-z0-9\s]+)",
+        raw_text,
+        re.IGNORECASE,
+    )
     if raw_text_match:
-        return raw_text_match.group(2).strip().lower().replace(" ", "_")
+        return re.sub(r"^(in|at|near|for)_", "", raw_text_match.group(2).strip().lower().replace(" ", "_"))
+    region_phrase = re.search(
+        rf"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+{region_tail}\b{not_entity_suffix}",
+        raw_text,
+        re.IGNORECASE,
+    )
+    if region_phrase:
+        return re.sub(
+            r"^(in|at|near|for)_",
+            "",
+            f"{region_phrase.group(1)}_{region_phrase.group(2)}".strip().lower().replace(" ", "_"),
+        )
     return "region_unknown"
 
 
@@ -396,6 +447,15 @@ def first_matching_clause(clauses: list[str], keywords: tuple[str, ...]) -> str 
         if any(keyword in normalized for keyword in keywords):
             return clause
     return None
+
+
+def matching_clauses(clauses: list[str], keywords: tuple[str, ...]) -> list[str]:
+    matches: list[str] = []
+    for clause in clauses:
+        normalized = clause.lower()
+        if any(keyword in normalized for keyword in keywords):
+            matches.append(clause)
+    return matches
 
 
 def humanize_region(region: str) -> str:
@@ -446,6 +506,7 @@ def fetch_url_text(url: str) -> dict[str, str]:
     body = html
     body = re.sub(r"<script\b[^>]*>.*?</script>", " ", body, flags=re.IGNORECASE | re.DOTALL)
     body = re.sub(r"<style\b[^>]*>.*?</style>", " ", body, flags=re.IGNORECASE | re.DOTALL)
+    body = extract_primary_html_block(body)
     body = strip_html(body)
     body = remove_boilerplate_lines(body)
     body = " ".join(body.split())
@@ -470,6 +531,18 @@ def strip_html(value: str) -> str:
     return re.sub(r"<[^>]+>", " ", value)
 
 
+def extract_primary_html_block(html: str) -> str:
+    for pattern in (
+        r"<main\b[^>]*>(.*?)</main>",
+        r"<article\b[^>]*>(.*?)</article>",
+        r"<body\b[^>]*>(.*?)</body>",
+    ):
+        match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+        if match:
+            return match.group(1)
+    return html
+
+
 def remove_boilerplate_lines(value: str) -> str:
     parts = [segment.strip() for segment in re.split(r"[\n\r\t]+", value)]
     kept: list[str] = []
@@ -477,7 +550,9 @@ def remove_boilerplate_lines(value: str) -> str:
         normalized = " ".join(part.split())
         if len(normalized) < 24:
             continue
-        if normalized.lower().startswith(("skip to", "privacy", "cookie", "menu", "navigation", "search")):
+        if normalized.lower().startswith(("skip to", "privacy", "cookie", "menu", "navigation", "search", "sign in", "log in")):
+            continue
+        if any(token in normalized.lower() for token in ("all rights reserved", "javascript", "enable cookies", "subscribe", "newsletter")):
             continue
         kept.append(normalized)
     return " ".join(kept)
@@ -514,6 +589,62 @@ def measurable_advantage(domain: str, advantage_type: str) -> str:
     return lookup[advantage_type]
 
 
+def extract_action_detail(signal_phrase: str) -> dict[str, str | None]:
+    tier_match = re.search(r"\b(U\d{1,2}|under\s*\d{1,2})\b", signal_phrase, re.IGNORECASE)
+    percent_match = re.search(r"\b(\d{1,2}(?:\.\d+)?\s?%)\b", signal_phrase)
+    offer_match = re.search(r"\b(free[-\s]trial|trial offer|discount campaign|discount|voucher|scholarship)\b", signal_phrase, re.IGNORECASE)
+    timeframe_match = re.search(r"\b(this week|this month|before the next intake|before next intake|before enrollment closes)\b", signal_phrase, re.IGNORECASE)
+    return {
+        "tier": tier_match.group(1).upper().replace(" ", "") if tier_match else None,
+        "percent": percent_match.group(1).replace(" ", "") if percent_match else None,
+        "offer": offer_match.group(1).lower().replace("-", " ") if offer_match else None,
+        "timeframe": timeframe_match.group(1).lower() if timeframe_match else None,
+    }
+
+
+def build_pricing_task_title(competitor: str, detail: dict[str, str | None], domain: str) -> str:
+    tier = detail.get("tier")
+    percent = detail.get("percent")
+    if domain == "academy" and tier and percent:
+        return f"Update the {tier} pricing page and launch a 7-day comparison offer against {competitor}'s {percent} price move"
+    if domain == "academy" and tier:
+        return f"Update the {tier} pricing page and launch a 7-day comparison offer against {competitor}"
+    return f"Publish a 7-day comparison offer and update the pricing page against {competitor}'s latest fee change"
+
+
+def build_closure_task_title(competitor: str, detail: dict[str, str | None]) -> str:
+    timeframe = detail.get("timeframe") or "this week"
+    return f"Call {competitor}'s owner {timeframe} and ask for player, staff, and equipment availability"
+
+
+def build_asset_sale_task_title(detail: dict[str, str | None]) -> str:
+    return "Request the equipment inventory and submit a bid before the sell-off closes"
+
+
+def build_opening_task_title(competitor: str, region: str, detail: dict[str, str | None]) -> str:
+    offer = detail.get("offer")
+    if offer:
+        return f"Launch a local comparison campaign in {region} before {competitor} pushes its {offer}"
+    return f"Launch a local comparison campaign in {region} before {competitor} opens"
+
+
+def build_positioning_task_title(
+    competitor: str,
+    signal_type: str,
+    detail: dict[str, str | None],
+    domain: str,
+) -> str:
+    offer = detail.get("offer")
+    tier = detail.get("tier")
+    if domain == "academy" and offer and tier:
+        return f"Add a {offer} response for {tier} to the enrollment page and sales script this week"
+    if domain == "academy" and offer:
+        return f"Add a {offer} response to the enrollment page and sales script this week"
+    if signal_type == "proof_signal":
+        return "Add two parent testimonials and one proof strip to the enrollment page this week"
+    return f"Rewrite the enrollment-page hero and sales script this week to answer {competitor}'s latest claim"
+
+
 def contains_week_specific_action(title: str) -> bool:
     normalized = title.lower()
     return any(
@@ -530,6 +661,10 @@ def contains_week_specific_action(title: str) -> bool:
             "request",
             "send",
             "run a 7-day pilot",
+            "launch",
+            "update the",
+            "call",
+            "add a",
         )
     )
 
@@ -548,6 +683,63 @@ def token_overlap(left: set[str], right: set[str]) -> float:
 
 def band_to_confidence(band: str) -> float:
     return {"high": 0.84, "medium": 0.67}.get(band, 0.48)
+
+
+def extract_named_entity_after_labels(raw_text: str, labels: tuple[str, ...]) -> str | None:
+    for label in labels:
+        match = re.search(
+            rf"\b{label}\b\s*[:\-]\s*([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){{0,2}})",
+            raw_text,
+            re.IGNORECASE,
+        )
+        if match:
+            candidate = clean_entity(match.group(1))
+            if candidate:
+                return candidate
+    return None
+
+
+def extract_labeled_field(raw_text: str, label: str) -> str:
+    match = re.search(rf"{re.escape(label)}:\s*(.+)", raw_text)
+    return match.group(1).strip() if match else ""
+
+
+def host_to_entity(host: str) -> str | None:
+    domain = host.strip().lower().split(":")[0]
+    if not domain:
+        return None
+    base = domain.split(".")[0]
+    words = [word for word in re.split(r"[-_]+", base) if word and word not in {"www", "app"}]
+    if not words:
+        return None
+    return clean_entity(" ".join(word.capitalize() for word in words))
+
+
+def extract_named_entities(text: str) -> list[str]:
+    if not text:
+        return []
+    pattern = r"\b(?:[A-Z][a-zA-Z0-9]+|[A-Z]{2,}[a-zA-Z0-9]*)(?:\s+(?:[A-Z][a-zA-Z0-9]+|[A-Z]{2,}[a-zA-Z0-9]*)){0,2}\b"
+    return [match.group(0) for match in re.finditer(pattern, text)]
+
+
+def first_viable_entity(candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        cleaned = clean_entity(candidate)
+        if cleaned:
+            return cleaned
+    return None
+
+
+def clean_entity(value: str) -> str | None:
+    candidate = " ".join(value.strip().split())
+    if not candidate or len(candidate) < 3:
+        return None
+    words = candidate.split()
+    if any(word in GENERIC_ENTITY_WORDS for word in words):
+        return None
+    if words[-1].lower() in REGION_TERMS:
+        return None
+    return candidate
 
 
 def utc_now_iso() -> str:
