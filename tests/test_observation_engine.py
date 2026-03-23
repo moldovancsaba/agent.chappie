@@ -90,10 +90,33 @@ class ObservationEngineTests(unittest.TestCase):
         result_payload = generate_recommended_tasks(source, observations)
         self.assertEqual(result_payload["recommended_tasks"][0]["rank"], 1)
         self.assertEqual(len(result_payload["recommended_tasks"]), 3)
-        self.assertIn("update the", result_payload["recommended_tasks"][0]["title"].lower())
-        self.assertIn("enrollment", result_payload["recommended_tasks"][0]["expected_advantage"].lower())
-        self.assertIn("raised prices", result_payload["recommended_tasks"][0]["why_now"].lower())
-        self.assertNotIn("improve", result_payload["recommended_tasks"][0]["title"].lower())
+        titles = [task["title"].lower() for task in result_payload["recommended_tasks"]]
+        self.assertTrue(any("update the" in title for title in titles))
+        self.assertTrue(any("bundled offer" in title or "call flowops" in title for title in titles))
+        self.assertTrue(any("enrollment" in task["expected_advantage"].lower() for task in result_payload["recommended_tasks"]))
+        self.assertTrue(any("raised prices" in task["why_now"].lower() for task in result_payload["recommended_tasks"]))
+        self.assertTrue(all("improve " not in title for title in titles))
+
+    def test_generate_recommended_tasks_combines_multi_signal_pricing_and_offer(self) -> None:
+        source = SourcePackage(
+            project_id="project_003",
+            source_kind="manual_text",
+            project_summary="North Cluster soccer academy",
+            raw_text=(
+                "FlowOps raised U14 prices by 15%, Essex County Club launched a free-trial campaign, "
+                "Westover Academy may close before the next intake, and Westover Academy started an equipment sell-off."
+            ),
+            source_ref="source_003",
+        )
+        observations = extract_observations(source)
+        result_payload = generate_recommended_tasks(source, observations)
+        top_task = result_payload["recommended_tasks"][0]
+        self.assertEqual(len(result_payload["recommended_tasks"]), 3)
+        self.assertGreaterEqual(len(top_task["evidence_refs"]), 2)
+        self.assertIn("switch", top_task["title"].lower())
+        self.assertIn("flowops", top_task["why_now"].lower())
+        self.assertIn("essex county club", top_task["why_now"].lower())
+        self.assertIn("intake window", top_task["expected_advantage"].lower())
 
     def test_infer_context_recovers_competitor_and_region_for_fresh_project(self) -> None:
         inferred = infer_context(

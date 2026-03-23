@@ -112,9 +112,10 @@ def generate_recommended_tasks(
     observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
     scored_by_title: dict[str, TaskCandidate] = {}
-    for observation in observations:
-        candidate = observation_to_task(source, observation)
+    for candidate in build_task_candidates(source, observations):
         if candidate and candidate.total_score >= 15:
+            if not passes_task_quality_gate(candidate.task):
+                continue
             key = normalize_task_title(candidate.task["title"])
             existing = scored_by_title.get(key)
             if existing is None or candidate.total_score > existing.total_score:
@@ -150,6 +151,63 @@ def generate_recommended_tasks(
         if len(tasks) == 3
         else "High-confidence competitive actions were prioritized from current source input and stored market observations.",
     }
+
+
+def build_task_candidates(source: SourcePackage, observations: list[dict[str, Any]]) -> list[TaskCandidate]:
+    candidates: list[TaskCandidate] = []
+    candidates.extend(build_multi_signal_candidates(source, observations))
+    for observation in observations:
+        candidate = observation_to_task(source, observation)
+        if candidate:
+            candidates.append(candidate)
+    return candidates
+
+
+def build_multi_signal_candidates(source: SourcePackage, observations: list[dict[str, Any]]) -> list[TaskCandidate]:
+    candidates: list[TaskCandidate] = []
+    pricing_observations = [obs for obs in observations if obs["signal_type"] == "pricing_change"]
+    offer_observations = [obs for obs in observations if obs["signal_type"] == "offer"]
+    closure_observations = [obs for obs in observations if obs["signal_type"] == "closure"]
+    asset_sale_observations = [obs for obs in observations if obs["signal_type"] == "asset_sale"]
+    proof_observations = [obs for obs in observations if obs["signal_type"] in {"proof_signal", "messaging_shift"}]
+
+    if pricing_observations and offer_observations:
+        pricing = pricing_observations[0]
+        offer = next(
+            (
+                candidate
+                for candidate in offer_observations
+                if candidate["region"] == pricing["region"] and candidate["competitor"] != pricing["competitor"]
+            ),
+            offer_observations[0],
+        )
+        candidates.append(build_pricing_offer_candidate(source, pricing, offer))
+
+    if closure_observations and asset_sale_observations:
+        closure = closure_observations[0]
+        asset = next(
+            (
+                candidate
+                for candidate in asset_sale_observations
+                if candidate["region"] == closure["region"] or candidate["competitor"] == closure["competitor"]
+            ),
+            asset_sale_observations[0],
+        )
+        candidates.append(build_closure_asset_candidate(source, closure, asset))
+
+    if proof_observations and offer_observations:
+        proof = proof_observations[0]
+        offer = next(
+            (
+                candidate
+                for candidate in offer_observations
+                if candidate["competitor"] == proof["competitor"] or candidate["region"] == proof["region"]
+            ),
+            offer_observations[0],
+        )
+        candidates.append(build_positioning_bundle_candidate(source, proof, offer))
+
+    return candidates
 
 
 def observation_to_task(source: SourcePackage, observation: dict[str, Any]) -> TaskCandidate | None:
@@ -236,6 +294,27 @@ def score_task_candidate(observation: dict[str, Any], task: dict[str, Any]) -> d
     }
 
 
+def score_multi_signal_candidate(observations: list[dict[str, Any]], task: dict[str, Any]) -> dict[str, int]:
+    strategic_signals = {observation["signal_type"] for observation in observations}
+    competitive_relevance = min(5, 4 + int(len(strategic_signals) > 1))
+    urgency = 5 if {"pricing_change", "closure", "asset_sale"} & strategic_signals else 4
+    actionability_this_week = 5 if contains_week_specific_action(task["title"]) else 3
+    highest_impact = 5 if any(observation["business_impact"] == "high" for observation in observations) else 4
+    evidence_strength = min(
+        5,
+        max(3, int(round(sum(float(observation["confidence"]) for observation in observations) / max(len(observations), 1) * 5))),
+    )
+    total_score = competitive_relevance + urgency + actionability_this_week + highest_impact + evidence_strength + 2
+    return {
+        "total_score": total_score,
+        "competitive_relevance": competitive_relevance,
+        "urgency": urgency,
+        "actionability_this_week": actionability_this_week,
+        "strategic_leverage": highest_impact,
+        "evidence_strength": evidence_strength,
+    }
+
+
 def deduplicate_observations(
     incoming: list[dict[str, Any]],
     existing: list[dict[str, Any]],
@@ -262,6 +341,96 @@ def deduplicate_observations(
         if not duplicate:
             deduped.append(candidate)
     return deduped
+
+
+def build_pricing_offer_candidate(
+    source: SourcePackage,
+    pricing_observation: dict[str, Any],
+    offer_observation: dict[str, Any],
+) -> TaskCandidate:
+    region = humanize_region(pricing_observation["region"])
+    domain = infer_domain(source)
+    pricing_detail = extract_action_detail(extract_signal_phrase(pricing_observation["summary"]))
+    offer_detail = extract_action_detail(extract_signal_phrase(offer_observation["summary"]))
+    tier = pricing_detail.get("tier") or "next intake"
+    offer_name = offer_detail.get("offer") or "switch offer"
+    title = (
+        f"Launch a 7-day switch campaign with a {offer_name} for {tier} families before {offer_observation['competitor']} and {pricing_observation['competitor']} reset the {region} market"
+        if domain == "academy"
+        else f"Launch a 7-day switch offer before {offer_observation['competitor']} and {pricing_observation['competitor']} reset buyer expectations"
+    )
+    task = {
+        "rank": 0,
+        "title": title,
+        "why_now": (
+            f"{pricing_observation['competitor']} raised pricing while {offer_observation['competitor']} pushed {offer_name} messaging in {region}. "
+            "A single switch campaign this week answers both price pressure and promotional pressure before families choose a competing path."
+        ),
+        "expected_advantage": (
+            "Captures switching parents before the intake window by giving price-sensitive families one visible alternative instead of losing them to either discount-led or premium-led competitor moves."
+            if domain == "academy"
+            else "Captures price-sensitive buyers before the active buying window closes and competitors reset the comparison frame."
+        ),
+        "evidence_refs": [pricing_observation["signal_id"], offer_observation["signal_id"]],
+    }
+    return TaskCandidate(task=task, **score_multi_signal_candidate([pricing_observation, offer_observation], task))
+
+
+def build_closure_asset_candidate(
+    source: SourcePackage,
+    closure_observation: dict[str, Any],
+    asset_observation: dict[str, Any],
+) -> TaskCandidate:
+    region = humanize_region(closure_observation["region"])
+    domain = infer_domain(source)
+    title = (
+        f"Call {closure_observation['competitor']}'s owner and submit one bundled offer for players, equipment, and facility access before the closure finalizes"
+    )
+    task = {
+        "rank": 0,
+        "title": title,
+        "why_now": (
+            f"{closure_observation['competitor']} is showing closure pressure and an asset-sale signal in {region}. "
+            "A bundled offer this week turns two distress signals into one asymmetric expansion move before other operators react."
+        ),
+        "expected_advantage": (
+            "Acquires players and equipment at low cost before closure finalizes, creating immediate growth capacity without waiting for organic expansion."
+            if domain == "academy"
+            else "Captures customers, assets, or operating capacity at low cost before the distressed competitor exits."
+        ),
+        "evidence_refs": [closure_observation["signal_id"], asset_observation["signal_id"]],
+    }
+    return TaskCandidate(task=task, **score_multi_signal_candidate([closure_observation, asset_observation], task))
+
+
+def build_positioning_bundle_candidate(
+    source: SourcePackage,
+    proof_observation: dict[str, Any],
+    offer_observation: dict[str, Any],
+) -> TaskCandidate:
+    region = humanize_region(proof_observation["region"])
+    domain = infer_domain(source)
+    offer_name = extract_action_detail(extract_signal_phrase(offer_observation["summary"])).get("offer") or "offer-led"
+    title = (
+        f"Add a {offer_name} response, two proof points, and one urgency strip to the enrollment page before the next {region} intake"
+        if domain == "academy"
+        else f"Add one {offer_name} response and proof-led conversion strip before the next campaign cycle"
+    )
+    task = {
+        "rank": 0,
+        "title": title,
+        "why_now": (
+            f"{proof_observation['competitor']} is pairing customer-facing proof with {offer_name} messaging in {region}. "
+            "Updating the page this week lets you answer both trust and offer pressure with one conversion move."
+        ),
+        "expected_advantage": (
+            "Raises conversion among undecided parents before the next intake by combining proof, urgency, and a direct answer to the competitor offer."
+            if domain == "academy"
+            else "Improves conversion before the next campaign window by answering both proof and offer pressure in one place."
+        ),
+        "evidence_refs": [proof_observation["signal_id"], offer_observation["signal_id"]],
+    }
+    return TaskCandidate(task=task, **score_multi_signal_candidate([proof_observation, offer_observation], task))
 
 
 def build_signal_id(project_id: str, signal_type: str, competitor: str, summary: str, source_ref: str) -> str:
@@ -667,6 +836,55 @@ def contains_week_specific_action(title: str) -> bool:
             "add a",
         )
     )
+
+
+def passes_task_quality_gate(task: dict[str, Any]) -> bool:
+    title = task["title"].strip().lower()
+    why_now = task["why_now"].strip().lower()
+    expected_advantage = task["expected_advantage"].strip().lower()
+
+    generic_starts = (
+        "adjust ",
+        "improve ",
+        "optimize ",
+        "review ",
+        "analyze ",
+        "research ",
+        "monitor ",
+        "investigate ",
+        "evaluate ",
+    )
+    if title.startswith(generic_starts):
+        return False
+
+    if not contains_week_specific_action(task["title"]) and not any(
+        token in why_now for token in ("this week", "before", "next intake", "by friday", "7-day")
+    ):
+        return False
+
+    competitive_tokens = (
+        "competitor",
+        "price",
+        "pricing",
+        "offer",
+        "closure",
+        "distress",
+        "sell-off",
+        "switch",
+        "comparison",
+        "intake",
+    )
+    if not any(token in why_now or token in expected_advantage for token in competitive_tokens):
+        return False
+
+    vague_advantage_phrases = ("improve positioning", "reduce churn", "improves conversion", "improves win rate")
+    if any(expected_advantage == phrase for phrase in vague_advantage_phrases):
+        return False
+
+    if len(task["evidence_refs"]) < 1:
+        return False
+
+    return True
 
 
 def normalize_summary(summary: str) -> set[str]:
