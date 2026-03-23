@@ -44,6 +44,7 @@ from agent_chappie.observation_engine import (
     extract_named_entities,
     extract_observations,
     generate_recommended_tasks,
+    humanize_region,
     normalize_source_package,
     recover_source_context,
     repair_recommended_tasks,
@@ -706,23 +707,52 @@ def build_competitive_snapshot(
     knowledge_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     competitor = next((row["competitor"] for row in knowledge_rows if clean_entity(row["competitor"])), "Comparison set still forming")
+    pricing_observation = next((row for row in observation_rows if row["signal_type"] == "pricing_change"), None)
+    offer_observation = next((row for row in observation_rows if row["signal_type"] == "offer"), None)
+    closure_observation = next((row for row in observation_rows if row["signal_type"] == "closure"), None)
+    asset_sale_observation = next((row for row in observation_rows if row["signal_type"] == "asset_sale"), None)
+
     pricing_position = "No pricing pressure detected yet."
-    if any(row["signal_type"] == "pricing_change" for row in observation_rows):
-        pricing_position = "Pricing pressure is active in the comparison set."
+    if pricing_observation:
+        pricing_position = (
+            f"{pricing_observation['competitor']} is moving buyer price expectations in "
+            f"{humanize_region(pricing_observation['region'])}."
+        )
     elif any(card["knowledge_id"] == "pricing_packaging" and card["items"] and "No pricing" not in card["items"][0] for card in knowledge_cards):
         pricing_position = "Packaging pressure is visible even though direct pricing changes are still thin."
 
     acquisition_strategy = "Trial or offer pressure is limited right now."
-    if any(row["signal_type"] in {"offer", "asset_sale"} for row in observation_rows):
-        acquisition_strategy = "Offer-led acquisition pressure is visible in the current source set."
+    if offer_observation:
+        acquisition_strategy = (
+            f"{offer_observation['competitor']} is using offer-led acquisition pressure in "
+            f"{humanize_region(offer_observation['region'])}."
+        )
+    elif asset_sale_observation:
+        acquisition_strategy = (
+            f"{asset_sale_observation['competitor']} is creating a cost-side acquisition opening through asset pressure."
+        )
 
-    active_threats = [row["summary"] for row in observation_rows[:3]] or ["No immediate competitive threats are strongly evidenced yet."]
+    active_threats = [summarize_observation_threat(row) for row in observation_rows[:3]] or ["No immediate competitive threats are strongly evidenced yet."]
     immediate_opportunities = []
+    if closure_observation:
+        immediate_opportunities.append(
+            f"Move first on {closure_observation['competitor']} before the closure pressure turns into someone else's acquisition gain."
+        )
+    if offer_observation and pricing_observation:
+        immediate_opportunities.append(
+            f"Answer both {offer_observation['competitor']}'s offer pressure and {pricing_observation['competitor']}'s pricing move with one visible comparison response."
+        )
     open_questions_card = next((card for card in knowledge_cards if card["knowledge_id"] == "open_questions"), None)
-    if open_questions_card:
-        immediate_opportunities.extend(open_questions_card["potential_moves"][:2])
+    if open_questions_card and len(immediate_opportunities) < 3:
+        immediate_opportunities.extend(open_questions_card["potential_moves"][: 3 - len(immediate_opportunities)])
     if not immediate_opportunities:
         immediate_opportunities.append("Add one more source to sharpen the next recommendation cycle.")
+
+    risk_level = "low"
+    if closure_observation or (pricing_observation and offer_observation):
+        risk_level = "high"
+    elif pricing_observation or offer_observation or asset_sale_observation:
+        risk_level = "medium"
 
     return {
         "pricing_position": pricing_position,
@@ -730,6 +760,7 @@ def build_competitive_snapshot(
         "active_threats": active_threats,
         "immediate_opportunities": immediate_opportunities[:3],
         "reference_competitor": competitor,
+        "risk_level": risk_level,
     }
 
 
@@ -764,8 +795,9 @@ def build_source_insights(
     insights: dict[str, dict[str, Any]] = {}
     for row in source_rows:
         relevant_cards = [card for card in knowledge_cards if row["source_ref"] in card["source_refs"]]
-        takeaway = next((card["insight"] for card in relevant_cards if card["insight"]), "This source adds new market context.")
-        impact = next((card["implication"] for card in relevant_cards if card["implication"]), "This source strengthens what the system knows about the market.")
+        preferred_card = pick_source_priority_card(relevant_cards)
+        takeaway = preferred_card["insight"] if preferred_card else "This source adds new market context."
+        impact = preferred_card["implication"] if preferred_card else "This source strengthens what the system knows about the market."
         confidence = max((float(card["confidence"]) for card in relevant_cards), default=0.52)
         insights[row["source_ref"]] = {
             "key_takeaway": takeaway,
@@ -777,17 +809,35 @@ def build_source_insights(
 
 
 def derive_source_takeaway(row: dict[str, Any], knowledge_cards: list[dict[str, Any]]) -> str:
-    relevant_card = next((card for card in knowledge_cards if row["source_ref"] in card["source_refs"]), None)
+    relevant_cards = [card for card in knowledge_cards if row["source_ref"] in card["source_refs"]]
+    relevant_card = pick_source_priority_card(relevant_cards)
     return relevant_card["insight"] if relevant_card else "This source adds context to the local market picture."
 
 
 def derive_source_business_impact(row: dict[str, Any], knowledge_cards: list[dict[str, Any]]) -> str:
-    relevant_card = next((card for card in knowledge_cards if row["source_ref"] in card["source_refs"]), None)
+    relevant_cards = [card for card in knowledge_cards if row["source_ref"] in card["source_refs"]]
+    relevant_card = pick_source_priority_card(relevant_cards)
     return relevant_card["implication"] if relevant_card else "Use this source to improve future recommendation quality."
 
 
 def derive_source_confidence(signal_count: int, knowledge_count: int) -> float:
     return min(0.45 + (signal_count * 0.08) + (knowledge_count * 0.03), 0.88)
+
+
+def pick_source_priority_card(relevant_cards: list[dict[str, Any]]) -> dict[str, Any] | None:
+    preferred_ids = [
+        "pricing_packaging",
+        "offer_positioning",
+        "competitors_detected",
+        "proof_signals",
+        "market_summary",
+        "open_questions",
+    ]
+    for knowledge_id in preferred_ids:
+        match = next((card for card in relevant_cards if card["knowledge_id"] == knowledge_id), None)
+        if match:
+            return match
+    return relevant_cards[0] if relevant_cards else None
 
 
 def parse_json_list(value: Any) -> list[str]:
@@ -801,6 +851,21 @@ def parse_json_list(value: Any) -> list[str]:
         if isinstance(parsed, list):
             return [str(item) for item in parsed if str(item).strip()]
     return []
+
+
+def summarize_observation_threat(observation: dict[str, Any]) -> str:
+    competitor = observation.get("competitor") or "A competitor"
+    region = humanize_region(observation.get("region", "region_unknown"))
+    signal_type = observation.get("signal_type")
+    if signal_type == "pricing_change":
+        return f"{competitor} is changing pricing pressure in {region}."
+    if signal_type == "offer":
+        return f"{competitor} is using a direct offer to win buyers in {region}."
+    if signal_type == "closure":
+        return f"{competitor} is unstable in {region}, creating a fast-moving capture opportunity."
+    if signal_type == "asset_sale":
+        return f"{competitor} is creating a low-cost asset opportunity in {region}."
+    return observation.get("summary", "A competitive change is active.")
 
 
 def knowledge_card(

@@ -101,6 +101,7 @@ type WorkspaceSnapshot = {
     active_threats: string[];
     immediate_opportunities: string[];
     reference_competitor: string;
+    risk_level?: string;
   };
   knowledge_summary: Array<{
     competitor: string;
@@ -1198,6 +1199,10 @@ export function DemoWorkspace() {
                   <div className="summary-row">
                     <span>Acquisition comparison</span>
                     <strong>{workspace?.competitive_snapshot.acquisition_strategy_comparison ?? "Still forming"}</strong>
+                  </div>
+                  <div className="summary-row">
+                    <span>Risk level</span>
+                    <strong>{titleCaseWords(workspace?.competitive_snapshot.risk_level ?? "medium")}</strong>
                   </div>
                 </div>
                 <div className="task-block">

@@ -85,6 +85,7 @@ export type WorkerWorkspacePayload = {
     active_threats: string[];
     immediate_opportunities: string[];
     reference_competitor: string;
+    risk_level?: string;
   };
   knowledge_summary: Array<{
     competitor: string;

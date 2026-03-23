@@ -177,7 +177,7 @@ def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name:
 
 
 def save_source_snapshot(source: dict[str, Any], source_hash: str, path: str | None = None) -> None:
-    display_label = source.get("file_name") or source.get("source_ref")
+    display_label = derive_source_display_label(source)
     with _connect(path) as connection:
         connection.execute(
             """
@@ -216,6 +216,17 @@ def save_source_snapshot(source: dict[str, Any], source_hash: str, path: str | N
                 "received",
             ),
         )
+
+
+def derive_source_display_label(source: dict[str, Any]) -> str:
+    if source.get("file_name"):
+        return str(source["file_name"])
+    raw_text = str(source.get("raw_text") or "").strip()
+    first_clause = raw_text.splitlines()[0].split(".")[0].strip() if raw_text else ""
+    if source.get("source_kind") == "manual_text" and first_clause:
+        compact = " ".join(first_clause.split())
+        return compact[:72] + ("..." if len(compact) > 72 else "")
+    return str(source.get("source_ref") or "Source")
 
 
 def insert_observations(project_id: str, observations: list[dict[str, Any]], path: str | None = None) -> None:
