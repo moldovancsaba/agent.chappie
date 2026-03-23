@@ -7,6 +7,7 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 ## What the app does
 
 - accepts one raw competitive context input
+- accepts a pasted URL, raw text block, or extracted file text as raw source material
 - submits one `Job Request v1`
 - retrieves one `Job Result v1`
 - submits one `Feedback v1`
@@ -68,6 +69,7 @@ Phase 5 upgrades the app to support the first real private worker bridge while k
 The app-side bridge entrypoint is:
 
 - `POST /api/jobs`
+- `GET /api/projects/[projectId]/workspace`
 
 The worker remains protected by a shared-secret header and returns only user-facing ranked tasks.
 The app sends only raw source material and job identity. It does not send competitor, region, or project-summary fields.
@@ -83,6 +85,23 @@ The app now depends on a two-layer intelligence model:
 
 The app must not expose the internal observation layer directly.
 The app must not collect or fabricate general project metadata that belongs in the worker brain.
+
+## Ingestion behavior
+
+- URL-only submissions are fetched and normalized on the Mac mini worker before signal extraction
+- raw text submissions are stored as local source snapshots before signal extraction
+- if the worker cannot derive three distinct, high-confidence actions from the ingested evidence, it must return a blocked result instead of filler tasks
+
+## Sources and activity
+
+`Know More` and `Sources & Jobs` now read from worker-generated workspace data:
+
+- recent ingested source snapshots
+- recent signal-derived activity
+- compressed market summary
+- monitor job status
+
+The frontend must not invent source inventory or recurring job history.
 
 ## Local development
 

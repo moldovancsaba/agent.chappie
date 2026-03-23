@@ -299,3 +299,44 @@ def fetch_knowledge_rows(project_id: str, path: str | None = None) -> list[dict[
             (project_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_recent_source_snapshots(project_id: str, limit: int = 10, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              source_ref,
+              project_id,
+              source_kind,
+              project_summary,
+              raw_text,
+              competitor,
+              region,
+              created_at
+            from source_snapshots
+            where project_id = ?
+            order by created_at desc
+            limit ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_monitor_rows(path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              job_name,
+              last_run_at,
+              last_source_ref,
+              status,
+              details_json,
+              updated_at
+            from monitor_state
+            order by updated_at desc
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]

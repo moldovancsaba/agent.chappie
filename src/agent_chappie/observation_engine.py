@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -49,7 +51,6 @@ def extract_observations(source: SourcePackage, observed_at: str | None = None) 
     if not text:
         return []
 
-    normalized = text.lower()
     competitor = source.competitor or infer_competitor(source.project_summary, text)
     region = source.region or infer_region(source.project_summary, text)
     timestamp = observed_at or utc_now_iso()
@@ -78,20 +79,6 @@ def extract_observations(source: SourcePackage, observed_at: str | None = None) 
             }
             observations.append(validate_system_observation(observation))
 
-    if not observations:
-        observation = {
-            "signal_id": build_signal_id(source.project_id, "messaging_shift", competitor, text[:120], source.source_ref),
-            "signal_type": "messaging_shift",
-            "competitor": competitor,
-            "region": region,
-            "summary": summarize_text(text),
-            "source_ref": source.source_ref,
-            "observed_at": timestamp,
-            "confidence": 0.42,
-            "business_impact": "low",
-        }
-        observations.append(validate_system_observation(observation))
-
     return observations
 
 
@@ -99,12 +86,16 @@ def generate_recommended_tasks(
     source: SourcePackage,
     observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    scored: list[TaskCandidate] = []
+    scored_by_title: dict[str, TaskCandidate] = {}
     for observation in observations:
         candidate = observation_to_task(source, observation)
         if candidate and candidate.total_score >= 15:
-            scored.append(candidate)
+            key = normalize_task_title(candidate.task["title"])
+            existing = scored_by_title.get(key)
+            if existing is None or candidate.total_score > existing.total_score:
+                scored_by_title[key] = candidate
 
+    scored = list(scored_by_title.values())
     scored.sort(key=lambda item: item.total_score, reverse=True)
     tasks = []
     for index, candidate in enumerate(scored[:3], start=1):
@@ -112,7 +103,7 @@ def generate_recommended_tasks(
         task["rank"] = index
         tasks.append(task)
 
-    if not tasks:
+    if len(tasks) < 3:
         return validate_job_result(
             {
                 "job_id": "placeholder",
@@ -121,7 +112,7 @@ def generate_recommended_tasks(
                 "status": "blocked",
                 "completed_at": utc_now_iso(),
                 "result_payload": {
-                    "reason": "No strong competitive action was supported by the supplied evidence.",
+                    "reason": "The worker could not derive three distinct, high-confidence actions from the supplied evidence.",
                 },
             }
         )["result_payload"]
@@ -260,6 +251,69 @@ def build_source_hash(source: SourcePackage) -> str:
     return digest
 
 
+def detect_source_kind(raw_text: str) -> str:
+    stripped = raw_text.strip()
+    if stripped.startswith(("http://", "https://", "www.")):
+        return "url"
+    return "manual_text"
+
+
+def normalize_source_package(source: SourcePackage) -> SourcePackage:
+    source_kind = detect_source_kind(source.raw_text)
+    if source_kind != "url":
+        return source
+
+    url = extract_first_url(source.raw_text)
+    if not url:
+        return source
+
+    fetched = fetch_url_text(url)
+    raw_text = format_fetched_source(url, fetched["title"], fetched["content"])
+    return SourcePackage(
+        project_id=source.project_id,
+        source_kind="url",
+        project_summary=source.project_summary,
+        raw_text=raw_text,
+        source_ref=source.source_ref,
+        competitor=source.competitor,
+        region=source.region,
+    )
+
+
+def recover_source_context(source: SourcePackage, knowledge_rows: list[dict[str, Any]], source_rows: list[dict[str, Any]]) -> SourcePackage:
+    competitor = source.competitor
+    region = source.region
+    project_summary = source.project_summary
+
+    for row in knowledge_rows:
+        if not competitor:
+            competitor = row.get("competitor")
+        if not region:
+            region = row.get("region")
+        if competitor and region:
+            break
+
+    for row in source_rows:
+        if not competitor and row.get("competitor"):
+            competitor = row["competitor"]
+        if not region and row.get("region"):
+            region = row["region"]
+        if project_summary == "managed_on_worker" and row.get("project_summary") and row["project_summary"] != "managed_on_worker":
+            project_summary = row["project_summary"]
+        if competitor and region and project_summary != "managed_on_worker":
+            break
+
+    return SourcePackage(
+        project_id=source.project_id,
+        source_kind=source.source_kind,
+        project_summary=project_summary,
+        raw_text=source.raw_text,
+        source_ref=source.source_ref,
+        competitor=competitor,
+        region=region,
+    )
+
+
 def infer_competitor(project_summary: str, raw_text: str) -> str:
     for text in (raw_text, project_summary):
         matches = re.findall(r"\b[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,2}\b", text)
@@ -270,9 +324,22 @@ def infer_competitor(project_summary: str, raw_text: str) -> str:
 
 
 def infer_region(project_summary: str, raw_text: str) -> str:
-    match = re.search(r"\b(region|county|city|area)\s*[:\-]?\s*([A-Za-z0-9\s]+)", f"{project_summary}\n{raw_text}", re.IGNORECASE)
-    if match:
-        return match.group(2).strip().lower().replace(" ", "_")
+    explicit_match = re.search(r"\b(region|area|city)\s*[:\-]\s*([A-Za-z0-9\s]+)", f"{project_summary}\n{raw_text}", re.IGNORECASE)
+    if explicit_match:
+        return explicit_match.group(2).strip().lower().replace(" ", "_")
+
+    project_summary_match = re.search(
+        r"\b([A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)\s+(cluster|region|county|city|area)\b",
+        project_summary,
+        re.IGNORECASE,
+    )
+    if project_summary_match:
+        region_name = f"{project_summary_match.group(1)}_{project_summary_match.group(2)}".strip().lower().replace(" ", "_")
+        return re.sub(r"^(in|at|near)_", "", region_name)
+
+    raw_text_match = re.search(r"\b(region|area|city)\s*[:\-]\s*([A-Za-z0-9\s]+)", raw_text, re.IGNORECASE)
+    if raw_text_match:
+        return raw_text_match.group(2).strip().lower().replace(" ", "_")
     return "region_unknown"
 
 
@@ -321,6 +388,60 @@ def infer_domain(source: SourcePackage) -> str:
     if any(term in text for term in {"academy", "soccer", "football school", "sport school", "parents", "players"}):
         return "academy"
     return "general"
+
+
+def normalize_task_title(title: str) -> str:
+    return " ".join(title.lower().split())
+
+
+def extract_first_url(raw_text: str) -> str | None:
+    match = re.search(r"(https?://\S+|www\.\S+)", raw_text.strip())
+    if not match:
+        return None
+    url = match.group(1).rstrip(".,)")
+    if url.startswith("www."):
+        return f"https://{url}"
+    return url
+
+
+def fetch_url_text(url: str) -> dict[str, str]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Agent.Chappie/1.0 (+https://agent-chappie.vercel.app)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        html = response.read().decode(charset, errors="replace")
+
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    title = strip_html(title_match.group(1)) if title_match else url
+    body = html
+    body = re.sub(r"<script\b[^>]*>.*?</script>", " ", body, flags=re.IGNORECASE | re.DOTALL)
+    body = re.sub(r"<style\b[^>]*>.*?</style>", " ", body, flags=re.IGNORECASE | re.DOTALL)
+    body = strip_html(body)
+    body = " ".join(body.split())
+    return {
+        "title": title.strip()[:180],
+        "content": body[:6000],
+    }
+
+
+def format_fetched_source(url: str, title: str, content: str) -> str:
+    host = urllib.parse.urlparse(url).netloc or url
+    parts = [
+        f"Source URL: {url}",
+        f"Source Host: {host}",
+        f"Fetched Title: {title}",
+        f"Fetched Content: {content}",
+    ]
+    return "\n".join(parts)
+
+
+def strip_html(value: str) -> str:
+    return re.sub(r"<[^>]+>", " ", value)
 
 
 def measurable_advantage(domain: str, advantage_type: str) -> str:

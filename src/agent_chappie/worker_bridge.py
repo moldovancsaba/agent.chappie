@@ -11,9 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from agent_chappie.local_store import (
+    fetch_knowledge_rows,
     initialize_local_store,
     insert_observations,
+    list_monitor_rows,
     list_recent_observations,
+    list_recent_source_snapshots,
     save_source_snapshot,
     update_monitor_state,
     upsert_knowledge_state,
@@ -24,6 +27,8 @@ from agent_chappie.observation_engine import (
     deduplicate_observations,
     extract_observations,
     generate_recommended_tasks,
+    normalize_source_package,
+    recover_source_context,
     utc_now_iso,
 )
 from agent_chappie.validation import validate_job_request, validate_job_result
@@ -60,6 +65,15 @@ def create_server(config: WorkerBridgeConfig) -> ThreadingHTTPServer:
             if self.path == "/health":
                 self._send_json(HTTPStatus.OK, {"status": "ok", "bridge": "worker"})
                 return
+            if self.path.startswith("/projects/") and self.path.endswith("/workspace"):
+                if self.headers.get("x-agent-shared-secret") != config.shared_secret:
+                    self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                parts = self.path.strip("/").split("/")
+                if len(parts) == 3:
+                    project_id = parts[1]
+                    self._send_json(HTTPStatus.OK, build_workspace_payload(project_id, config))
+                    return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
@@ -107,10 +121,14 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         competitor=payload["source_package"].get("competitor"),
         region=payload["source_package"].get("region"),
     )
+    source_rows = list_recent_source_snapshots(job_request["project_id"], path=config.local_db_path)
+    knowledge_rows = fetch_knowledge_rows(job_request["project_id"], path=config.local_db_path)
+    source_package = recover_source_context(source_package, knowledge_rows, source_rows)
+    source_package = normalize_source_package(source_package)
 
     enqueue_source_package(source_package, config)
     observations = sync_observations_for_source(source_package, config)
-    aggregated = list_recent_observations(source_package.project_id, source_package.region, config.local_db_path)
+    aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
     result_payload = generate_recommended_tasks(source_package, aggregated or observations)
 
     if "recommended_tasks" in result_payload:
@@ -156,10 +174,10 @@ def sync_observations_for_source(source: SourcePackage, config: WorkerBridgeConf
     source_hash = build_source_hash(source)
     save_source_snapshot(source.__dict__, source_hash, config.local_db_path)
     extracted = extract_observations(source)
-    existing = list_recent_observations(source.project_id, source.region, config.local_db_path)
+    existing = list_recent_observations(source.project_id, path=config.local_db_path)
     deduped = deduplicate_observations(extracted, existing)
     insert_observations(source.project_id, deduped, config.local_db_path)
-    aggregated = list_recent_observations(source.project_id, source.region, config.local_db_path)
+    aggregated = list_recent_observations(source.project_id, path=config.local_db_path)
     upsert_knowledge_state(aggregated[:200], config.local_db_path)
     update_monitor_state(
         "continuous_observation_loop",
@@ -169,6 +187,58 @@ def sync_observations_for_source(source: SourcePackage, config: WorkerBridgeConf
         path=config.local_db_path,
     )
     return deduped
+
+
+def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict[str, Any]:
+    source_rows = list_recent_source_snapshots(project_id, path=config.local_db_path)
+    observation_rows = list_recent_observations(project_id, path=config.local_db_path)
+    knowledge_rows = fetch_knowledge_rows(project_id, path=config.local_db_path)
+    monitor_rows = list_monitor_rows(path=config.local_db_path)
+
+    return {
+        "project_id": project_id,
+        "recent_sources": [
+            {
+                "source_ref": row["source_ref"],
+                "source_kind": row["source_kind"],
+                "created_at": row["created_at"],
+                "preview": row["raw_text"][:220],
+            }
+            for row in source_rows[:5]
+        ],
+        "recent_activity": [
+            {
+                "signal_id": row["signal_id"],
+                "signal_type": row["signal_type"],
+                "summary": row["summary"],
+                "observed_at": row["observed_at"],
+                "source_ref": row["source_ref"],
+            }
+            for row in observation_rows[:6]
+        ],
+        "market_summary": {
+            "pricing_changes": sum(1 for row in observation_rows if row["signal_type"] == "pricing_change"),
+            "closure_signals": sum(1 for row in observation_rows if row["signal_type"] == "closure"),
+            "offer_signals": sum(1 for row in observation_rows if row["signal_type"] in {"offer", "asset_sale"}),
+        },
+        "knowledge_summary": [
+            {
+                "competitor": row["competitor"],
+                "region": row["region"],
+                "latest_observed_at": row["latest_observed_at"],
+            }
+            for row in knowledge_rows[:5]
+        ],
+        "monitor_jobs": [
+            {
+                "job_name": row["job_name"],
+                "status": row["status"],
+                "last_run_at": row["last_run_at"],
+                "last_source_ref": row["last_source_ref"],
+            }
+            for row in monitor_rows[:5]
+        ],
+    }
 
 
 def run_observation_loop(config: WorkerBridgeConfig) -> None:

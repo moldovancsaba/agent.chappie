@@ -43,6 +43,19 @@ Do not add frontend fields for:
 
 Those are generated or maintained on the Mac mini worker.
 
+The frontend may submit:
+
+- one pasted URL
+- one raw text block
+- one extracted file-text block
+
+The Mac mini worker is responsible for:
+
+- fetching URL content
+- normalizing ingested source material
+- recovering project context from the local brain
+- generating recent source/activity data for the app
+
 ## Neon mode
 
 Neon remains for app-visible shared state only:
@@ -89,6 +102,7 @@ This local SQLite database stores:
 - keep the Mac mini worker private
 - keep app secrets in Vercel env settings only
 - `POST /api/jobs` is the app-side bridge entrypoint
+- `GET /api/projects/[projectId]/workspace` reads worker-generated source and activity state
 - in worker mode, the app forwards jobs to the Mac mini worker over HTTP with `x-agent-shared-secret`
 - the deployed app should remain free of sample business data and fabricated context entries
 

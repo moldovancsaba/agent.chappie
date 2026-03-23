@@ -11,6 +11,38 @@ type TaskDecision = {
   status: DecisionStatus | null;
   adjustedText: string;
 };
+type WorkspaceSnapshot = {
+  project_id: string;
+  recent_sources: Array<{
+    source_ref: string;
+    source_kind: string;
+    created_at: string;
+    preview: string;
+  }>;
+  recent_activity: Array<{
+    signal_id: string;
+    signal_type: string;
+    summary: string;
+    observed_at: string;
+    source_ref: string;
+  }>;
+  market_summary: {
+    pricing_changes: number;
+    closure_signals: number;
+    offer_signals: number;
+  };
+  knowledge_summary: Array<{
+    competitor: string;
+    region: string;
+    latest_observed_at: string;
+  }>;
+  monitor_jobs: Array<{
+    job_name: string;
+    status: string;
+    last_run_at: string | null;
+    last_source_ref: string | null;
+  }>;
+};
 
 function isCompleteResultWithTasks(
   result: JobResult | null
@@ -52,6 +84,17 @@ function confidenceLabel(confidence: number | undefined) {
     return "Medium";
   }
   return "Low";
+}
+
+function formatTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return "Not yet";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
 }
 
 function deriveSignalCounts(notes: string) {
@@ -116,6 +159,8 @@ export function DemoWorkspace() {
   const [jobRequest, setJobRequest] = useState<JobRequest | null>(null);
   const [jobResult, setJobResult] = useState<JobResult | null>(null);
   const [taskDecisions, setTaskDecisions] = useState<Record<number, TaskDecision>>({});
+  const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
+  const [workspaceError, setWorkspaceError] = useState("");
 
   useEffect(() => {
     setSessionId(readOrCreateSessionId());
@@ -129,6 +174,38 @@ export function DemoWorkspace() {
     setFeedbackStatus("");
     setActiveView("checklist");
   }, [jobResult]);
+
+  useEffect(() => {
+    if (!projectId || !jobResult) {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadWorkspace() {
+      try {
+        setWorkspaceError("");
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/workspace`, {
+          cache: "no-store",
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.detail ?? "The workspace could not be loaded.");
+        }
+        if (!cancelled) {
+          setWorkspace(body);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setWorkspaceError(error instanceof Error ? error.message : "Unknown workspace error.");
+        }
+      }
+    }
+
+    void loadWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, jobResult]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -245,6 +322,7 @@ export function DemoWorkspace() {
   const signalCounts = deriveSignalCounts(contextNotes);
   const confidence = completeResult?.decision_summary?.confidence;
   const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
+  const topKnowledge = workspace?.knowledge_summary[0];
 
   return (
     <section className="decision-shell">
@@ -443,6 +521,7 @@ export function DemoWorkspace() {
                   {isSavingFeedback ? "Saving decisions..." : "Submit decisions"}
                 </button>
                 {feedbackStatus ? <div className="notice success"><p>{feedbackStatus}</p></div> : null}
+                {workspaceError ? <div className="notice error"><p>{workspaceError}</p></div> : null}
               </div>
             </section>
           </aside>
@@ -463,28 +542,44 @@ export function DemoWorkspace() {
               <div className="intel-columns">
                 <article className="intel-card">
                   <h3>Project Summary</h3>
-                  <ul>
-                    <li>{signalCounts.pricing} competitor pricing change detected</li>
-                    <li>{signalCounts.closure} closure or distress signal detected</li>
-                    <li>{signalCounts.offers + signalCounts.equipment} commercial offer or asset signal detected</li>
-                  </ul>
+                  {workspace ? (
+                    <ul>
+                      <li>{workspace.market_summary.pricing_changes} pricing changes detected</li>
+                      <li>{workspace.market_summary.closure_signals} closure or distress signals detected</li>
+                      <li>{workspace.market_summary.offer_signals} offer or asset signals detected</li>
+                    </ul>
+                  ) : (
+                    <ul>
+                      <li>{signalCounts.pricing} competitor pricing change detected from current input</li>
+                      <li>{signalCounts.closure} closure or distress signal detected from current input</li>
+                      <li>{signalCounts.offers + signalCounts.equipment} commercial offer or asset signal detected from current input</li>
+                    </ul>
+                  )}
                 </article>
 
                 <article className="intel-card">
                   <h3>Market Situation</h3>
                   <ul>
-                    <li>The worker maintains the general project context and competitive scope outside the frontend.</li>
-                    <li>The app only shows compressed reasoning derived from the latest submitted source package.</li>
+                    <li>
+                      {topKnowledge
+                        ? `${topKnowledge.competitor} is the strongest current competitor signal in ${topKnowledge.region.replaceAll("_", " ")}.`
+                        : "The worker maintains the general project context and competitive scope outside the frontend."}
+                    </li>
+                    <li>
+                      {workspace?.recent_activity.length
+                        ? "The app is showing compressed reasoning derived from ingested source history."
+                        : "The app only shows compressed reasoning after the worker ingests real source material."}
+                    </li>
                     <li>The current response window is measured in days, not quarters.</li>
                   </ul>
                 </article>
 
                 <article className="intel-card">
                   <h3>Recent Signals</h3>
-                  {completeResult ? (
+                  {workspace?.recent_activity.length ? (
                     <ul>
-                      {completeResult.result_payload.recommended_tasks.map((task) => (
-                        <li key={task.rank}>{task.why_now}</li>
+                      {workspace.recent_activity.slice(0, 3).map((activity) => (
+                        <li key={activity.signal_id}>{activity.summary}</li>
                       ))}
                     </ul>
                   ) : (
@@ -515,22 +610,42 @@ export function DemoWorkspace() {
                   <div className="operator-head">
                     <h3>Recurring Monitoring</h3>
                   </div>
-                  <div className="job-item">
-                    <strong>Managed on the Mac mini worker</strong>
-                    <span>Recurring monitoring is not configured in the frontend.</span>
-                    <p>The worker owns competitor scans, schedule rules, and continuous observation state.</p>
-                  </div>
+                  {workspace?.monitor_jobs.length ? (
+                    workspace.monitor_jobs.map((job) => (
+                      <div className="job-item" key={job.job_name}>
+                        <strong>{job.job_name}</strong>
+                        <span>Status: {job.status}</span>
+                        <p>Last run: {formatTimestamp(job.last_run_at)} · last source: {job.last_source_ref ?? "none"}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="job-item">
+                      <strong>Managed on the Mac mini worker</strong>
+                      <span>Recurring monitoring is not configured in the frontend.</span>
+                      <p>The worker owns competitor scans, schedule rules, and continuous observation state.</p>
+                    </div>
+                  )}
                 </article>
 
                 <article className="operator-card">
                   <div className="operator-head">
                     <h3>Event-Based Jobs</h3>
                   </div>
-                  <div className="job-item">
-                    <strong>Triggered from submitted source packages</strong>
-                    <span>Paste raw notes, a URL summary, or extracted file text.</span>
-                    <p>The frontend no longer creates general project metadata or monitoring rules.</p>
-                  </div>
+                  {workspace?.recent_activity.length ? (
+                    workspace.recent_activity.slice(0, 2).map((activity) => (
+                      <div className="job-item" key={activity.signal_id}>
+                        <strong>{activity.signal_type.replaceAll("_", " ")}</strong>
+                        <span>Observed: {formatTimestamp(activity.observed_at)}</span>
+                        <p>{activity.summary}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="job-item">
+                      <strong>Triggered from submitted source packages</strong>
+                      <span>Paste raw notes, a URL summary, or extracted file text.</span>
+                      <p>The frontend no longer creates general project metadata or monitoring rules.</p>
+                    </div>
+                  )}
                 </article>
               </div>
 
@@ -571,16 +686,28 @@ export function DemoWorkspace() {
               </div>
 
               <div className="library-list">
-                <article className="library-item">
-                  <strong>Worker-managed source inventory</strong>
-                  <span>Submitted raw input is forwarded to the worker.</span>
-                  <p>General source snapshots and project knowledge are managed on the Mac mini only.</p>
-                </article>
-                <article className="library-item current">
-                  <strong>Current inline context</strong>
-                  <span>Raw source package sent from this browser</span>
-                  <p>{contextNotes ? `${contextNotes.slice(0, 130)}${contextNotes.length > 130 ? "..." : ""}` : "No source package submitted yet."}</p>
-                </article>
+                {workspace?.recent_sources.length ? (
+                  workspace.recent_sources.map((source) => (
+                    <article className={`library-item ${source.source_ref.startsWith("source_") ? "current" : ""}`} key={source.source_ref}>
+                      <strong>{source.source_ref}</strong>
+                      <span>{source.source_kind} · received {formatTimestamp(source.created_at)}</span>
+                      <p>{source.preview}</p>
+                    </article>
+                  ))
+                ) : (
+                  <>
+                    <article className="library-item">
+                      <strong>Worker-managed source inventory</strong>
+                      <span>Submitted raw input is forwarded to the worker.</span>
+                      <p>General source snapshots and project knowledge are managed on the Mac mini only.</p>
+                    </article>
+                    <article className="library-item current">
+                      <strong>Current inline context</strong>
+                      <span>Raw source package sent from this browser</span>
+                      <p>{contextNotes ? `${contextNotes.slice(0, 130)}${contextNotes.length > 130 ? "..." : ""}` : "No source package submitted yet."}</p>
+                    </article>
+                  </>
+                )}
               </div>
 
               {jobRequest ? (

@@ -10,6 +10,39 @@ type SourcePackage = {
   source_ref: string;
 };
 
+export type WorkerWorkspacePayload = {
+  project_id: string;
+  recent_sources: Array<{
+    source_ref: string;
+    source_kind: string;
+    created_at: string;
+    preview: string;
+  }>;
+  recent_activity: Array<{
+    signal_id: string;
+    signal_type: string;
+    summary: string;
+    observed_at: string;
+    source_ref: string;
+  }>;
+  market_summary: {
+    pricing_changes: number;
+    closure_signals: number;
+    offer_signals: number;
+  };
+  knowledge_summary: Array<{
+    competitor: string;
+    region: string;
+    latest_observed_at: string;
+  }>;
+  monitor_jobs: Array<{
+    job_name: string;
+    status: string;
+    last_run_at: string | null;
+    last_source_ref: string | null;
+  }>;
+};
+
 export async function runWorkerJob(input: {
   jobRequest: JobRequest;
   contextNotes: string;
@@ -59,4 +92,37 @@ export async function runWorkerJob(input: {
     throw new Error(payload.detail ?? "Worker bridge failed to return a result.");
   }
   return jobResultSchema.parse(payload.job_result);
+}
+
+export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWorkspacePayload> {
+  if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
+    return {
+      project_id: projectId,
+      recent_sources: [],
+      recent_activity: [],
+      market_summary: {
+        pricing_changes: 0,
+        closure_signals: 0,
+        offer_signals: 0,
+      },
+      knowledge_summary: [],
+      monitor_jobs: [],
+    };
+  }
+
+  const response = await fetch(
+    `${env.agentApiBaseUrl.replace(/\/$/, "")}/projects/${encodeURIComponent(projectId)}/workspace`,
+    {
+      method: "GET",
+      headers: {
+        "x-agent-shared-secret": env.agentSharedSecret ?? "",
+      },
+      cache: "no-store",
+    }
+  );
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.detail ?? "Worker bridge failed to return workspace data.");
+  }
+  return payload as WorkerWorkspacePayload;
 }
