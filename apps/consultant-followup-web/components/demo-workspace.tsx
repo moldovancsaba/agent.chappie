@@ -723,23 +723,22 @@ export function DemoWorkspace() {
 
               <div className="input-mode-row">
                 <button className={`mode-chip ${inputMode === "url" ? "active" : ""}`} type="button" onClick={() => setInputMode("url")}>
-                  Paste URL
+                  URL
                 </button>
                 <button className={`mode-chip ${inputMode === "text" ? "active" : ""}`} type="button" onClick={() => setInputMode("text")}>
-                  Paste Text
+                  Text
                 </button>
                 <button className={`mode-chip ${inputMode === "file" ? "active" : ""}`} type="button" onClick={() => { setInputMode("file"); fileInputRef.current?.click(); }}>
-                  Upload File
+                  Document
                 </button>
               </div>
 
               {inputMode === "file" ? (
                 <div className="field-grid single-column">
                   <div className="field">
-                    <label>Upload one file</label>
                     <div className="file-upload-row">
                       <button className="button-secondary" type="button" onClick={() => fileInputRef.current?.click()}>
-                        Choose file
+                        Choose document
                       </button>
                       <span className="file-upload-label">{fileName || "No file selected yet"}</span>
                     </div>
@@ -748,12 +747,11 @@ export function DemoWorkspace() {
               ) : (
                 <div className="field-grid single-column">
                   <div className="field">
-                    <label htmlFor="context-notes">{inputMode === "url" ? "URL" : "Text block"}</label>
                     <textarea
                       id="context-notes"
                       value={contextNotes}
                       onChange={(event) => setContextNotes(event.target.value)}
-                      placeholder={inputMode === "url" ? "https://..." : ""}
+                      placeholder={inputMode === "url" ? "https://..." : "Paste source text"}
                     />
                   </div>
                 </div>
@@ -763,7 +761,7 @@ export function DemoWorkspace() {
 
               <div className="button-row">
                 <button className="button-primary" type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Submitting source..." : "Run decision job"}
+                  {isSubmitting ? "Analyzing source..." : "Analyze source"}
                 </button>
               </div>
             </form>
