@@ -15,7 +15,8 @@ def local_db_path() -> str:
 def initialize_local_store(path: str | None = None) -> str:
     db_path = path or local_db_path()
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    with sqlite3.connect(db_path) as connection:
+    connection = sqlite3.connect(db_path)
+    try:
         connection.executescript(
             """
             create table if not exists system_observations (
@@ -52,6 +53,10 @@ def initialize_local_store(path: str | None = None) -> str:
               display_label text,
               status text not null default 'processed',
               processing_summary text,
+              key_takeaway text,
+              business_impact text,
+              linked_task_titles_json text,
+              source_confidence real,
               signal_count integer not null default 0,
               knowledge_count integer not null default 0,
               last_used_in_checklist integer not null default 0,
@@ -112,8 +117,12 @@ def initialize_local_store(path: str | None = None) -> str:
               knowledge_id text not null,
               project_id text not null,
               status text not null,
+              confidence_source text,
+              original_payload_json text,
               corrected_title text,
               corrected_summary text,
+              corrected_implication text,
+              corrected_potential_moves_json text,
               corrected_items_json text,
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
               primary key (knowledge_id, project_id)
@@ -123,9 +132,19 @@ def initialize_local_store(path: str | None = None) -> str:
         _ensure_column(connection, "source_snapshots", "display_label", "text")
         _ensure_column(connection, "source_snapshots", "status", "text not null default 'processed'")
         _ensure_column(connection, "source_snapshots", "processing_summary", "text")
+        _ensure_column(connection, "source_snapshots", "key_takeaway", "text")
+        _ensure_column(connection, "source_snapshots", "business_impact", "text")
+        _ensure_column(connection, "source_snapshots", "linked_task_titles_json", "text")
+        _ensure_column(connection, "source_snapshots", "source_confidence", "real")
         _ensure_column(connection, "source_snapshots", "signal_count", "integer not null default 0")
         _ensure_column(connection, "source_snapshots", "knowledge_count", "integer not null default 0")
         _ensure_column(connection, "source_snapshots", "last_used_in_checklist", "integer not null default 0")
+        _ensure_column(connection, "knowledge_feedback", "confidence_source", "text")
+        _ensure_column(connection, "knowledge_feedback", "original_payload_json", "text")
+        _ensure_column(connection, "knowledge_feedback", "corrected_implication", "text")
+        _ensure_column(connection, "knowledge_feedback", "corrected_potential_moves_json", "text")
+    finally:
+        connection.close()
     return db_path
 
 
@@ -150,7 +169,11 @@ def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name:
         for row in connection.execute(f"pragma table_info({table_name})").fetchall()
     }
     if column_name not in existing:
-        connection.execute(f"alter table {table_name} add column {column_name} {column_sql}")
+        try:
+            connection.execute(f"alter table {table_name} add column {column_name} {column_sql}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
 
 
 def save_source_snapshot(source: dict[str, Any], source_hash: str, path: str | None = None) -> None:
@@ -396,6 +419,10 @@ def list_recent_source_snapshots(project_id: str, limit: int = 10, path: str | N
               display_label,
               status,
               processing_summary,
+              key_takeaway,
+              business_impact,
+              linked_task_titles_json,
+              source_confidence,
               signal_count,
               knowledge_count,
               last_used_in_checklist,
@@ -426,6 +453,10 @@ def get_source_snapshot(project_id: str, source_ref: str, path: str | None = Non
               display_label,
               status,
               processing_summary,
+              key_takeaway,
+              business_impact,
+              linked_task_titles_json,
+              source_confidence,
               signal_count,
               knowledge_count,
               last_used_in_checklist,
@@ -445,6 +476,10 @@ def update_source_snapshot(source_ref: str, updates: dict[str, Any], path: str |
         "display_label",
         "status",
         "processing_summary",
+        "key_takeaway",
+        "business_impact",
+        "linked_task_titles_json",
+        "source_confidence",
         "signal_count",
         "knowledge_count",
         "last_used_in_checklist",
@@ -742,7 +777,11 @@ def upsert_knowledge_feedback(
     status: str,
     corrected_title: str | None = None,
     corrected_summary: str | None = None,
+    corrected_implication: str | None = None,
+    corrected_potential_moves: list[str] | None = None,
     corrected_items: list[str] | None = None,
+    original_payload: dict[str, Any] | None = None,
+    confidence_source: str | None = None,
     path: str | None = None,
 ) -> None:
     with _connect(path) as connection:
@@ -752,16 +791,24 @@ def upsert_knowledge_feedback(
               knowledge_id,
               project_id,
               status,
+              confidence_source,
+              original_payload_json,
               corrected_title,
               corrected_summary,
+              corrected_implication,
+              corrected_potential_moves_json,
               corrected_items_json,
               updated_at
             )
-            values (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             on conflict(knowledge_id, project_id) do update set
               status = excluded.status,
+              confidence_source = excluded.confidence_source,
+              original_payload_json = coalesce(knowledge_feedback.original_payload_json, excluded.original_payload_json),
               corrected_title = excluded.corrected_title,
               corrected_summary = excluded.corrected_summary,
+              corrected_implication = excluded.corrected_implication,
+              corrected_potential_moves_json = excluded.corrected_potential_moves_json,
               corrected_items_json = excluded.corrected_items_json,
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             """,
@@ -769,8 +816,12 @@ def upsert_knowledge_feedback(
                 knowledge_id,
                 project_id,
                 status,
+                confidence_source,
+                json.dumps(original_payload) if original_payload is not None else None,
                 corrected_title,
                 corrected_summary,
+                corrected_implication,
+                json.dumps(corrected_potential_moves) if corrected_potential_moves is not None else None,
                 json.dumps(corrected_items) if corrected_items is not None else None,
             ),
         )
@@ -780,7 +831,7 @@ def fetch_knowledge_feedback_rows(project_id: str, path: str | None = None) -> l
     with _connect(path) as connection:
         rows = connection.execute(
             """
-            select knowledge_id, project_id, status, corrected_title, corrected_summary, corrected_items_json, updated_at
+            select knowledge_id, project_id, status, confidence_source, original_payload_json, corrected_title, corrected_summary, corrected_implication, corrected_potential_moves_json, corrected_items_json, updated_at
             from knowledge_feedback
             where project_id = ?
             order by updated_at desc
@@ -789,6 +840,13 @@ def fetch_knowledge_feedback_rows(project_id: str, path: str | None = None) -> l
         ).fetchall()
     feedback_rows = [dict(row) for row in rows]
     for row in feedback_rows:
+        if row.get("original_payload_json"):
+            try:
+                row["original_payload"] = json.loads(row["original_payload_json"])
+            except json.JSONDecodeError:
+                row["original_payload"] = {}
+        else:
+            row["original_payload"] = {}
         if row.get("corrected_items_json"):
             try:
                 row["corrected_items"] = json.loads(row["corrected_items_json"])
@@ -796,4 +854,11 @@ def fetch_knowledge_feedback_rows(project_id: str, path: str | None = None) -> l
                 row["corrected_items"] = []
         else:
             row["corrected_items"] = []
+        if row.get("corrected_potential_moves_json"):
+            try:
+                row["corrected_potential_moves"] = json.loads(row["corrected_potential_moves_json"])
+            except json.JSONDecodeError:
+                row["corrected_potential_moves"] = []
+        else:
+            row["corrected_potential_moves"] = []
     return feedback_rows

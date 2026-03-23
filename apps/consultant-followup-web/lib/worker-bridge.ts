@@ -21,9 +21,11 @@ export type WorkerWorkspacePayload = {
     source_kind: string;
     status: string;
     processing_summary: string;
-    signal_count: number;
-    knowledge_count: number;
     last_used_in_checklist: boolean;
+    key_takeaway: string;
+    business_impact: string;
+    linked_tasks: string[];
+    confidence: number;
     created_at: string;
     preview: string;
   }>;
@@ -32,10 +34,32 @@ export type WorkerWorkspacePayload = {
     title: string;
     summary: string;
     items: string[];
+    insight: string;
+    implication: string;
+    potential_moves: string[];
     source_refs: string[];
     evidence_refs: string[];
     confidence: number;
     annotation_status: string;
+    confidence_source: string;
+    audit: {
+      original_value: {
+        title: string;
+        summary: string;
+        items: string[];
+        insight: string;
+        implication: string;
+        potential_moves: string[];
+      };
+      user_modification: {
+        title?: string | null;
+        summary?: string | null;
+        items?: string[] | null;
+        implication?: string | null;
+        potential_moves?: string[] | null;
+      } | null;
+      timestamp: string | null;
+    };
   }>;
   recent_sources: Array<{
     source_ref: string;
@@ -54,6 +78,13 @@ export type WorkerWorkspacePayload = {
     pricing_changes: number;
     closure_signals: number;
     offer_signals: number;
+  };
+  competitive_snapshot: {
+    pricing_position: string;
+    acquisition_strategy_comparison: string;
+    active_threats: string[];
+    immediate_opportunities: string[];
+    reference_competitor: string;
   };
   knowledge_summary: Array<{
     competitor: string;
@@ -167,6 +198,13 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
         pricing_changes: 0,
         closure_signals: 0,
         offer_signals: 0,
+      },
+      competitive_snapshot: {
+        pricing_position: "Still forming",
+        acquisition_strategy_comparison: "Still forming",
+        active_threats: [],
+        immediate_opportunities: [],
+        reference_competitor: "Comparison set still forming",
       },
       knowledge_summary: [],
       monitor_jobs: [],

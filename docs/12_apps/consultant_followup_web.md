@@ -111,9 +111,10 @@ The app must not collect or fabricate general project metadata that belongs in t
 - recent ingested source snapshots
 - recent signal-derived activity
 - compressed market summary
+- competitive position snapshot
 - monitor job status
 - structured knowledge cards
-- per-source extracted knowledge counts
+- source-level takeaway and business impact summaries
 - knowledge feedback state
 
 The frontend must not invent source inventory or recurring job history.
@@ -131,8 +132,16 @@ The app remains thin: these CRUD operations proxy to the Mac mini worker and rea
 For rich sources such as uploaded market-analysis documents:
 
 - `Checklist` may still block if no action-quality move is justified
-- `Know More` must still populate with synthesized knowledge cards
-- ingested source cards must show extracted signal count, extracted knowledge count, and source-level actions
+- `Know More` must still populate with synthesized knowledge cards that explain:
+  - the insight
+  - the implication
+  - the next potential moves
+- ingested source cards must show why the source matters:
+  - key takeaway
+  - business impact
+  - linked checklist tasks if any
+  - confidence
+- task explanation must stay in task detail, not in `Know More`
 
 ## Output safety
 

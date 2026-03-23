@@ -28,10 +28,32 @@ type KnowledgeCard = {
   title: string;
   summary: string;
   items: string[];
+  insight: string;
+  implication: string;
+  potential_moves: string[];
   source_refs: string[];
   evidence_refs: string[];
   confidence: number;
   annotation_status: string;
+  confidence_source: "extracted" | "user_confirmed" | "user_modified" | string;
+  audit: {
+    original_value: {
+      title: string;
+      summary: string;
+      items: string[];
+      insight: string;
+      implication: string;
+      potential_moves: string[];
+    };
+    user_modification: {
+      title?: string | null;
+      summary?: string | null;
+      items?: string[] | null;
+      implication?: string | null;
+      potential_moves?: string[] | null;
+    } | null;
+    timestamp: string | null;
+  };
 };
 type SourceCard = {
   source_ref: string;
@@ -39,9 +61,11 @@ type SourceCard = {
   source_kind: string;
   status: string;
   processing_summary: string;
-  signal_count: number;
-  knowledge_count: number;
   last_used_in_checklist: boolean;
+  key_takeaway: string;
+  business_impact: string;
+  linked_tasks: string[];
+  confidence: number;
   created_at: string;
   preview: string;
 };
@@ -70,6 +94,13 @@ type WorkspaceSnapshot = {
     pricing_changes: number;
     closure_signals: number;
     offer_signals: number;
+  };
+  competitive_snapshot: {
+    pricing_position: string;
+    acquisition_strategy_comparison: string;
+    active_threats: string[];
+    immediate_opportunities: string[];
+    reference_competitor: string;
   };
   knowledge_summary: Array<{
     competitor: string;
@@ -194,6 +225,34 @@ function sourceKindLabel(value: string) {
   return titleCaseWords(value.replaceAll("_", " "));
 }
 
+function confidenceSourceLabel(value: string) {
+  if (value === "user_confirmed") {
+    return "User confirmed";
+  }
+  if (value === "user_modified") {
+    return "User modified";
+  }
+  return "Extracted";
+}
+
+function buildConsequenceOfInaction(task: RecommendedTask) {
+  const impact = task.expected_advantage.replace(/\.$/, "");
+  if (impact.toLowerCase().includes("before")) {
+    return `If you wait, the timing window closes and the competitor keeps the advantage this task was meant to counter. ${impact}.`;
+  }
+  return `If you ignore this move, the competitor keeps the initiative and the business effect described here is less likely to happen. ${impact}.`;
+}
+
+function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
+  const sourceLine = sourceLabels.length ? `Pull the linked source evidence from ${sourceLabels.join(", ")} and confirm the exact claim or trigger.` : "Pull the linked evidence and confirm the exact trigger before editing anything.";
+  return [
+    sourceLine,
+    `Make the core change required by this action: ${task.title}.`,
+    "Update the customer-facing or operator-facing surface this week so the move is visible before the next comparison cycle.",
+    "Check whether the move reduced the risk or captured the opportunity described in the expected impact.",
+  ];
+}
+
 function buildDefaultDecisions(tasks: RecommendedTask[]) {
   return tasks.reduce<Record<number, TaskDecision>>((current, task) => {
     current[task.rank] = {
@@ -264,7 +323,7 @@ export function DemoWorkspace() {
   const [editingIngestedSourceRef, setEditingIngestedSourceRef] = useState<string | null>(null);
   const [ingestedSourceLabel, setIngestedSourceLabel] = useState("");
   const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
-  const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", items: "" });
+  const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -648,8 +707,12 @@ export function DemoWorkspace() {
     knowledgeId: string,
     payload: {
       status: "confirmed" | "dismissed" | "edited";
+      confidence_source?: string;
+      original_payload?: Record<string, unknown>;
       corrected_title?: string;
       corrected_summary?: string;
+      corrected_implication?: string;
+      corrected_potential_moves?: string[];
       corrected_items?: string[];
     }
   ) {
@@ -668,7 +731,7 @@ export function DemoWorkspace() {
     }
     setWorkspace(body);
     setEditingKnowledgeId(null);
-    setKnowledgeDraft({ title: "", summary: "", items: "" });
+    setKnowledgeDraft({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
     setManagementStatus({ tone: "success", message: "Knowledge updated." });
   }
 
@@ -746,14 +809,16 @@ export function DemoWorkspace() {
   const topKnowledge = workspace?.knowledge_summary[0];
   const blockedReason =
     blockedResult && "reason" in blockedResult.result_payload && typeof blockedResult.result_payload.reason === "string"
-      ? blockedResult.result_payload.reason
+      ? blockedResult.result_payload.reason === "insufficient_output_quality"
+        ? "The current evidence builds useful knowledge, but not a strong enough advantage to recommend an immediate move."
+        : blockedResult.result_payload.reason
       : "The worker ingested the source but could not derive three distinct, high-confidence actions from it.";
   const currentStatus = isSubmitting
     ? "Processing"
     : completeResult
       ? "Ready"
       : blockedResult
-        ? "Needs stronger source"
+        ? "Monitoring active"
       : workspace?.recent_sources.length
         ? "Monitoring active"
         : "Waiting for input";
@@ -771,6 +836,12 @@ export function DemoWorkspace() {
     ? workspace?.source_cards.filter((source) =>
         selectedTaskEvidence.some((activity) => activity.source_ref === source.source_ref)
       ) ?? []
+    : [];
+  const selectedTaskSteps = selectedTask
+    ? buildExecutionSteps(
+        selectedTask,
+        selectedTaskSources.map((source) => source.label)
+      )
     : [];
 
   return (
@@ -903,11 +974,12 @@ export function DemoWorkspace() {
                 </div>
               ) : blockedResult ? (
                 <div className="notice error">
-                  <strong>No strong action yet</strong>
+                  <strong>No immediate move detected</strong>
                   <p>{blockedReason}</p>
                   <p>
-                    The source was still processed. Open Know More to review the knowledge extracted from it, or add a
-                    denser source with clearer competitor, pricing, offer, closure, or timing signals.
+                    The source was still processed. We are monitoring pricing shifts, competitor positioning, and offer
+                    changes from it. Open Know More to review the current intelligence, or add a denser source if you
+                    want the worker to push toward a checklist move.
                   </p>
                   <div className="guided-actions">
                     <button
@@ -1008,6 +1080,20 @@ export function DemoWorkspace() {
                     <p>{selectedTask.why_now}</p>
                   </div>
 
+                  <div className="task-block">
+                    <span>What happens if you ignore it</span>
+                    <p>{buildConsequenceOfInaction(selectedTask)}</p>
+                  </div>
+
+                  <div className="task-detail-list">
+                    <h3>Execution steps</h3>
+                    <ol className="compact-run-list">
+                      {selectedTaskSteps.map((step, index) => (
+                        <li key={`${selectedTask.rank}-step-${index}`}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+
                   <div className="task-evidence">
                     <span>Evidence</span>
                     <div className="evidence-chip-list">
@@ -1099,6 +1185,39 @@ export function DemoWorkspace() {
                 </div>
               ) : null}
 
+              <article className="intel-card snapshot-card">
+                <div className="operator-head">
+                  <h3>Competitive Position Snapshot</h3>
+                  <span>{workspace?.competitive_snapshot.reference_competitor ?? "Comparison set still forming"}</span>
+                </div>
+                <div className="summary-stack">
+                  <div className="summary-row">
+                    <span>Pricing position</span>
+                    <strong>{workspace?.competitive_snapshot.pricing_position ?? "Still forming"}</strong>
+                  </div>
+                  <div className="summary-row">
+                    <span>Acquisition comparison</span>
+                    <strong>{workspace?.competitive_snapshot.acquisition_strategy_comparison ?? "Still forming"}</strong>
+                  </div>
+                </div>
+                <div className="task-block">
+                  <span>Active threats</span>
+                  <ul>
+                    {(workspace?.competitive_snapshot.active_threats ?? []).map((item, index) => (
+                      <li key={`threat-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="task-block">
+                  <span>Immediate opportunities</span>
+                  <ul>
+                    {(workspace?.competitive_snapshot.immediate_opportunities ?? []).map((item, index) => (
+                      <li key={`opportunity-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </article>
+
               <div className="intel-columns">
                 {filteredKnowledgeCards.length ? (
                   filteredKnowledgeCards.map((card) => (
@@ -1106,10 +1225,26 @@ export function DemoWorkspace() {
                       <div className="operator-head">
                         <h3>{card.title}</h3>
                         <span>
-                          {confidenceLabel(card.confidence)} ({card.confidence.toFixed(2)}) · {card.annotation_status}
+                          {confidenceLabel(card.confidence)} ({card.confidence.toFixed(2)}) · {card.annotation_status} · {confidenceSourceLabel(card.confidence_source)}
                         </span>
                       </div>
                       <p>{card.summary}</p>
+                      <div className="task-block">
+                        <span>Insight</span>
+                        <p>{card.insight}</p>
+                      </div>
+                      <div className="task-block">
+                        <span>Implication</span>
+                        <p>{card.implication}</p>
+                      </div>
+                      <div className="task-block">
+                        <span>Potential moves</span>
+                        <ul>
+                          {card.potential_moves.map((move, index) => (
+                            <li key={`${card.knowledge_id}-move-${index}`}>{move}</li>
+                          ))}
+                        </ul>
+                      </div>
                       <ul>
                         {card.items.map((item, index) => (
                           <li key={`${card.knowledge_id}-${index}`}>{item}</li>
@@ -1144,6 +1279,20 @@ export function DemoWorkspace() {
                             placeholder="Corrected summary"
                           />
                           <textarea
+                            value={knowledgeDraft.implication}
+                            onChange={(event) =>
+                              setKnowledgeDraft((current) => ({ ...current, implication: event.target.value }))
+                            }
+                            placeholder="Corrected implication"
+                          />
+                          <textarea
+                            value={knowledgeDraft.potentialMoves}
+                            onChange={(event) =>
+                              setKnowledgeDraft((current) => ({ ...current, potentialMoves: event.target.value }))
+                            }
+                            placeholder="One potential move per line"
+                          />
+                          <textarea
                             value={knowledgeDraft.items}
                             onChange={(event) =>
                               setKnowledgeDraft((current) => ({ ...current, items: event.target.value }))
@@ -1157,8 +1306,15 @@ export function DemoWorkspace() {
                               onClick={() =>
                                 void updateKnowledgeCard(card.knowledge_id, {
                                   status: "edited",
+                                  confidence_source: "user_modified",
+                                  original_payload: card.audit.original_value,
                                   corrected_title: knowledgeDraft.title.trim() || card.title,
                                   corrected_summary: knowledgeDraft.summary.trim() || card.summary,
+                                  corrected_implication: knowledgeDraft.implication.trim() || card.implication,
+                                  corrected_potential_moves: knowledgeDraft.potentialMoves
+                                    .split("\n")
+                                    .map((item) => item.trim())
+                                    .filter(Boolean),
                                   corrected_items: knowledgeDraft.items
                                     .split("\n")
                                     .map((item) => item.trim())
@@ -1173,7 +1329,7 @@ export function DemoWorkspace() {
                               type="button"
                               onClick={() => {
                                 setEditingKnowledgeId(null);
-                                setKnowledgeDraft({ title: "", summary: "", items: "" });
+                                setKnowledgeDraft({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
                               }}
                             >
                               Cancel
@@ -1185,7 +1341,13 @@ export function DemoWorkspace() {
                           <button
                             className="decision-button done"
                             type="button"
-                            onClick={() => void updateKnowledgeCard(card.knowledge_id, { status: "confirmed" })}
+                            onClick={() =>
+                              void updateKnowledgeCard(card.knowledge_id, {
+                                status: "confirmed",
+                                confidence_source: "user_confirmed",
+                                original_payload: card.audit.original_value,
+                              })
+                            }
                           >
                             Confirm
                           </button>
@@ -1197,6 +1359,8 @@ export function DemoWorkspace() {
                               setKnowledgeDraft({
                                 title: card.title,
                                 summary: card.summary,
+                                implication: card.implication,
+                                potentialMoves: card.potential_moves.join("\n"),
                                 items: card.items.join("\n"),
                               });
                             }}
@@ -1206,12 +1370,27 @@ export function DemoWorkspace() {
                           <button
                             className="decision-button reject"
                             type="button"
-                            onClick={() => void updateKnowledgeCard(card.knowledge_id, { status: "dismissed" })}
+                            onClick={() =>
+                              void updateKnowledgeCard(card.knowledge_id, {
+                                status: "dismissed",
+                                confidence_source: "user_modified",
+                                original_payload: card.audit.original_value,
+                              })
+                            }
                           >
                             Dismiss
                           </button>
                         </div>
                       )}
+
+                      {card.audit.timestamp ? (
+                        <div className="task-block">
+                          <span>Knowledge edit audit</span>
+                          <p>
+                            Last updated {formatTimestamp(card.audit.timestamp)} from {confidenceSourceLabel(card.confidence_source)}.
+                          </p>
+                        </div>
+                      ) : null}
                     </article>
                   ))
                 ) : (
@@ -1479,12 +1658,36 @@ export function DemoWorkspace() {
                       <span>
                         {sourceKindLabel(source.source_kind)} · {source.status} · Received {formatTimestamp(source.created_at)}
                       </span>
-                      <p>{source.processing_summary}</p>
-                      <ul className="compact-run-list">
-                        <li>{source.signal_count} extracted signal(s)</li>
-                        <li>{source.knowledge_count} knowledge card(s)</li>
-                        <li>Last used in checklist: {source.last_used_in_checklist ? "Yes" : "No"}</li>
-                      </ul>
+                      <div className="task-block">
+                        <span>Key takeaway</span>
+                        <p>{source.key_takeaway}</p>
+                      </div>
+                      <div className="task-block">
+                        <span>Business impact</span>
+                        <p>{source.business_impact}</p>
+                      </div>
+                      <div className="summary-stack">
+                        <div className="summary-row">
+                          <span>Confidence</span>
+                          <strong>{confidenceLabel(source.confidence)} ({source.confidence.toFixed(2)})</strong>
+                        </div>
+                        <div className="summary-row">
+                          <span>Used in checklist</span>
+                          <strong>{source.last_used_in_checklist ? "Yes" : "No"}</strong>
+                        </div>
+                      </div>
+                      <div className="task-block">
+                        <span>Linked tasks</span>
+                        {source.linked_tasks.length ? (
+                          <ul>
+                            {source.linked_tasks.map((taskTitle, index) => (
+                              <li key={`${source.source_ref}-task-${index}`}>{taskTitle}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>No checklist task is currently linked to this source.</p>
+                        )}
+                      </div>
                       <div className="task-actions compact-actions">
                         <button
                           className="decision-button detail"
@@ -1552,7 +1755,7 @@ export function DemoWorkspace() {
                           Delete
                         </button>
                       </div>
-                      <p>{source.preview}</p>
+                      <p>{source.processing_summary}</p>
                     </article>
                   ))
                 ) : (

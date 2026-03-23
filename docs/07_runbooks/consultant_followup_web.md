@@ -129,7 +129,12 @@ The app now treats `Sources & Jobs` as a management surface:
 - sources can be added, edited, paused, resumed, and deleted
 - jobs can be added, edited, paused, resumed, and deleted
 - source cards expose current status, last run, and last extracted summary
-- ingested source cards expose signal count, knowledge count, checklist usage, and source-level actions
+- ingested source cards expose:
+  - key takeaway
+  - business impact
+  - linked checklist tasks
+  - confidence
+  - source-level actions such as reprocess, edit metadata, and delete
 - job cards expose trigger type, schedule, last three runs, last action summary, and expected impact summary
 
 The app must never invent this state locally. All CRUD actions proxy to the worker and re-render from worker responses.
@@ -139,12 +144,23 @@ The app must never invent this state locally. All CRUD actions proxy to the work
 - `Checklist` is action-only
 - `Task Detail` is one-to-one with a single checklist action
 - `Know More` is the structured knowledge surface
+- `Know More` should lead with worker-generated strategic synthesis such as a competitive position snapshot
+- each knowledge card should surface:
+  - insight
+  - implication
+  - potential moves
+  - confidence source
+- knowledge edits must preserve auditability:
+  - original value
+  - user modification
+  - timestamp
 
 If a rich source is processed but no immediate action is strong enough:
 
 - `Checklist` may return a blocked result
 - `Know More` must still render worker-generated knowledge cards
-- the ingested source card must still show processing outcome and extracted knowledge counts
+- the blocked state should read like active monitoring, not failure
+- the ingested source card must still show processing outcome and source-level value
 
 ## Auth status
 

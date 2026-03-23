@@ -250,11 +250,21 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         if knowledge_cards
         else job_result["result_payload"].get("reason", "Source processed")
     )
+    linked_tasks_by_source = build_linked_tasks_by_source(job_result, aggregated or observations)
+    source_insights = build_source_insights(
+        list_recent_source_snapshots(source_package.project_id, path=config.local_db_path),
+        knowledge_cards,
+        linked_tasks_by_source,
+    )
     update_source_snapshot(
         source_package.source_ref,
         {
             "status": "processed" if job_result["status"] == "complete" else "blocked",
             "processing_summary": processing_summary,
+            "key_takeaway": source_insights.get(source_package.source_ref, {}).get("key_takeaway"),
+            "business_impact": source_insights.get(source_package.source_ref, {}).get("business_impact"),
+            "linked_task_titles_json": json.dumps(source_insights.get(source_package.source_ref, {}).get("linked_tasks", [])),
+            "source_confidence": source_insights.get(source_package.source_ref, {}).get("confidence", 0.58),
             "signal_count": len(list_observations_for_source(source_package.project_id, source_package.source_ref, path=config.local_db_path)),
             "knowledge_count": sum(1 for card in knowledge_cards if source_package.source_ref in card["source_refs"]),
             "last_used_in_checklist": 1 if source_package.source_ref in used_source_refs else 0,
@@ -350,8 +360,12 @@ def process_management_request(
             project_id=project_id,
             knowledge_id=parts[3],
             status=str(payload.get("status", "confirmed")),
+            confidence_source=str(payload.get("confidence_source", "user_modified")),
+            original_payload=payload.get("original_payload"),
             corrected_title=payload.get("corrected_title"),
             corrected_summary=payload.get("corrected_summary"),
+            corrected_implication=payload.get("corrected_implication"),
+            corrected_potential_moves=payload.get("corrected_potential_moves"),
             corrected_items=payload.get("corrected_items"),
             path=config.local_db_path,
         )
@@ -401,6 +415,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     monitor_rows = list_monitor_rows(path=config.local_db_path)
     knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows)
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
+    competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows)
 
     knowledge_summary_rows = [
         {
@@ -438,6 +453,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             "closure_signals": sum(1 for row in observation_rows if row["signal_type"] == "closure"),
             "offer_signals": sum(1 for row in observation_rows if row["signal_type"] in {"offer", "asset_sale"}),
         },
+        "competitive_snapshot": competitive_snapshot,
         "knowledge_summary": knowledge_summary_rows[:5],
         "monitor_jobs": [
             {
@@ -477,11 +493,20 @@ def reprocess_source_snapshot(project_id: str, source_ref: str, config: WorkerBr
         fetch_knowledge_rows(project_id, path=config.local_db_path),
         fetch_knowledge_feedback_rows(project_id, path=config.local_db_path),
     )
+    source_insights = build_source_insights(
+        list_recent_source_snapshots(project_id, path=config.local_db_path),
+        knowledge_cards,
+        {},
+    )
     update_source_snapshot(
         source_ref,
         {
             "status": "processed",
             "processing_summary": f"Processed {len(observations)} signals and {len(knowledge_cards)} knowledge cards",
+            "key_takeaway": source_insights.get(source_ref, {}).get("key_takeaway"),
+            "business_impact": source_insights.get(source_ref, {}).get("business_impact"),
+            "linked_task_titles_json": json.dumps(source_insights.get(source_ref, {}).get("linked_tasks", [])),
+            "source_confidence": source_insights.get(source_ref, {}).get("confidence", 0.58),
             "signal_count": len(list_observations_for_source(project_id, source_ref, path=config.local_db_path)),
             "knowledge_count": sum(1 for card in knowledge_cards if source_ref in card["source_refs"]),
         },
@@ -509,9 +534,11 @@ def build_ingested_source_cards(
                     if signal_count or knowledge_count
                     else "Source extracted and stored"
                 ),
-                "signal_count": signal_count,
-                "knowledge_count": knowledge_count,
                 "last_used_in_checklist": bool(row.get("last_used_in_checklist")),
+                "key_takeaway": row.get("key_takeaway") or derive_source_takeaway(row, knowledge_cards),
+                "business_impact": row.get("business_impact") or derive_source_business_impact(row, knowledge_cards),
+                "linked_tasks": parse_json_list(row.get("linked_task_titles_json")),
+                "confidence": round(float(row.get("source_confidence") or derive_source_confidence(signal_count, knowledge_count)), 2),
                 "created_at": row["created_at"],
                 "preview": row["raw_text"][:220],
             }
@@ -544,6 +571,12 @@ def build_knowledge_cards(
             "Market Summary",
             "What the system currently knows about this market or project from the ingested sources.",
             market_items or ["No market synthesis has been derived yet."],
+            "The current source set is building a market picture even if there is no immediate checklist move yet.",
+            "Use this summary to decide whether the market is shifting toward pricing pressure, offer pressure, or proof-based positioning pressure.",
+            [
+                "Compare your current positioning against the strongest pattern in the source set.",
+                "Add one denser source if the market story still feels incomplete.",
+            ],
             observation_rows[:4],
             [row["source_ref"] for row in source_rows[:4]],
             0.78 if source_rows else 0.22,
@@ -557,6 +590,12 @@ def build_knowledge_cards(
             "Competitors Detected",
             "Named companies, schools, clubs, or products the worker has extracted from the source set.",
             entities[:6] or ["No named competitors have been extracted with enough confidence yet."],
+            "The source set points to the competitors most likely shaping the current comparison set.",
+            "These names should anchor who you benchmark, monitor, and position against first.",
+            [
+                "Verify whether the top named competitor is truly in your comparison set.",
+                "Add one competitor-specific source if the detected list feels too thin.",
+            ],
             observation_rows[:4],
             [row["source_ref"] for row in source_rows[:4]],
             0.74 if entities else 0.28,
@@ -574,6 +613,12 @@ def build_knowledge_cards(
             "Pricing / Packaging",
             "Commercial packaging and pricing observations the worker has extracted from the source material.",
             pricing_items[:5] or ["No pricing or packaging observations are strong enough yet."],
+            "Packaging and onboarding language are the strongest commercial signals currently visible in the source set.",
+            "If these signals keep appearing, your offer may need a clearer pricing or packaging response before buyers compare options.",
+            [
+                "Check whether your current package framing is weaker than the source set suggests.",
+                "Prepare one pricing-page adjustment if a competitor pattern keeps repeating.",
+            ],
             [row for row in observation_rows if row["signal_type"] == "pricing_change"][:4],
             source_refs_for_items(pricing_items[:5], source_rows),
             0.71 if pricing_items else 0.24,
@@ -591,6 +636,12 @@ def build_knowledge_cards(
             "Offer / Positioning",
             "Offer language, positioning claims, and tactical market signals found in the sources.",
             positioning_items[:5] or ["No clear positioning or offer observations have been extracted yet."],
+            "The source set is signaling how competitors or the market frame buyer value right now.",
+            "If this positioning becomes the default comparison language, your current offer may lose urgency or clarity.",
+            [
+                "Draft one response angle that answers the strongest positioning claim.",
+                "Check whether your enrollment or landing-page copy reflects the same buyer pressure.",
+            ],
             [row for row in observation_rows if row["signal_type"] in {"offer", "messaging_shift"}][:4],
             source_refs_for_items(positioning_items[:5], source_rows),
             0.73 if positioning_items else 0.25,
@@ -605,6 +656,12 @@ def build_knowledge_cards(
             "Proof Signals",
             "Trust cues, proof points, and credibility patterns extracted from the current source set.",
             proof_items[:5] or ["No proof signals have been extracted yet."],
+            "The source set contains proof language that may shape trust and buyer confidence.",
+            "If competitors are using stronger proof than you are, they can win comparison-stage buyers even without a better product.",
+            [
+                "Review whether your best proof matches the strongest proof signal in the market.",
+                "Add a stronger proof source if the current evidence is still weak.",
+            ],
             [row for row in observation_rows if row["signal_type"] == "proof_signal"][:4],
             source_refs_for_items(proof_items[:5], source_rows),
             0.69 if proof_items else 0.21,
@@ -627,6 +684,12 @@ def build_knowledge_cards(
             "Open Questions",
             "Weak-confidence areas and unresolved questions the operator may want to confirm or correct.",
             open_questions,
+            "The system still has unresolved areas that could change recommendation quality.",
+            "Correcting these gaps will improve future task precision and reduce weak inference.",
+            [
+                "Confirm or edit the cards above if any inference is wrong.",
+                "Add one source that resolves the highest-confidence gap first.",
+            ],
             observation_rows[:2],
             [row["source_ref"] for row in source_rows[:3]],
             0.55,
@@ -637,26 +700,158 @@ def build_knowledge_cards(
     return cards
 
 
+def build_competitive_snapshot(
+    knowledge_cards: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    knowledge_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    competitor = next((row["competitor"] for row in knowledge_rows if clean_entity(row["competitor"])), "Comparison set still forming")
+    pricing_position = "No pricing pressure detected yet."
+    if any(row["signal_type"] == "pricing_change" for row in observation_rows):
+        pricing_position = "Pricing pressure is active in the comparison set."
+    elif any(card["knowledge_id"] == "pricing_packaging" and card["items"] and "No pricing" not in card["items"][0] for card in knowledge_cards):
+        pricing_position = "Packaging pressure is visible even though direct pricing changes are still thin."
+
+    acquisition_strategy = "Trial or offer pressure is limited right now."
+    if any(row["signal_type"] in {"offer", "asset_sale"} for row in observation_rows):
+        acquisition_strategy = "Offer-led acquisition pressure is visible in the current source set."
+
+    active_threats = [row["summary"] for row in observation_rows[:3]] or ["No immediate competitive threats are strongly evidenced yet."]
+    immediate_opportunities = []
+    open_questions_card = next((card for card in knowledge_cards if card["knowledge_id"] == "open_questions"), None)
+    if open_questions_card:
+        immediate_opportunities.extend(open_questions_card["potential_moves"][:2])
+    if not immediate_opportunities:
+        immediate_opportunities.append("Add one more source to sharpen the next recommendation cycle.")
+
+    return {
+        "pricing_position": pricing_position,
+        "acquisition_strategy_comparison": acquisition_strategy,
+        "active_threats": active_threats,
+        "immediate_opportunities": immediate_opportunities[:3],
+        "reference_competitor": competitor,
+    }
+
+
+def build_linked_tasks_by_source(
+    job_result: dict[str, Any],
+    observations: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    if job_result.get("status") != "complete":
+        return {}
+    payload = job_result.get("result_payload", {})
+    tasks = payload.get("recommended_tasks")
+    if not isinstance(tasks, list):
+        return {}
+    observation_lookup = {row["signal_id"]: row for row in observations}
+    mapping: dict[str, list[str]] = {}
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for evidence_ref in task.get("evidence_refs", []):
+            observation = observation_lookup.get(evidence_ref)
+            if not observation:
+                continue
+            mapping.setdefault(observation["source_ref"], []).append(task["title"])
+    return {source_ref: unique_values(titles) for source_ref, titles in mapping.items()}
+
+
+def build_source_insights(
+    source_rows: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
+    linked_tasks_by_source: dict[str, list[str]],
+) -> dict[str, dict[str, Any]]:
+    insights: dict[str, dict[str, Any]] = {}
+    for row in source_rows:
+        relevant_cards = [card for card in knowledge_cards if row["source_ref"] in card["source_refs"]]
+        takeaway = next((card["insight"] for card in relevant_cards if card["insight"]), "This source adds new market context.")
+        impact = next((card["implication"] for card in relevant_cards if card["implication"]), "This source strengthens what the system knows about the market.")
+        confidence = max((float(card["confidence"]) for card in relevant_cards), default=0.52)
+        insights[row["source_ref"]] = {
+            "key_takeaway": takeaway,
+            "business_impact": impact,
+            "linked_tasks": linked_tasks_by_source.get(row["source_ref"], []),
+            "confidence": round(confidence, 2),
+        }
+    return insights
+
+
+def derive_source_takeaway(row: dict[str, Any], knowledge_cards: list[dict[str, Any]]) -> str:
+    relevant_card = next((card for card in knowledge_cards if row["source_ref"] in card["source_refs"]), None)
+    return relevant_card["insight"] if relevant_card else "This source adds context to the local market picture."
+
+
+def derive_source_business_impact(row: dict[str, Any], knowledge_cards: list[dict[str, Any]]) -> str:
+    relevant_card = next((card for card in knowledge_cards if row["source_ref"] in card["source_refs"]), None)
+    return relevant_card["implication"] if relevant_card else "Use this source to improve future recommendation quality."
+
+
+def derive_source_confidence(signal_count: int, knowledge_count: int) -> float:
+    return min(0.45 + (signal_count * 0.08) + (knowledge_count * 0.03), 0.88)
+
+
+def parse_json_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed if str(item).strip()]
+    return []
+
+
 def knowledge_card(
     knowledge_id: str,
     title: str,
     summary: str,
     items: list[str],
+    insight: str,
+    implication: str,
+    potential_moves: list[str],
     evidence_rows: list[dict[str, Any]],
     source_refs: list[str],
     confidence: float,
     feedback_lookup: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     feedback = feedback_lookup.get(knowledge_id)
+    feedback_original_payload = feedback.get("original_payload") if feedback else None
+    original_payload = {
+        "title": title,
+        "summary": summary,
+        "items": items,
+        "insight": insight,
+        "implication": implication,
+        "potential_moves": potential_moves,
+    }
     return {
         "knowledge_id": knowledge_id,
         "title": feedback.get("corrected_title") if feedback and feedback.get("corrected_title") else title,
         "summary": feedback.get("corrected_summary") if feedback and feedback.get("corrected_summary") else summary,
         "items": feedback.get("corrected_items") if feedback and feedback.get("corrected_items") else items,
+        "insight": feedback_original_payload.get("insight", insight) if isinstance(feedback_original_payload, dict) else insight,
+        "implication": feedback.get("corrected_implication") if feedback and feedback.get("corrected_implication") else implication,
+        "potential_moves": feedback.get("corrected_potential_moves") if feedback and feedback.get("corrected_potential_moves") else potential_moves,
         "source_refs": unique_values(source_refs),
         "evidence_refs": unique_values([row["signal_id"] for row in evidence_rows]),
         "confidence": round(confidence, 2),
         "annotation_status": feedback["status"] if feedback else "pending",
+        "confidence_source": feedback.get("confidence_source") if feedback and feedback.get("confidence_source") else "extracted",
+        "audit": {
+            "original_value": feedback.get("original_payload") if feedback and feedback.get("original_payload") else original_payload,
+            "user_modification": {
+                "title": feedback.get("corrected_title"),
+                "summary": feedback.get("corrected_summary"),
+                "items": feedback.get("corrected_items"),
+                "implication": feedback.get("corrected_implication"),
+                "potential_moves": feedback.get("corrected_potential_moves"),
+            }
+            if feedback
+            else None,
+            "timestamp": feedback.get("updated_at") if feedback else None,
+        },
     }
 
 
@@ -667,6 +862,8 @@ def unique_clauses(source_rows: list[dict[str, Any]]) -> list[str]:
         for clause in extract_clauses(row["raw_text"]):
             normalized = clause.strip()
             if len(normalized) < 16:
+                continue
+            if is_technical_residue(normalized):
                 continue
             lowered = normalized.lower()
             if lowered in seen:
@@ -699,7 +896,11 @@ def unique_entities(
 
 
 def filter_clauses(clauses: list[str], tokens: tuple[str, ...]) -> list[str]:
-    return [clause for clause in clauses if any(token in clause.lower() for token in tokens)]
+    return [
+        clause
+        for clause in clauses
+        if not is_technical_residue(clause) and any(token in clause.lower() for token in tokens)
+    ]
 
 
 def source_refs_for_items(items: list[str], source_rows: list[dict[str, Any]]) -> list[str]:
@@ -738,6 +939,17 @@ def derive_topic_items(text: str) -> list[str]:
     if any(token in normalized for token in ("trial", "discount", "offer")):
         items.append("Offer-led conversion pressure is visible in the current source material.")
     return items
+
+
+def is_technical_residue(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    if normalized in {"pdf", "metadata", "catalog", "version", "pages", "type"}:
+        return True
+    if normalized.startswith(("pdf ", "metadata ", "catalog ", "version ", "pages ", "type ")):
+        return True
+    tokens = set(normalized.replace(":", " ").split())
+    residue_tokens = {"pdf", "metadata", "catalog", "version", "pages", "type", "xref", "obj", "root", "parent"}
+    return bool(tokens) and tokens.issubset(residue_tokens)
 
 
 def run_observation_loop(config: WorkerBridgeConfig) -> None:

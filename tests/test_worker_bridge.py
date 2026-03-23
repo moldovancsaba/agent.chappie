@@ -46,7 +46,11 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue(any("Fortitude AI" in item for item in competitors["items"]))
             self.assertNotIn("Competitive", competitors["items"])
             self.assertNotIn("SEO", competitors["items"])
-            self.assertGreater(workspace["source_cards"][0]["knowledge_count"], 0)
+            self.assertTrue(workspace["source_cards"][0]["key_takeaway"])
+            self.assertTrue(workspace["source_cards"][0]["business_impact"])
+            self.assertIn("insight", competitors)
+            self.assertIn("implication", competitors)
+            self.assertIn("potential_moves", competitors)
 
     def test_workspace_payload_applies_knowledge_feedback_overlay(self) -> None:
         source = SourcePackage(
@@ -80,6 +84,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertEqual(market_card["summary"], "Edited summary from operator feedback.")
             self.assertEqual(market_card["items"], ["Custom knowledge item"])
             self.assertEqual(market_card["annotation_status"], "edited")
+            self.assertEqual(market_card["confidence_source"], "extracted")
 
     def test_process_job_payload_keeps_knowledge_when_checklist_blocks(self) -> None:
         payload = {
@@ -127,6 +132,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 workspace["source_cards"][0]["processing_summary"],
                 "Knowledge extracted; no strong checklist action yet.",
             )
+            self.assertIn("competitive_snapshot", workspace)
 
 
 if __name__ == "__main__":
