@@ -33,6 +33,18 @@ DATABASE_URL=postgres://user:password@host/database?sslmode=require
 
 The frontend now submits only raw source material.
 
+## Developer correction policy
+
+For this app, patching around symptoms is forbidden.
+
+- only root-cause fixes are acceptable
+- do not ship UI masking, wording-only coverups, or fallback hacks in place of a true fix
+- if source cards, checklist items, knowledge cards, or workspace state are missing in the UI, the fix must trace the real failure through storage, API response, session recovery, frontend state, and rendering
+- every production correction must document:
+  - the real failure mode
+  - the root cause
+  - the real fix
+
 Do not add frontend fields for:
 
 - project summary

@@ -15,6 +15,15 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 
 The frontend does not own or generate the general project context. That context is inferred, enriched, and maintained on the Mac mini worker.
 
+## Developer correction rule
+
+Developer work on this app must deliver root-cause fixes only.
+
+- patching around a symptom instead of fixing the underlying failure is prohibited
+- if the visible UI state and the claimed system state diverge, the implementation must trace and fix the true data, state, rendering, or recovery fault
+- temporary UI copy or masking changes are not acceptable as substitutes for restoring correct system behavior
+- every correction pass must state the actual failure mode and the root-cause fix that resolved it
+
 ## Surface structure
 
 The app now uses three sections only:

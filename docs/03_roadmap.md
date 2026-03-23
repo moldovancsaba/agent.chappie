@@ -233,6 +233,7 @@ Proof requirements:
 - local observation-store schema
 - local bridge verification output
 - updated architecture and app runbooks
+- any production bug correction in this phase family must be a root-cause fix; patch-only symptom masking is explicitly disallowed
 
 ## Phase 6 - execution observability enhancements
 

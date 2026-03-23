@@ -323,6 +323,14 @@ Current behavior:
 - worker returns a validated `Job Result v1`
 - observation details remain internal and are not exposed directly to the app
 
+### Correction discipline
+
+When product behavior diverges from implementation claims, the system must be corrected by root-cause repair, not by patching over symptoms.
+
+- symptom-hiding UI tweaks are not valid fixes
+- wording-only changes that leave broken state, rendering, recovery, or data flow intact are not valid fixes
+- the accepted standard is: identify the real fault, repair the real fault, then update the surface to reflect the repaired truth
+
 ## Phase 4 public test app
 
 The first implementation-bearing app phase is intentionally public and unauthenticated.
