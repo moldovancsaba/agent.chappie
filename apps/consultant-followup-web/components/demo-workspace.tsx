@@ -421,6 +421,8 @@ export function DemoWorkspace() {
   }
 
   const completeResult = isCompleteResultWithTasks(jobResult) ? jobResult : null;
+  const blockedResult =
+    jobResult && jobResult.status === "blocked" && !isCompleteResultWithTasks(jobResult) ? jobResult : null;
   const tasks = completeResult?.result_payload.recommended_tasks ?? [];
   const confidence = completeResult?.decision_summary?.confidence;
   const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
@@ -429,6 +431,8 @@ export function DemoWorkspace() {
     ? "Processing"
     : completeResult
       ? "Ready"
+      : blockedResult
+        ? "Needs stronger source"
       : workspace?.recent_sources.length
         ? "Monitoring active"
         : "Waiting for input";
@@ -571,6 +575,52 @@ export function DemoWorkspace() {
                     );
                   })}
                 </div>
+              ) : blockedResult ? (
+                <div className="notice error">
+                  <strong>No strong action yet</strong>
+                  <p>
+                    {"reason" in blockedResult.result_payload
+                      ? blockedResult.result_payload.reason
+                      : "The worker ingested the source but could not derive three distinct, high-confidence actions from it."}
+                  </p>
+                  <p>
+                    The source was received. Try a denser source with clearer competitor, pricing, offer, closure, or
+                    timing signals.
+                  </p>
+                  <div className="guided-actions">
+                    <button
+                      className="button-secondary"
+                      type="button"
+                      onClick={() => {
+                        setInputMode("url");
+                        setActiveView("sources-jobs");
+                      }}
+                    >
+                      Try URL
+                    </button>
+                    <button
+                      className="button-secondary"
+                      type="button"
+                      onClick={() => {
+                        setInputMode("text");
+                        setActiveView("sources-jobs");
+                      }}
+                    >
+                      Try Text
+                    </button>
+                    <button
+                      className="button-secondary"
+                      type="button"
+                      onClick={() => {
+                        setInputMode("file");
+                        setActiveView("sources-jobs");
+                        fileInputRef.current?.click();
+                      }}
+                    >
+                      Try Document
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className="empty-state guided-empty-state">
                   <h3>No checklist yet</h3>
@@ -580,13 +630,13 @@ export function DemoWorkspace() {
                   </p>
                   <div className="guided-actions">
                     <button className="button-secondary" type="button" onClick={() => { setInputMode("url"); setActiveView("sources-jobs"); }}>
-                      Paste URL
+                      Try URL
                     </button>
                     <button className="button-secondary" type="button" onClick={() => { setInputMode("text"); setActiveView("sources-jobs"); }}>
-                      Paste Text
+                      Try Text
                     </button>
                     <button className="button-secondary" type="button" onClick={() => { setInputMode("file"); setActiveView("sources-jobs"); fileInputRef.current?.click(); }}>
-                      Upload File
+                      Try Document
                     </button>
                   </div>
                 </div>
