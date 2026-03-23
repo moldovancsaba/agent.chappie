@@ -256,11 +256,20 @@ textarea {
   line-height: 1.2;
 }
 
-.task-meta {
+.task-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-top: 10px;
+}
+
+.task-meta {
   color: var(--warm);
   font-size: 0.92rem;
   font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(191, 106, 52, 0.08);
 }
 
 .task-block {
@@ -430,6 +439,54 @@ textarea {
   margin-top: 18px;
 }
 
+.guided-empty-state {
+  display: grid;
+  gap: 18px;
+}
+
+.guided-actions,
+.input-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.guided-grid,
+.guidance-columns {
+  display: grid;
+  gap: 14px;
+}
+
+.guided-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.guidance-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.guided-card,
+.panel-lite {
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(42, 36, 24, 0.08);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.guided-card strong,
+.panel-lite strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.guided-card p,
+.panel-lite p,
+.field-help {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .feedback-panel {
   margin-top: 22px;
   padding-top: 20px;
@@ -466,6 +523,22 @@ textarea {
 
 .button-primary.wide {
   width: 100%;
+}
+
+.mode-chip {
+  appearance: none;
+  border: 1px solid rgba(42, 36, 24, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  padding: 12px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.mode-chip.active {
+  background: linear-gradient(135deg, var(--accent) 0%, #128175 100%);
+  color: white;
+  border-color: transparent;
 }
 
 .notice,
@@ -553,6 +626,10 @@ textarea {
   gap: 16px;
 }
 
+.field-grid.single-column {
+  grid-template-columns: 1fr;
+}
+
 .field-triple {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -567,6 +644,17 @@ textarea {
 .field label {
   font-weight: 600;
   font-size: 0.94rem;
+}
+
+.file-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.file-upload-label {
+  color: var(--muted);
 }
 
 .read-only-field {
@@ -592,7 +680,9 @@ textarea {
   .field-grid,
   .field-triple,
   .intel-columns,
-  .operator-grid {
+  .operator-grid,
+  .guided-grid,
+  .guidance-columns {
     grid-template-columns: 1fr;
   }
 

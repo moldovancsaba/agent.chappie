@@ -22,6 +22,7 @@ The app now uses three sections only:
 - `Your Checklist` as the default view with exactly 3 ranked task cards
 - `Know More` as compressed read-only intelligence behind the checklist
 - `Sources & Jobs` as the operator-side ingestion and recurring-job surface
+- a guided first-run input module that teaches the user exactly what to submit
 
 The main checklist view must:
 
@@ -29,6 +30,7 @@ The main checklist view must:
 - show exactly 3 visible task cards
 - expose decision actions as `Done`, `Adjust`, and `Reject`
 - include a confidence indicator for the current ranked output
+- replace abstract empty states with guided input options and a hardcoded example run
 
 ## What the app does not do
 
@@ -90,6 +92,9 @@ The app must not collect or fabricate general project metadata that belongs in t
 
 - URL-only submissions are fetched and normalized on the Mac mini worker before signal extraction
 - raw text submissions are stored as local source snapshots before signal extraction
+- file submissions are accepted as one extracted text block per submission
+- the app teaches the user the difference between good and bad input for URL, text, and file modes
+- the app includes a hardcoded `Use Example` action to demonstrate expected output quality
 - if the worker cannot derive three distinct, high-confidence actions from the ingested evidence, it must return a blocked result instead of filler tasks
 
 ## Sources and activity

@@ -44,6 +44,8 @@ SIGNAL_RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     ("proof_signal", ("testimonial", "customer logos", "logos", "case study", "social proof"), "low", "medium"),
     ("vendor_adoption", ("sport-tech", "sports tech", "tracking", "gps", "video analysis", "platform"), "medium", "medium"),
 )
+SIGNAL_KEYWORDS = tuple({keyword for _, keywords, _, _ in SIGNAL_RULES for keyword in keywords})
+URL_MIN_CONTENT_CHARS = 280
 
 
 def extract_observations(source: SourcePackage, observed_at: str | None = None) -> list[dict[str, Any]]:
@@ -51,8 +53,12 @@ def extract_observations(source: SourcePackage, observed_at: str | None = None) 
     if not text:
         return []
 
-    competitor = source.competitor or infer_competitor(source.project_summary, text)
-    region = source.region or infer_region(source.project_summary, text)
+    if source.source_kind == "url" and not passes_url_signal_quality(text):
+        return []
+
+    inferred_context = infer_context(text, source.project_summary)
+    competitor = source.competitor or inferred_context["competitor"] or "regional_competitor_unknown"
+    region = source.region or inferred_context["region"] or "region_unknown"
     timestamp = observed_at or utc_now_iso()
     observations: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str]] = set()
@@ -112,7 +118,9 @@ def generate_recommended_tasks(
                 "status": "blocked",
                 "completed_at": utc_now_iso(),
                 "result_payload": {
-                    "reason": "The worker could not derive three distinct, high-confidence actions from the supplied evidence.",
+                    "reason": "insufficient_signal_quality"
+                    if source.source_kind == "url"
+                    else "The worker could not derive three distinct, high-confidence actions from the supplied evidence.",
                 },
             }
         )["result_payload"]
@@ -314,6 +322,23 @@ def recover_source_context(source: SourcePackage, knowledge_rows: list[dict[str,
     )
 
 
+def infer_context(source_text: str, project_summary: str) -> dict[str, str | float | None]:
+    competitor = infer_competitor(project_summary, source_text)
+    region = infer_region(project_summary, source_text)
+    confidence = 0.0
+    if competitor != "regional_competitor_unknown":
+        confidence += 0.5
+    if region != "region_unknown":
+        confidence += 0.4
+    if project_summary and project_summary != "managed_on_worker":
+        confidence += 0.1
+    return {
+        "competitor": None if competitor == "regional_competitor_unknown" else competitor,
+        "region": None if region == "region_unknown" else region,
+        "confidence": min(confidence, 1.0),
+    }
+
+
 def infer_competitor(project_summary: str, raw_text: str) -> str:
     for text in (raw_text, project_summary):
         matches = re.findall(r"\b[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,2}\b", text)
@@ -422,6 +447,7 @@ def fetch_url_text(url: str) -> dict[str, str]:
     body = re.sub(r"<script\b[^>]*>.*?</script>", " ", body, flags=re.IGNORECASE | re.DOTALL)
     body = re.sub(r"<style\b[^>]*>.*?</style>", " ", body, flags=re.IGNORECASE | re.DOTALL)
     body = strip_html(body)
+    body = remove_boilerplate_lines(body)
     body = " ".join(body.split())
     return {
         "title": title.strip()[:180],
@@ -442,6 +468,29 @@ def format_fetched_source(url: str, title: str, content: str) -> str:
 
 def strip_html(value: str) -> str:
     return re.sub(r"<[^>]+>", " ", value)
+
+
+def remove_boilerplate_lines(value: str) -> str:
+    parts = [segment.strip() for segment in re.split(r"[\n\r\t]+", value)]
+    kept: list[str] = []
+    for part in parts:
+        normalized = " ".join(part.split())
+        if len(normalized) < 24:
+            continue
+        if normalized.lower().startswith(("skip to", "privacy", "cookie", "menu", "navigation", "search")):
+            continue
+        kept.append(normalized)
+    return " ".join(kept)
+
+
+def passes_url_signal_quality(value: str) -> bool:
+    normalized = value.lower()
+    if len(normalized) < URL_MIN_CONTENT_CHARS:
+        return False
+    if not any(keyword in normalized for keyword in SIGNAL_KEYWORDS):
+        return False
+    proper_nouns = re.findall(r"\b[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,2}\b", value)
+    return len(proper_nouns) >= 2
 
 
 def measurable_advantage(domain: str, advantage_type: str) -> str:

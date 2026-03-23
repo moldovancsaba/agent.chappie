@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { type ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 
 import { feedbackSchema, type JobRequest, type JobResult, type RecommendedTask } from "@/lib/contracts";
 import { generateId } from "@/lib/ids";
 
 type AppView = "checklist" | "know-more" | "sources-jobs";
+type InputMode = "url" | "text" | "file";
 type DecisionStatus = "done" | "edited" | "declined";
 type TaskDecision = {
   status: DecisionStatus | null;
@@ -42,6 +43,12 @@ type WorkspaceSnapshot = {
     last_run_at: string | null;
     last_source_ref: string | null;
   }>;
+};
+
+const EXAMPLE_INPUT = {
+  mode: "text" as const,
+  value:
+    "FlowOps increased U14 pricing by 12%, Essex County Club launched a free-trial campaign, and one nearby academy may close with equipment likely headed to a sell-off before the next intake cycle.",
 };
 
 function isCompleteResultWithTasks(
@@ -97,20 +104,8 @@ function formatTimestamp(value: string | null | undefined) {
   return parsed.toLocaleString();
 }
 
-function deriveSignalCounts(notes: string) {
-  const normalized = notes.toLowerCase();
-  return {
-    pricing: normalized.includes("price") || normalized.includes("pricing") || normalized.includes("fee") ? 1 : 0,
-    closure: normalized.includes("close") || normalized.includes("closure") ? 1 : 0,
-    offers:
-      normalized.includes("discount") || normalized.includes("voucher") || normalized.includes("trial")
-        ? 1
-        : 0,
-    equipment:
-      normalized.includes("equipment") || normalized.includes("sell-off") || normalized.includes("asset sale")
-        ? 1
-        : 0,
-  };
+function humanizeRegion(value: string) {
+  return value.replaceAll("_", " ");
 }
 
 function buildDefaultDecisions(tasks: RecommendedTask[]) {
@@ -147,11 +142,42 @@ function allTasksDecided(tasks: RecommendedTask[], decisions: Record<number, Tas
   return tasks.every((task) => Boolean(decisions[task.rank]?.status));
 }
 
+function inputHelper(mode: InputMode) {
+  if (mode === "url") {
+    return {
+      label: "Paste URL",
+      placeholder: "https://competitor-site.example/pricing",
+      good: [
+        "One competitor website or pricing page",
+        "One announcement, launch page, or social post",
+        "One page with clear claims, pricing, or offers",
+      ],
+      bad: ["Generic homepage with no useful content", "Unrelated directory or map links", "Multiple links pasted together"],
+    };
+  }
+  if (mode === "file") {
+    return {
+      label: "Upload File",
+      placeholder: "Upload one PDF, notes file, or report.",
+      good: ["Pricing PDF", "Meeting notes", "Competitor report"],
+      bad: ["Screenshot with no text extraction", "Multiple files", "Completely unrelated document"],
+    };
+  }
+  return {
+    label: "Paste Text",
+    placeholder: 'Example: "FlowOps increased prices by 15%, Essex launched a discount campaign, and one academy may close."',
+    good: ["One raw notes block", "One copied pricing table or announcement", "One source bundle from a call or report"],
+    bad: ["One-word summary", "Vague request with no evidence", "Multiple unrelated topics mixed together"],
+  };
+}
+
 export function DemoWorkspace() {
   const [activeView, setActiveView] = useState<AppView>("checklist");
+  const [inputMode, setInputMode] = useState<InputMode>("text");
   const [sessionId, setSessionId] = useState("anonymous-loading");
   const [projectId, setProjectId] = useState("");
   const [contextNotes, setContextNotes] = useState("");
+  const [fileName, setFileName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [submissionError, setSubmissionError] = useState("");
@@ -161,6 +187,7 @@ export function DemoWorkspace() {
   const [taskDecisions, setTaskDecisions] = useState<Record<number, TaskDecision>>({});
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [workspaceError, setWorkspaceError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setSessionId(readOrCreateSessionId());
@@ -207,21 +234,27 @@ export function DemoWorkspace() {
     };
   }, [projectId, jobResult]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitContext(notes: string) {
+    const trimmed = notes.trim();
+    if (!trimmed) {
+      setSubmissionError("Paste one URL, one text block, or upload one file before running the job.");
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmissionError("");
     setFeedbackStatus("");
 
     try {
+      const contextType = inputMode === "file" ? "working_document" : "meeting_notes";
       const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId,
           projectId: projectId || undefined,
-          contextNotes,
-          contextType: "meeting_notes",
+          contextNotes: trimmed,
+          contextType,
         }),
       });
       const body = await response.json();
@@ -238,11 +271,36 @@ export function DemoWorkspace() {
         throw new Error(resultBody.detail ?? "The job result could not be retrieved.");
       }
       setJobResult(resultBody.job_result);
+      setActiveView("checklist");
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : "Unknown submission error.");
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitContext(contextNotes);
+  }
+
+  async function handleUseExample() {
+    setInputMode(EXAMPLE_INPUT.mode);
+    setFileName("");
+    setContextNotes(EXAMPLE_INPUT.value);
+    await submitContext(EXAMPLE_INPUT.value);
+  }
+
+  async function handleFileSelection(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    setInputMode("file");
+    setFileName(file.name);
+    const rawText = await file.text();
+    setContextNotes(rawText.slice(0, 20000));
+    setSubmissionError("");
   }
 
   async function handleSaveFeedback() {
@@ -281,15 +339,7 @@ export function DemoWorkspace() {
         throw new Error(body.detail ?? "The feedback payload could not be saved.");
       }
 
-      const summary = [
-        feedbackPayload.done.length > 0 ? `${feedbackPayload.done.length} done` : null,
-        feedbackPayload.edited.length > 0 ? `${feedbackPayload.edited.length} adjusted` : null,
-        feedbackPayload.declined.length > 0 ? `${feedbackPayload.declined.length} rejected` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-
-      setFeedbackStatus(`Feedback saved: ${summary || "no changes recorded"}.`);
+      setFeedbackStatus("Thanks. Your response has been captured so future recommendations can improve.");
     } catch (error) {
       setFeedbackStatus(error instanceof Error ? error.message : "Unknown feedback error.");
     } finally {
@@ -319,31 +369,38 @@ export function DemoWorkspace() {
 
   const completeResult = isCompleteResultWithTasks(jobResult) ? jobResult : null;
   const tasks = completeResult?.result_payload.recommended_tasks ?? [];
-  const signalCounts = deriveSignalCounts(contextNotes);
   const confidence = completeResult?.decision_summary?.confidence;
   const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
   const topKnowledge = workspace?.knowledge_summary[0];
+  const currentHelper = inputHelper(inputMode);
+  const currentStatus = isSubmitting
+    ? "Processing"
+    : completeResult
+      ? "Ready"
+      : workspace?.recent_sources.length
+        ? "Monitoring active"
+        : "Waiting for input";
 
   return (
     <section className="decision-shell">
       <header className="decision-header panel">
         <div className="decision-header-copy">
-          <div className="eyebrow">Worker-managed decision surface</div>
+          <div className="eyebrow">Competitive action engine</div>
           <h1>Your next move, not more noise.</h1>
           <p>
-            The frontend submits only raw source material. Agent.Chappie manages the general project context on the Mac
-            mini and returns only the next three actions worth making.
+            Submit one source and Agent.Chappie turns it into the three highest-value actions to make next. You only
+            see what to do, why it matters, and what evidence triggered it.
           </p>
         </div>
 
         <div className="project-status">
           <div className="status-stack">
             <span className="status-label">Project</span>
-            <strong>{projectId || "Assigned by worker"}</strong>
+            <strong>{projectId || "Start with one source"}</strong>
           </div>
           <div className="status-stack">
             <span className="status-label">Status</span>
-            <strong>{completeResult ? "Monitoring active" : "Waiting for first signal set"}</strong>
+            <strong>{currentStatus}</strong>
           </div>
           <div className="status-stack">
             <span className="status-label">Confidence</span>
@@ -356,25 +413,13 @@ export function DemoWorkspace() {
       </header>
 
       <nav className="surface-nav" aria-label="Primary product sections">
-        <button
-          className={`surface-tab ${activeView === "checklist" ? "active" : ""}`}
-          onClick={() => setActiveView("checklist")}
-          type="button"
-        >
+        <button className={`surface-tab ${activeView === "checklist" ? "active" : ""}`} onClick={() => setActiveView("checklist")} type="button">
           Your Checklist
         </button>
-        <button
-          className={`surface-tab ${activeView === "know-more" ? "active" : ""}`}
-          onClick={() => setActiveView("know-more")}
-          type="button"
-        >
+        <button className={`surface-tab ${activeView === "know-more" ? "active" : ""}`} onClick={() => setActiveView("know-more")} type="button">
           Know More
         </button>
-        <button
-          className={`surface-tab ${activeView === "sources-jobs" ? "active" : ""}`}
-          onClick={() => setActiveView("sources-jobs")}
-          type="button"
-        >
+        <button className={`surface-tab ${activeView === "sources-jobs" ? "active" : ""}`} onClick={() => setActiveView("sources-jobs")} type="button">
           Sources &amp; Jobs
         </button>
       </nav>
@@ -388,12 +433,12 @@ export function DemoWorkspace() {
                   <span className="section-kicker">Your Checklist</span>
                   <h2>Exactly three actions. No dashboard clutter.</h2>
                 </div>
-                <span className="status-pill">{completeResult ? "Monitoring active" : "Waiting for input"}</span>
+                <span className="status-pill">{currentStatus}</span>
               </div>
 
               {submissionError ? (
                 <div className="notice error">
-                  <strong>Submission error</strong>
+                  <strong>Input problem</strong>
                   <p>{submissionError}</p>
                 </div>
               ) : null}
@@ -407,7 +452,10 @@ export function DemoWorkspace() {
                         <div className="task-rank">{task.rank}</div>
                         <div className="task-content">
                           <h3>{task.title}</h3>
-                          <div className="task-meta">When: this week</div>
+                          <div className="task-meta-row">
+                            <div className="task-meta">When: this week</div>
+                            <div className="task-meta">Confidence: {confidenceLabel(confidence)}{confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}</div>
+                          </div>
                           <div className="task-block">
                             <span>Why now</span>
                             <p>{task.why_now}</p>
@@ -467,9 +515,40 @@ export function DemoWorkspace() {
                   })}
                 </div>
               ) : (
-                <div className="empty-state">
-                  <h3>No checklist yet</h3>
-                  <p>Open Sources &amp; Jobs, submit one context package, and Agent.Chappie will return the top three actions.</p>
+                <div className="empty-state guided-empty-state">
+                  <h3>Start with one source</h3>
+                  <p>
+                    Paste one competitor URL, one block of raw notes, or upload one file. Agent.Chappie will turn it
+                    into three ranked actions or tell you honestly when the source is too weak.
+                  </p>
+                  <div className="guided-actions">
+                    <button className="button-secondary" type="button" onClick={() => { setInputMode("url"); setActiveView("sources-jobs"); }}>
+                      Paste URL
+                    </button>
+                    <button className="button-secondary" type="button" onClick={() => { setInputMode("text"); setActiveView("sources-jobs"); }}>
+                      Paste Text
+                    </button>
+                    <button className="button-secondary" type="button" onClick={() => { setInputMode("file"); setActiveView("sources-jobs"); fileInputRef.current?.click(); }}>
+                      Upload File
+                    </button>
+                    <button className="button-primary" type="button" onClick={() => void handleUseExample()} disabled={isSubmitting}>
+                      {isSubmitting ? "Running example..." : "Use Example"}
+                    </button>
+                  </div>
+                  <div className="guided-grid">
+                    <article className="guided-card">
+                      <strong>Good URL input</strong>
+                      <p>One pricing page, announcement, or competitor post with claims, offers, or positioning.</p>
+                    </article>
+                    <article className="guided-card">
+                      <strong>Good text input</strong>
+                      <p>One raw note bundle like: “FlowOps raised prices, Essex launched free trials, one academy may close.”</p>
+                    </article>
+                    <article className="guided-card">
+                      <strong>Good file input</strong>
+                      <p>One pricing PDF, notes file, or report with text the worker can actually parse.</p>
+                    </article>
+                  </div>
                 </div>
               )}
             </section>
@@ -480,11 +559,15 @@ export function DemoWorkspace() {
               <div className="section-head compact">
                 <div>
                   <span className="section-kicker">Decision Summary</span>
-                  <h2>Confidence and response state</h2>
+                  <h2>What happened and what to do next</h2>
                 </div>
               </div>
 
               <div className="summary-stack">
+                <div className="summary-row">
+                  <span>Status</span>
+                  <strong>{currentStatus}</strong>
+                </div>
                 <div className="summary-row">
                   <span>Confidence</span>
                   <strong>
@@ -493,31 +576,22 @@ export function DemoWorkspace() {
                   </strong>
                 </div>
                 <div className="summary-row">
-                  <span>Bridge mode</span>
-                  <strong>Worker</strong>
-                </div>
-                <div className="summary-row">
-                  <span>Storage</span>
-                  <strong>Neon + local brain</strong>
+                  <span>Latest source</span>
+                  <strong>{workspace?.recent_sources[0]?.source_kind ?? "Not yet"}</strong>
                 </div>
               </div>
 
               {completeResult ? <p className="surface-summary">{completeResult.result_payload.summary}</p> : null}
 
               <div className="feedback-panel">
-                <h3>Decision capture</h3>
-                <p>Mark each card as Done, Adjust, or Reject. The app stores only the final feedback object.</p>
+                <h3>Help improve the next recommendation</h3>
+                <p>Mark each card as Done, Adjust, or Reject so Agent.Chappie learns what was actually useful.</p>
                 <div className="feedback-totals">
                   <span>{buildFeedbackPayload(tasks, taskDecisions).done.length} done</span>
                   <span>{buildFeedbackPayload(tasks, taskDecisions).edited.length} adjusted</span>
                   <span>{buildFeedbackPayload(tasks, taskDecisions).declined.length} rejected</span>
                 </div>
-                <button
-                  className="button-primary wide"
-                  disabled={!canSubmitFeedback || isSavingFeedback}
-                  onClick={handleSaveFeedback}
-                  type="button"
-                >
+                <button className="button-primary wide" disabled={!canSubmitFeedback || isSavingFeedback} onClick={handleSaveFeedback} type="button">
                   {isSavingFeedback ? "Saving decisions..." : "Submit decisions"}
                 </button>
                 {feedbackStatus ? <div className="notice success"><p>{feedbackStatus}</p></div> : null}
@@ -535,42 +609,41 @@ export function DemoWorkspace() {
               <div className="section-head">
                 <div>
                   <span className="section-kicker">Know More</span>
-                  <h2>Compressed intelligence behind the checklist</h2>
+                  <h2>Why these three actions were chosen</h2>
                 </div>
               </div>
 
               <div className="intel-columns">
                 <article className="intel-card">
-                  <h3>Project Summary</h3>
+                  <h3>Market Summary</h3>
                   {workspace ? (
                     <ul>
-                      <li>{workspace.market_summary.pricing_changes} pricing changes detected</li>
+                      <li>{workspace.market_summary.pricing_changes} competitors changed pricing</li>
                       <li>{workspace.market_summary.closure_signals} closure or distress signals detected</li>
                       <li>{workspace.market_summary.offer_signals} offer or asset signals detected</li>
                     </ul>
                   ) : (
                     <ul>
-                      <li>{signalCounts.pricing} competitor pricing change detected from current input</li>
-                      <li>{signalCounts.closure} closure or distress signal detected from current input</li>
-                      <li>{signalCounts.offers + signalCounts.equipment} commercial offer or asset signal detected from current input</li>
+                      <li>Waiting for the first source package.</li>
+                      <li>Once a source arrives, this view explains why the checklist changed.</li>
                     </ul>
                   )}
                 </article>
 
                 <article className="intel-card">
-                  <h3>Market Situation</h3>
+                  <h3>Current Context</h3>
                   <ul>
                     <li>
                       {topKnowledge
-                        ? `${topKnowledge.competitor} is the strongest current competitor signal in ${topKnowledge.region.replaceAll("_", " ")}.`
-                        : "The worker maintains the general project context and competitive scope outside the frontend."}
+                        ? `${topKnowledge.competitor} is the strongest current competitor signal in ${humanizeRegion(topKnowledge.region)}.`
+                        : "No strong competitor or region has been inferred yet."}
                     </li>
                     <li>
                       {workspace?.recent_activity.length
-                        ? "The app is showing compressed reasoning derived from ingested source history."
-                        : "The app only shows compressed reasoning after the worker ingests real source material."}
+                        ? "The checklist is grounded in ingested source history, not generic AI filler."
+                        : "Submit one source to generate the first market summary."}
                     </li>
-                    <li>The current response window is measured in days, not quarters.</li>
+                    <li>The system prefers actions that can be executed inside a 7-day window.</li>
                   </ul>
                 </article>
 
@@ -584,7 +657,7 @@ export function DemoWorkspace() {
                     </ul>
                   ) : (
                     <ul>
-                      <li>Submit one context package to populate the signal summary.</li>
+                      <li>Paste one pricing page, one raw text block, or one notes file to populate this panel.</li>
                     </ul>
                   )}
                 </article>
@@ -600,8 +673,103 @@ export function DemoWorkspace() {
             <form className="panel section-card" onSubmit={handleSubmit}>
               <div className="section-head">
                 <div>
+                  <span className="section-kicker">Submit Context</span>
+                  <h2>Tell the system exactly what to read</h2>
+                </div>
+                <button className="button-secondary" type="button" onClick={() => void handleUseExample()} disabled={isSubmitting}>
+                  Use Example
+                </button>
+              </div>
+
+              <div className="input-mode-row">
+                <button className={`mode-chip ${inputMode === "url" ? "active" : ""}`} type="button" onClick={() => setInputMode("url")}>
+                  Paste URL
+                </button>
+                <button className={`mode-chip ${inputMode === "text" ? "active" : ""}`} type="button" onClick={() => setInputMode("text")}>
+                  Paste Text
+                </button>
+                <button className={`mode-chip ${inputMode === "file" ? "active" : ""}`} type="button" onClick={() => { setInputMode("file"); fileInputRef.current?.click(); }}>
+                  Upload File
+                </button>
+              </div>
+
+              <div className="input-guidance panel-lite">
+                <div>
+                  <strong>{currentHelper.label}</strong>
+                  <p>{currentHelper.placeholder}</p>
+                </div>
+                <div className="guidance-columns">
+                  <div>
+                    <span>Good input</span>
+                    <ul>
+                      {currentHelper.good.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <span>Bad input</span>
+                    <ul>
+                      {currentHelper.bad.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {inputMode === "file" ? (
+                <div className="field-grid single-column">
+                  <div className="field">
+                    <label>Upload one file</label>
+                    <div className="file-upload-row">
+                      <button className="button-secondary" type="button" onClick={() => fileInputRef.current?.click()}>
+                        Choose file
+                      </button>
+                      <span className="file-upload-label">{fileName || "No file selected yet"}</span>
+                    </div>
+                    <p className="field-help">
+                      Max one file per submission. Text extraction must happen in the browser or a worker-supported format.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="field-grid single-column">
+                  <div className="field">
+                    <label htmlFor="context-notes">{inputMode === "url" ? "URL" : "Text block"}</label>
+                    <textarea
+                      id="context-notes"
+                      value={contextNotes}
+                      onChange={(event) => setContextNotes(event.target.value)}
+                      placeholder={currentHelper.placeholder}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <input ref={fileInputRef} hidden type="file" accept=".txt,.md,.pdf,.csv" onChange={handleFileSelection} />
+
+              <div className="field-triple single-readonly">
+                <div className="field">
+                  <label>Anonymous session</label>
+                  <div className="read-only-field">{sessionId}</div>
+                </div>
+              </div>
+
+              <div className="button-row">
+                <button className="button-primary" type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Submitting source..." : "Run decision job"}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <aside className="secondary-column">
+            <section className="panel section-card">
+              <div className="section-head compact">
+                <div>
                   <span className="section-kicker">Sources &amp; Jobs</span>
-                  <h2>Submit raw source material only</h2>
+                  <h2>Recent source handling</h2>
                 </div>
               </div>
 
@@ -620,16 +788,16 @@ export function DemoWorkspace() {
                     ))
                   ) : (
                     <div className="job-item">
-                      <strong>Managed on the Mac mini worker</strong>
-                      <span>Recurring monitoring is not configured in the frontend.</span>
-                      <p>The worker owns competitor scans, schedule rules, and continuous observation state.</p>
+                      <strong>Monitoring starts after the first useful source</strong>
+                      <span>This panel fills from the worker, not from manual frontend setup.</span>
+                      <p>It will show recurring observation activity once the worker has real project context.</p>
                     </div>
                   )}
                 </article>
 
                 <article className="operator-card">
                   <div className="operator-head">
-                    <h3>Event-Based Jobs</h3>
+                    <h3>Recent Activity</h3>
                   </div>
                   {workspace?.recent_activity.length ? (
                     workspace.recent_activity.slice(0, 2).map((activity) => (
@@ -641,48 +809,12 @@ export function DemoWorkspace() {
                     ))
                   ) : (
                     <div className="job-item">
-                      <strong>Triggered from submitted source packages</strong>
-                      <span>Paste raw notes, a URL summary, or extracted file text.</span>
-                      <p>The frontend no longer creates general project metadata or monitoring rules.</p>
+                      <strong>No source activity yet</strong>
+                      <span>Submit one URL, one text block, or one file to create the first activity trace.</span>
+                      <p>The system will show what it actually ingested, not a fabricated source list.</p>
                     </div>
                   )}
                 </article>
-              </div>
-
-              <div className="field-grid single-column">
-                <div className="field">
-                  <label htmlFor="context-notes">Context package</label>
-                  <textarea
-                    id="context-notes"
-                    value={contextNotes}
-                    onChange={(event) => setContextNotes(event.target.value)}
-                    placeholder="Paste one raw source package: notes, copied competitor copy, a URL summary, or extracted file text."
-                  />
-                </div>
-              </div>
-
-              <div className="field-triple single-readonly">
-                <div className="field">
-                  <label>Anonymous session</label>
-                  <div className="read-only-field">{sessionId}</div>
-                </div>
-              </div>
-
-              <div className="button-row">
-                <button className="button-primary" type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Submitting source package..." : "Run decision job"}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <aside className="secondary-column">
-            <section className="panel section-card">
-              <div className="section-head compact">
-                <div>
-                  <span className="section-kicker">Context Library</span>
-                  <h2>Worker-managed source handling</h2>
-                </div>
               </div>
 
               <div className="library-list">
@@ -695,18 +827,11 @@ export function DemoWorkspace() {
                     </article>
                   ))
                 ) : (
-                  <>
-                    <article className="library-item">
-                      <strong>Worker-managed source inventory</strong>
-                      <span>Submitted raw input is forwarded to the worker.</span>
-                      <p>General source snapshots and project knowledge are managed on the Mac mini only.</p>
-                    </article>
-                    <article className="library-item current">
-                      <strong>Current inline context</strong>
-                      <span>Raw source package sent from this browser</span>
-                      <p>{contextNotes ? `${contextNotes.slice(0, 130)}${contextNotes.length > 130 ? "..." : ""}` : "No source package submitted yet."}</p>
-                    </article>
-                  </>
+                  <article className="library-item">
+                    <strong>What appears here</strong>
+                    <span>Recent URLs, notes, or file text that the worker actually ingested.</span>
+                    <p>Nothing is shown until the system has real source material to work with.</p>
+                  </article>
                 )}
               </div>
 
