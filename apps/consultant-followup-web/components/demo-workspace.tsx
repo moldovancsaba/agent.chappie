@@ -427,6 +427,10 @@ export function DemoWorkspace() {
   const confidence = completeResult?.decision_summary?.confidence;
   const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
   const topKnowledge = workspace?.knowledge_summary[0];
+  const blockedReason =
+    blockedResult && "reason" in blockedResult.result_payload && typeof blockedResult.result_payload.reason === "string"
+      ? blockedResult.result_payload.reason
+      : "The worker ingested the source but could not derive three distinct, high-confidence actions from it.";
   const currentStatus = isSubmitting
     ? "Processing"
     : completeResult
@@ -578,11 +582,7 @@ export function DemoWorkspace() {
               ) : blockedResult ? (
                 <div className="notice error">
                   <strong>No strong action yet</strong>
-                  <p>
-                    {"reason" in blockedResult.result_payload
-                      ? blockedResult.result_payload.reason
-                      : "The worker ingested the source but could not derive three distinct, high-confidence actions from it."}
-                  </p>
+                  <p>{blockedReason}</p>
                   <p>
                     The source was received. Try a denser source with clearer competitor, pricing, offer, closure, or
                     timing signals.
