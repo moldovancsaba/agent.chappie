@@ -102,6 +102,30 @@ function humanizeRegion(value: string) {
   return value.replaceAll("_", " ");
 }
 
+function titleCaseWords(value: string) {
+  return value
+    .split(" ")
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
+
+function humanizeSignalType(value: string) {
+  return titleCaseWords(value.replaceAll("_", " "));
+}
+
+function sourceKindLabel(value: string) {
+  if (value === "manual_text") {
+    return "Text";
+  }
+  if (value === "uploaded_file") {
+    return "Document";
+  }
+  if (value === "url") {
+    return "URL";
+  }
+  return titleCaseWords(value.replaceAll("_", " "));
+}
+
 function buildDefaultDecisions(tasks: RecommendedTask[]) {
   return tasks.reduce<Record<number, TaskDecision>>((current, task) => {
     current[task.rank] = {
@@ -134,25 +158,6 @@ function buildFeedbackPayload(tasks: RecommendedTask[], decisions: Record<number
 
 function allTasksDecided(tasks: RecommendedTask[], decisions: Record<number, TaskDecision>) {
   return tasks.every((task) => Boolean(decisions[task.rank]?.status));
-}
-
-function inputHelper(mode: InputMode) {
-  if (mode === "url") {
-    return {
-      label: "Paste URL",
-      placeholder: "",
-    };
-  }
-  if (mode === "file") {
-    return {
-      label: "Upload File",
-      placeholder: "",
-    };
-  }
-  return {
-    label: "Paste Text",
-    placeholder: "",
-  };
 }
 
 export function DemoWorkspace() {
@@ -420,7 +425,6 @@ export function DemoWorkspace() {
   const confidence = completeResult?.decision_summary?.confidence;
   const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
   const topKnowledge = workspace?.knowledge_summary[0];
-  const currentHelper = inputHelper(inputMode);
   const currentStatus = isSubmitting
     ? "Processing"
     : completeResult
@@ -428,6 +432,10 @@ export function DemoWorkspace() {
       : workspace?.recent_sources.length
         ? "Monitoring active"
         : "Waiting for input";
+  const projectLabel = topKnowledge ? titleCaseWords(humanizeRegion(topKnowledge.region)) : "Current project";
+  const latestSourceLabel = workspace?.recent_sources[0]
+    ? `${sourceKindLabel(workspace.recent_sources[0].source_kind)} received`
+    : "No source yet";
 
   return (
     <section className="decision-shell">
@@ -444,20 +452,20 @@ export function DemoWorkspace() {
           <div className="project-status">
             <div className="status-stack">
               <span className="status-label">Project</span>
-            <strong>{projectId || "No project loaded yet"}</strong>
+              <strong>{projectLabel}</strong>
             </div>
-          <div className="status-stack">
-            <span className="status-label">Status</span>
-            <strong>{currentStatus}</strong>
+            <div className="status-stack">
+              <span className="status-label">Status</span>
+              <strong>{currentStatus}</strong>
+            </div>
+            <div className="status-stack">
+              <span className="status-label">Confidence</span>
+              <strong>
+                {confidenceLabel(confidence)}
+                {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
+              </strong>
+            </div>
           </div>
-          <div className="status-stack">
-            <span className="status-label">Confidence</span>
-            <strong>
-              {confidenceLabel(confidence)}
-              {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
-            </strong>
-          </div>
-        </div>
       </header>
 
       <nav className="surface-nav" aria-label="Primary product sections">
@@ -480,6 +488,7 @@ export function DemoWorkspace() {
                 <div>
                   <span className="section-kicker">Your Checklist</span>
                   <h2>Exactly three actions. No dashboard clutter.</h2>
+                  <p className="section-subcopy">The checklist stays focused on the next moves that matter most right now.</p>
                 </div>
                 <span className="status-pill">{currentStatus}</span>
               </div>
@@ -591,6 +600,7 @@ export function DemoWorkspace() {
                 <div>
                   <span className="section-kicker">Decision Summary</span>
                   <h2>What happened and what to do next</h2>
+                  <p className="section-subcopy">This summary stays aligned with the checklist, not a separate dashboard.</p>
                 </div>
               </div>
 
@@ -608,7 +618,7 @@ export function DemoWorkspace() {
                 </div>
                 <div className="summary-row">
                   <span>Latest source</span>
-                  <strong>{workspace?.recent_sources[0]?.source_kind ?? "Not yet"}</strong>
+                  <strong>{latestSourceLabel}</strong>
                 </div>
               </div>
 
@@ -641,6 +651,7 @@ export function DemoWorkspace() {
                 <div>
                   <span className="section-kicker">Know More</span>
                   <h2>Why these three actions were chosen</h2>
+                  <p className="section-subcopy">This view explains the decision context behind the checklist.</p>
                 </div>
               </div>
 
@@ -666,12 +677,12 @@ export function DemoWorkspace() {
                   <ul>
                     <li>
                       {topKnowledge
-                        ? `${topKnowledge.competitor} is the strongest current competitor signal in ${humanizeRegion(topKnowledge.region)}.`
+                        ? `${topKnowledge.competitor} is the strongest current signal in ${humanizeRegion(topKnowledge.region)}.`
                         : "No strong competitor or region has been inferred yet."}
                     </li>
                     <li>
                       {workspace?.recent_activity.length
-                        ? "The checklist is grounded in ingested source history, not generic AI filler."
+                        ? "The checklist is grounded in ingested source history."
                         : "Submit one source to generate the first market summary."}
                     </li>
                     <li>The system prefers actions that can be executed inside a 7-day window.</li>
@@ -706,6 +717,7 @@ export function DemoWorkspace() {
                 <div>
                   <span className="section-kicker">Submit Context</span>
                   <h2>Tell the system exactly what to read</h2>
+                  <p className="section-subcopy">Submit one source at a time. The worker ingests it and updates the checklist if the evidence is strong enough.</p>
                 </div>
               </div>
 
@@ -719,12 +731,6 @@ export function DemoWorkspace() {
                 <button className={`mode-chip ${inputMode === "file" ? "active" : ""}`} type="button" onClick={() => { setInputMode("file"); fileInputRef.current?.click(); }}>
                   Upload File
                 </button>
-              </div>
-
-              <div className="input-guidance panel-lite">
-                <div>
-                  <strong>{currentHelper.label}</strong>
-                </div>
               </div>
 
               {inputMode === "file" ? (
@@ -747,6 +753,7 @@ export function DemoWorkspace() {
                       id="context-notes"
                       value={contextNotes}
                       onChange={(event) => setContextNotes(event.target.value)}
+                      placeholder={inputMode === "url" ? "https://..." : ""}
                     />
                   </div>
                 </div>
@@ -767,14 +774,15 @@ export function DemoWorkspace() {
               <div className="section-head compact">
                 <div>
                   <span className="section-kicker">Sources &amp; Jobs</span>
-                  <h2>Recent source handling</h2>
+                  <h2>What the system has taken in</h2>
+                  <p className="section-subcopy">These cards show real worker activity, not placeholder inventory.</p>
                 </div>
               </div>
 
               <div className="operator-grid">
                 <article className="operator-card">
                   <div className="operator-head">
-                    <h3>Recurring Monitoring</h3>
+                    <h3>Monitoring</h3>
                   </div>
                   {workspace?.monitor_jobs.length ? (
                     workspace.monitor_jobs.map((job) => (
@@ -795,12 +803,12 @@ export function DemoWorkspace() {
 
                 <article className="operator-card">
                   <div className="operator-head">
-                    <h3>Recent Activity</h3>
+                    <h3>Recent Signals</h3>
                   </div>
                   {workspace?.recent_activity.length ? (
                     workspace.recent_activity.slice(0, 2).map((activity) => (
                       <div className="job-item" key={activity.signal_id}>
-                        <strong>{activity.signal_type.replaceAll("_", " ")}</strong>
+                        <strong>{humanizeSignalType(activity.signal_type)}</strong>
                         <span>Observed: {formatTimestamp(activity.observed_at)}</span>
                         <p>{activity.summary}</p>
                       </div>
@@ -819,8 +827,8 @@ export function DemoWorkspace() {
                 {workspace?.recent_sources.length ? (
                   workspace.recent_sources.map((source) => (
                     <article className={`library-item ${source.source_ref.startsWith("source_") ? "current" : ""}`} key={source.source_ref}>
-                      <strong>{source.source_ref}</strong>
-                      <span>{source.source_kind} · received {formatTimestamp(source.created_at)}</span>
+                      <strong>{sourceKindLabel(source.source_kind)}</strong>
+                      <span>Received {formatTimestamp(source.created_at)}</span>
                       <p>{source.preview}</p>
                     </article>
                   ))
@@ -833,20 +841,7 @@ export function DemoWorkspace() {
                 )}
               </div>
 
-              {jobRequest ? (
-                <div className="compact-meta">
-                  <h3>Latest Job</h3>
-                  <p>
-                    <strong>Job ID:</strong> {jobRequest.job_id}
-                  </p>
-                  <p>
-                    <strong>Project ID:</strong> {jobRequest.project_id}
-                  </p>
-                  <p>
-                    <strong>Capability:</strong> {jobRequest.requested_capability}
-                  </p>
-                </div>
-              ) : null}
+              {workspaceError ? <div className="notice error"><p>{workspaceError}</p></div> : null}
             </section>
           </aside>
         </section>
