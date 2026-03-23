@@ -446,9 +446,9 @@ def build_pricing_offer_candidate(
     tier = pricing_detail.get("tier") or "next intake"
     offer_name = offer_detail.get("offer") or "switch offer"
     title = (
-        f"Launch a 7-day switch campaign with a {offer_name} for {tier} families before {offer_observation['competitor']} and {pricing_observation['competitor']} reset the {region} market"
+        f"Launch a 7-day switch campaign with a {offer_name} for {tier} families this week before {offer_observation['competitor']} and {pricing_observation['competitor']} reset the {region} market"
         if domain == "academy"
-        else f"Launch a 7-day switch offer before {offer_observation['competitor']} and {pricing_observation['competitor']} reset buyer expectations"
+        else f"Launch a 7-day switch offer this week before {offer_observation['competitor']} and {pricing_observation['competitor']} reset buyer expectations"
     )
     task = {
         "rank": 0,
@@ -458,9 +458,9 @@ def build_pricing_offer_candidate(
             "A single switch campaign this week answers both price pressure and promotional pressure before families choose a competing path."
         ),
         "expected_advantage": (
-            "Captures switching parents before the intake window by giving price-sensitive families one visible alternative instead of losing them to either discount-led or premium-led competitor moves."
+            "Captures price-sensitive families before the next intake closes by giving them one visible alternative before discount-led and premium-led competitor moves split the market."
             if domain == "academy"
-            else "Captures price-sensitive buyers before the active buying window closes and competitors reset the comparison frame."
+            else "Captures price-sensitive buyers in the active buying window before competitors reset the comparison frame around price and offer pressure."
         ),
         "evidence_refs": [pricing_observation["signal_id"], offer_observation["signal_id"]],
     }
@@ -475,7 +475,7 @@ def build_closure_asset_candidate(
     region = humanize_region(closure_observation["region"])
     domain = infer_domain(source)
     title = (
-        f"Call {closure_observation['competitor']}'s owner and submit one bundled offer for players, equipment, and facility access before the closure finalizes"
+        f"Call {closure_observation['competitor']}'s owner this week and submit one bundled offer for players, equipment, and facility access before the closure finalizes"
     )
     task = {
         "rank": 0,
@@ -485,9 +485,9 @@ def build_closure_asset_candidate(
             "A bundled offer this week turns two distress signals into one asymmetric expansion move before other operators react."
         ),
         "expected_advantage": (
-            "Acquires players, equipment, and enrollment capacity at low cost before closure finalizes, creating immediate revenue upside without waiting for organic expansion."
+            "Acquires players, equipment, and enrollment capacity at lower cost before closure finalizes, creating immediate revenue upside before rivals can capture the same assets."
             if domain == "academy"
-            else "Captures customers, assets, or operating capacity at low cost before the distressed competitor exits, creating near-term revenue and cost advantage."
+            else "Captures customers, assets, or operating capacity at lower cost before the distressed competitor exits, creating near-term revenue and cost advantage over slower operators."
         ),
         "evidence_refs": [closure_observation["signal_id"], asset_observation["signal_id"]],
     }
@@ -503,9 +503,9 @@ def build_positioning_bundle_candidate(
     domain = infer_domain(source)
     offer_name = extract_action_detail(extract_signal_phrase(offer_observation["summary"])).get("offer") or "offer-led"
     title = (
-        f"Add a {offer_name} response, two proof points, and one urgency strip to the enrollment page before the next {region} intake"
+        f"Add a {offer_name} response, two proof points, and one urgency strip this week before the next {region} intake"
         if domain == "academy"
-        else f"Add one {offer_name} response and proof-led conversion strip before the next campaign cycle"
+        else f"Add one {offer_name} response and proof-led conversion strip this week before the next campaign cycle"
     )
     task = {
         "rank": 0,
@@ -515,9 +515,9 @@ def build_positioning_bundle_candidate(
             "Updating the page this week lets you answer both trust and offer pressure with one conversion move."
         ),
         "expected_advantage": (
-            "Raises conversion among undecided parents before the next intake by combining proof, urgency, and a direct answer to the competitor offer."
+            "Raises conversion among undecided parents before the next intake by combining proof, urgency, and a direct answer to the competitor offer before they drift to the lower-friction option."
             if domain == "academy"
-            else "Improves conversion before the next campaign window by answering both proof and offer pressure in one place."
+            else "Improves conversion before the next campaign window by answering both proof and offer pressure in one place before buyers choose the lower-friction competitor."
         ),
         "evidence_refs": [proof_observation["signal_id"], offer_observation["signal_id"]],
     }
@@ -915,20 +915,20 @@ def passes_url_signal_quality(value: str) -> bool:
 
 def measurable_advantage(domain: str, advantage_type: str) -> str:
     academy_advantages = {
-        "pricing": "Protects enrollment and improves intake conversion before the next sign-up cycle.",
-        "acquisition": "Increases player capacity, local revenue, or facility access faster than organic growth.",
-        "cost": "Reduces equipment cost this month and protects operating margin for coaching or promotion.",
-        "conversion": "Improves inquiry-to-enrollment conversion before prospects compare the new entrant.",
-        "positioning": "Improves parent conversion and reduces onboarding or proof objections in active conversations.",
-        "retention": "Improves player-development quality or parent retention without waiting for a long rollout.",
+        "pricing": "Increases conversion of price-sensitive families before the next intake cycle compared with the current competitor price frame.",
+        "acquisition": "Captures players, local revenue, or facility access faster than organic growth while the competitor exit window is still open.",
+        "cost": "Cuts equipment spend this month and protects coaching or promotion budget before the closure opportunity disappears.",
+        "conversion": "Improves inquiry-to-enrollment conversion this week before prospects compare the new entrant against your current offer.",
+        "positioning": "Increases conversion of comparison-stage parents this week by reducing proof or onboarding objections versus the competitor message.",
+        "retention": "Improves player-development confidence or parent retention within the current decision window without waiting for a long rollout.",
     }
     general_advantages = {
-        "pricing": "Protects revenue and conversion against a competitor price move in the current buying cycle.",
-        "acquisition": "Creates a faster growth path through acquired customers, assets, or operating capacity.",
-        "cost": "Reduces near-term operating cost and frees budget for higher-leverage growth moves.",
-        "conversion": "Improves conversion before the competitor gains traction with the same audience.",
-        "positioning": "Improves win rate by countering the competitor narrative with a stronger market-facing response.",
-        "retention": "Improves delivery or retention fast enough to matter in the current decision window.",
+        "pricing": "Protects revenue and lifts conversion in the current buying cycle before the competitor price move resets buyer expectations.",
+        "acquisition": "Captures customers, assets, or operating capacity faster than competitors while the distressed window is still open.",
+        "cost": "Reduces near-term operating cost and frees budget for higher-leverage growth moves before the current opportunity closes.",
+        "conversion": "Improves conversion in the active buying window before the competitor gains traction with the same audience.",
+        "positioning": "Improves win rate in active deals by countering the competitor narrative before buyers lock their shortlist.",
+        "retention": "Improves delivery or retention within the current decision window before the competitor normalizes the same advantage.",
     }
     lookup = academy_advantages if domain == "academy" else general_advantages
     return lookup[advantage_type]
@@ -996,26 +996,26 @@ def build_pricing_task_title(competitor: str, detail: dict[str, str | None], dom
     tier = detail.get("tier")
     percent = detail.get("percent")
     if domain == "academy" and tier and percent:
-        return f"Update the {tier} pricing page and launch a 7-day comparison offer against {competitor}'s {percent} price move"
+        return f"Launch a 7-day comparison offer for {tier} this week to intercept price-sensitive families before {competitor}'s {percent} move resets the market"
     if domain == "academy" and tier:
-        return f"Update the {tier} pricing page and launch a 7-day comparison offer against {competitor}"
-    return f"Publish a 7-day comparison offer and update the pricing page against {competitor}'s latest fee change"
+        return f"Launch a 7-day comparison offer for {tier} this week before {competitor} locks in price-sensitive families"
+    return f"Launch a 7-day comparison offer this week before {competitor}'s latest fee change resets buyer expectations"
 
 
 def build_closure_task_title(competitor: str, detail: dict[str, str | None]) -> str:
     timeframe = detail.get("timeframe") or "this week"
-    return f"Call {competitor}'s owner {timeframe} and ask for player, staff, and equipment availability"
+    return f"Call {competitor}'s owner {timeframe} and secure first access to players, staff, and equipment before another operator moves"
 
 
 def build_asset_sale_task_title(detail: dict[str, str | None]) -> str:
-    return "Request the equipment inventory and submit a bid before the sell-off closes"
+    return "Request the equipment inventory this week and place the first bid before the sell-off closes"
 
 
 def build_opening_task_title(competitor: str, region: str, detail: dict[str, str | None]) -> str:
     offer = detail.get("offer")
     if offer:
-        return f"Launch a local comparison campaign in {region} before {competitor} pushes its {offer}"
-    return f"Launch a local comparison campaign in {region} before {competitor} opens"
+        return f"Launch a local comparison push in {region} this week before {competitor} uses its {offer} to take early demand"
+    return f"Launch a local comparison push in {region} this week before {competitor} opens and shapes first impressions"
 
 
 def build_positioning_task_title(
@@ -1027,12 +1027,12 @@ def build_positioning_task_title(
     offer = detail.get("offer")
     tier = detail.get("tier")
     if domain == "academy" and offer and tier:
-        return f"Add a {offer} response for {tier} to the enrollment page and sales script this week"
+        return f"Add a {offer} counter-message for {tier} this week so comparison-stage families do not default to {competitor}"
     if domain == "academy" and offer:
-        return f"Add a {offer} response to the enrollment page and sales script this week"
+        return f"Add a {offer} counter-message to the enrollment path this week before {competitor} owns the low-friction narrative"
     if signal_type == "proof_signal":
-        return "Add two parent testimonials and one proof strip to the enrollment page this week"
-    return f"Rewrite the enrollment-page hero and sales script this week to answer {competitor}'s latest claim"
+        return "Add two parent testimonials and one proof strip this week so hesitant families do not trust the competitor first"
+    return f"Rewrite the enrollment-page hero this week to neutralize {competitor}'s latest claim before buyers lock their shortlist"
 
 
 def contains_week_specific_action(title: str) -> bool:

@@ -960,17 +960,17 @@ def build_competitive_snapshot(
     pricing_position = "No pricing pressure detected yet."
     if pricing_observation:
         pricing_position = (
-            f"{pricing_observation['competitor']} is moving buyer price expectations in "
-            f"{humanize_region(pricing_observation['region'])}."
+            f"{pricing_observation['competitor']} is resetting buyer price expectations in "
+            f"{humanize_region(pricing_observation['region'])}, which exposes any weaker entry offer you still show."
         )
     elif any(card["knowledge_id"] == "pricing_packaging" and card["items"] and "No pricing" not in card["items"][0] for card in knowledge_cards):
-        pricing_position = "Packaging pressure is visible even though direct pricing changes are still thin."
+        pricing_position = "Packaging pressure is building, even if direct price changes are still thin."
 
-    acquisition_strategy = "Trial or offer pressure is limited right now."
+    acquisition_strategy = "No competitor is clearly winning on low-friction acquisition yet."
     if offer_observation:
         acquisition_strategy = (
-            f"{offer_observation['competitor']} is using offer-led acquisition pressure in "
-            f"{humanize_region(offer_observation['region'])}."
+            f"{offer_observation['competitor']} is lowering switching friction in "
+            f"{humanize_region(offer_observation['region'])} through offer-led acquisition."
         )
     elif asset_sale_observation:
         acquisition_strategy = (
@@ -993,6 +993,14 @@ def build_competitive_snapshot(
     if not immediate_opportunities:
         immediate_opportunities.append("Add one more source to sharpen the next recommendation cycle.")
 
+    current_weakness = "No dominant weakness is strongly evidenced yet."
+    if offer_observation:
+        current_weakness = "Weakness: no lower-friction entry offer is visible while a competitor is using offer-led acquisition."
+    elif pricing_observation:
+        current_weakness = "Weakness: your current price framing may look exposed if you do not answer the new comparison anchor quickly."
+    elif any(card["knowledge_id"] == "proof_signals" and card["items"] and "No proof" not in card["items"][0] for card in knowledge_cards):
+        current_weakness = "Weakness: proof quality may be weaker than the trust signals buyers are seeing elsewhere in the market."
+
     risk_level = "low"
     if closure_observation or (pricing_observation and offer_observation):
         risk_level = "high"
@@ -1002,6 +1010,7 @@ def build_competitive_snapshot(
     return {
         "pricing_position": pricing_position,
         "acquisition_strategy_comparison": acquisition_strategy,
+        "current_weakness": current_weakness,
         "active_threats": active_threats,
         "immediate_opportunities": immediate_opportunities[:3],
         "reference_competitor": competitor,

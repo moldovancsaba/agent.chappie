@@ -106,6 +106,7 @@ type WorkspaceSnapshot = {
   competitive_snapshot: {
     pricing_position: string;
     acquisition_strategy_comparison: string;
+    current_weakness?: string;
     active_threats: string[];
     immediate_opportunities: string[];
     reference_competitor: string;
@@ -274,19 +275,26 @@ function confidenceSourceLabel(value: string) {
 
 function buildConsequenceOfInaction(task: RecommendedTask) {
   const impact = task.expected_advantage.replace(/\.$/, "");
-  if (impact.toLowerCase().includes("before")) {
-    return `If you wait, the timing window closes and the competitor keeps the advantage this task was meant to counter. ${impact}.`;
+  const title = task.title.toLowerCase();
+  if (title.includes("comparison offer") || title.includes("switch campaign")) {
+    return `If you do nothing, price-sensitive buyers stay inside the competitor's comparison frame and the next buying window closes before you intercept them. ${impact}.`;
   }
-  return `If you ignore this move, the competitor keeps the initiative and the business effect described here is less likely to happen. ${impact}.`;
+  if (title.includes("owner") || title.includes("bundled offer") || title.includes("first access")) {
+    return `If you do nothing, another operator can secure the distressed assets first and close the expansion window before you act. ${impact}.`;
+  }
+  if (title.includes("testimonial") || title.includes("proof") || title.includes("hero")) {
+    return `If you do nothing, the competitor keeps the trust advantage in active comparisons and hesitant buyers are more likely to choose the lower-friction option. ${impact}.`;
+  }
+  return `If you do nothing, the competitor keeps the initiative and the business effect described here becomes harder to capture in the current window. ${impact}.`;
 }
 
 function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
   const sourceLine = sourceLabels.length ? `Pull the linked source evidence from ${sourceLabels.join(", ")} and confirm the exact claim or trigger.` : "Pull the linked evidence and confirm the exact trigger before editing anything.";
   return [
     sourceLine,
-    `Make the core change required by this action: ${task.title}.`,
-    "Update the customer-facing or operator-facing surface this week so the move is visible before the next comparison cycle.",
-    "Check whether the move reduced the risk or captured the opportunity described in the expected impact.",
+    `Execute the dominant move now: ${task.title}.`,
+    "Make the customer-facing or operator-facing change visible this week so the market can actually see the move.",
+    "Check whether the move directly reduced the threat or captured the opportunity described in the expected impact.",
   ];
 }
 
@@ -1065,9 +1073,9 @@ export function DemoWorkspace() {
                   <div className="panel-lite">
                     <strong>Example output</strong>
                     <ul>
-                      <li>Launch a 7-day trial response before Essex captures price-sensitive leads.</li>
-                      <li>Call Westover owner before closure to capture players and assets.</li>
-                      <li>Update U14 pricing page before the next intake cycle.</li>
+                      <li>Launch a 7-day trial response this week before Essex captures price-sensitive leads.</li>
+                      <li>Call Westover owner now and secure first access to players and assets before closure finalizes.</li>
+                      <li>Launch a U14 comparison offer before the next intake cycle resets buyer expectations.</li>
                     </ul>
                   </div>
                   <div className="guided-actions">
@@ -1240,6 +1248,10 @@ export function DemoWorkspace() {
                   <div className="summary-row">
                     <span>Acquisition comparison</span>
                     <strong>{workspace?.competitive_snapshot.acquisition_strategy_comparison ?? "Still forming"}</strong>
+                  </div>
+                  <div className="summary-row">
+                    <span>Current weakness</span>
+                    <strong>{workspace?.competitive_snapshot.current_weakness ?? "Still forming"}</strong>
                   </div>
                   <div className="summary-row">
                     <span>Risk level</span>

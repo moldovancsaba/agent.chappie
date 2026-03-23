@@ -90,6 +90,7 @@ export type WorkerWorkspacePayload = {
   competitive_snapshot: {
     pricing_position: string;
     acquisition_strategy_comparison: string;
+    current_weakness?: string;
     active_threats: string[];
     immediate_opportunities: string[];
     reference_competitor: string;

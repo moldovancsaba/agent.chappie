@@ -112,8 +112,8 @@ class ObservationEngineTests(unittest.TestCase):
         self.assertEqual(result_payload["recommended_tasks"][0]["rank"], 1)
         self.assertEqual(len(result_payload["recommended_tasks"]), 3)
         titles = [task["title"].lower() for task in result_payload["recommended_tasks"]]
-        self.assertTrue(any("update the" in title for title in titles))
-        self.assertTrue(any("bundled offer" in title or "call flowops" in title for title in titles))
+        self.assertTrue(any("launch a 7-day comparison offer" in title for title in titles))
+        self.assertTrue(any("first access" in title or "bundled offer" in title for title in titles))
         self.assertTrue(any("enrollment" in task["expected_advantage"].lower() for task in result_payload["recommended_tasks"]))
         self.assertTrue(any("raised prices" in task["why_now"].lower() for task in result_payload["recommended_tasks"]))
         self.assertTrue(all("improve " not in title for title in titles))
@@ -137,7 +137,7 @@ class ObservationEngineTests(unittest.TestCase):
         self.assertIn("switch", top_task["title"].lower())
         self.assertIn("flowops", top_task["why_now"].lower())
         self.assertIn("essex county club", top_task["why_now"].lower())
-        self.assertIn("intake window", top_task["expected_advantage"].lower())
+        self.assertIn("next intake closes", top_task["expected_advantage"].lower())
 
     def test_infer_context_recovers_competitor_and_region_for_fresh_project(self) -> None:
         inferred = infer_context(
