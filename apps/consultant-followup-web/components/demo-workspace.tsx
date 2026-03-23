@@ -247,6 +247,8 @@ export function DemoWorkspace() {
 
     try {
       const contextType = inputMode === "file" ? "working_document" : "meeting_notes";
+      const sourceKind =
+        inputMode === "url" ? "url" : inputMode === "file" ? "uploaded_file" : "manual_text";
       const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -255,6 +257,7 @@ export function DemoWorkspace() {
           projectId: projectId || undefined,
           contextNotes: trimmed,
           contextType,
+          sourceKind,
         }),
       });
       const body = await response.json();

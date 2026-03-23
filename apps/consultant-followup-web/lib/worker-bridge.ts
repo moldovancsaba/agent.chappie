@@ -4,7 +4,7 @@ import { createDemoRecommendation } from "@/lib/demo-worker";
 import { env } from "@/lib/env";
 
 type SourcePackage = {
-  source_kind: "manual_text";
+  source_kind: "manual_text" | "url" | "uploaded_file";
   project_summary: string;
   raw_text: string;
   source_ref: string;
@@ -46,6 +46,7 @@ export type WorkerWorkspacePayload = {
 export async function runWorkerJob(input: {
   jobRequest: JobRequest;
   contextNotes: string;
+  sourceKind: "manual_text" | "url" | "uploaded_file";
 }): Promise<JobResult> {
   if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
     const recommendation = createDemoRecommendation({
@@ -79,7 +80,7 @@ export async function runWorkerJob(input: {
     body: JSON.stringify({
       job_request: input.jobRequest,
       source_package: {
-        source_kind: "manual_text",
+        source_kind: input.sourceKind,
         project_summary: "managed_on_worker",
         raw_text: input.contextNotes,
         source_ref: `source_${input.jobRequest.job_id}`,

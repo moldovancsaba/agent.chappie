@@ -4,6 +4,7 @@ export const priorityClassSchema = z.enum(["critical", "normal", "low"]);
 export const jobClassSchema = z.enum(["heavy", "light"]);
 export const resultStatusSchema = z.enum(["complete", "failed", "blocked"]);
 export const contextTypeSchema = z.enum(["meeting_notes", "call_summary", "working_document"]);
+export const inputSourceKindSchema = z.enum(["url", "manual_text", "uploaded_file"]);
 export const artifactTypeSchema = z.enum(["upload"]);
 export const decisionRouteSchema = z.enum(["proceed", "revise", "stop"]);
 export const businessImpactSchema = z.enum(["low", "medium", "high"]);
@@ -137,6 +138,7 @@ export const feedbackSchema = z.object({
 export const demoJobSubmissionSchema = z.object({
   contextNotes: z.string().min(1),
   contextType: contextTypeSchema,
+  sourceKind: inputSourceKindSchema,
   sessionId: z.string().min(1),
   projectId: z.string().min(1).optional(),
 });

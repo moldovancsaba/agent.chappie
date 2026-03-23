@@ -42,6 +42,7 @@ export async function POST(request: Request) {
     const jobResult = await runWorkerJob({
       jobRequest,
       contextNotes: payload.contextNotes,
+      sourceKind: payload.sourceKind,
     });
 
     await saveResult(jobResult);
