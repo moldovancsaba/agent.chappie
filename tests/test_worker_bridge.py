@@ -46,6 +46,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue(any("Fortitude AI" in item for item in competitors["items"]))
             self.assertNotIn("Competitive", competitors["items"])
             self.assertNotIn("SEO", competitors["items"])
+            self.assertNotIn("Several", competitors["items"])
             self.assertTrue(workspace["source_cards"][0]["key_takeaway"])
             self.assertTrue(workspace["source_cards"][0]["business_impact"])
             self.assertIn("insight", competitors)

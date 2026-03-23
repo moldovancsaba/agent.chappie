@@ -69,19 +69,28 @@ GENERIC_ENTITY_WORDS = {
     "Page",
 }
 ENTITY_NOISE_WORDS = {
+    "briefing",
+    "buyers",
     "analysis",
     "competitive",
     "content",
     "document",
+    "families",
+    "industry",
     "intelligence",
     "market",
     "marketing",
+    "memo",
     "packaging",
+    "platforms",
     "pricing",
     "report",
     "seo",
+    "several",
+    "software",
     "source",
     "strategy",
+    "vendors",
 }
 REGION_TERMS = ("cluster", "region", "county", "city", "area", "district", "zone")
 
@@ -1131,6 +1140,8 @@ def first_viable_entity(candidates: list[str]) -> str | None:
 def clean_entity(value: str) -> str | None:
     candidate = " ".join(value.strip().split())
     if not candidate or len(candidate) < 3:
+        return None
+    if re.fullmatch(r"[A-Z]?\d{1,2}|U\d{1,2}", candidate):
         return None
     words = candidate.split()
     if any(word in GENERIC_ENTITY_WORDS for word in words):
