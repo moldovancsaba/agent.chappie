@@ -316,6 +316,12 @@ textarea {
   font-weight: 600;
 }
 
+.task-preview {
+  margin: 14px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .task-evidence {
   margin-top: 16px;
 }
@@ -386,6 +392,11 @@ textarea {
 .decision-button.adjust.selected {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.decision-button.detail.selected {
+  background: rgba(191, 106, 52, 0.12);
+  color: var(--warm);
 }
 
 .decision-button.reject.selected {
@@ -508,6 +519,16 @@ textarea {
 .compact-meta h3 {
   margin: 0;
   font-size: 1rem;
+}
+
+.task-detail-shell,
+.task-detail-list {
+  display: grid;
+  gap: 14px;
+}
+
+.task-detail-list {
+  margin-top: 18px;
 }
 
 .button-primary,

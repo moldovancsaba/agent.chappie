@@ -20,7 +20,7 @@ The frontend does not own or generate the general project context. That context 
 The app now uses three sections only:
 
 - `Your Checklist` as the default view with exactly 3 ranked task cards
-- `Know More` as compressed read-only intelligence behind the checklist
+- `Know More` as the structured knowledge surface behind the checklist
 - `Sources & Jobs` as the operator-side ingestion and recurring-job surface
 - a guided first-run input module that teaches the user exactly what to submit without sample business data
 
@@ -31,6 +31,7 @@ The main checklist view must:
 - expose decision actions as `Done`, `Adjust`, and `Reject`
 - include a confidence indicator for the current ranked output
 - replace abstract empty states with guided input options and real ingestion status
+- open task detail per card instead of using `Know More` as the generic task-explanation panel
 
 ## What the app does not do
 
@@ -111,6 +112,9 @@ The app must not collect or fabricate general project metadata that belongs in t
 - recent signal-derived activity
 - compressed market summary
 - monitor job status
+- structured knowledge cards
+- per-source extracted knowledge counts
+- knowledge feedback state
 
 The frontend must not invent source inventory or recurring job history.
 The frontend also restores the latest saved project and result for the current anonymous session through `GET /api/session/[sessionId]/state`.
@@ -123,6 +127,12 @@ The frontend also restores the latest saved project and result for the current a
 - visible trigger type, schedule, last three runs, last action summary, and expected impact summary for jobs
 
 The app remains thin: these CRUD operations proxy to the Mac mini worker and read back worker-managed state.
+
+For rich sources such as uploaded market-analysis documents:
+
+- `Checklist` may still block if no action-quality move is justified
+- `Know More` must still populate with synthesized knowledge cards
+- ingested source cards must show extracted signal count, extracted knowledge count, and source-level actions
 
 ## Output safety
 

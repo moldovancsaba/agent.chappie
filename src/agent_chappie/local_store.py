@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
+from collections.abc import Iterator
 from typing import Any
 
 
@@ -47,6 +49,12 @@ def initialize_local_store(path: str | None = None) -> str:
               competitor text,
               region text,
               source_hash text not null,
+              display_label text,
+              status text not null default 'processed',
+              processing_summary text,
+              signal_count integer not null default 0,
+              knowledge_count integer not null default 0,
+              last_used_in_checklist integer not null default 0,
               created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
 
@@ -99,19 +107,54 @@ def initialize_local_store(path: str | None = None) -> str:
               created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+
+            create table if not exists knowledge_feedback (
+              knowledge_id text not null,
+              project_id text not null,
+              status text not null,
+              corrected_title text,
+              corrected_summary text,
+              corrected_items_json text,
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              primary key (knowledge_id, project_id)
+            );
             """
         )
+        _ensure_column(connection, "source_snapshots", "display_label", "text")
+        _ensure_column(connection, "source_snapshots", "status", "text not null default 'processed'")
+        _ensure_column(connection, "source_snapshots", "processing_summary", "text")
+        _ensure_column(connection, "source_snapshots", "signal_count", "integer not null default 0")
+        _ensure_column(connection, "source_snapshots", "knowledge_count", "integer not null default 0")
+        _ensure_column(connection, "source_snapshots", "last_used_in_checklist", "integer not null default 0")
     return db_path
 
 
-def _connect(path: str | None = None) -> sqlite3.Connection:
+@contextmanager
+def _connect(path: str | None = None) -> Iterator[sqlite3.Connection]:
     db_path = initialize_local_store(path)
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, column_sql: str) -> None:
+    existing = {
+        row[1]
+        for row in connection.execute(f"pragma table_info({table_name})").fetchall()
+    }
+    if column_name not in existing:
+        connection.execute(f"alter table {table_name} add column {column_name} {column_sql}")
 
 
 def save_source_snapshot(source: dict[str, Any], source_hash: str, path: str | None = None) -> None:
+    display_label = source.get("file_name") or source.get("source_ref")
     with _connect(path) as connection:
         connection.execute(
             """
@@ -123,15 +166,19 @@ def save_source_snapshot(source: dict[str, Any], source_hash: str, path: str | N
               raw_text,
               competitor,
               region,
-              source_hash
+              source_hash,
+              display_label,
+              status
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(source_ref) do update set
               project_summary = excluded.project_summary,
               raw_text = excluded.raw_text,
               competitor = excluded.competitor,
               region = excluded.region,
-              source_hash = excluded.source_hash
+              source_hash = excluded.source_hash,
+              display_label = coalesce(source_snapshots.display_label, excluded.display_label),
+              status = coalesce(source_snapshots.status, excluded.status)
             """,
             (
                 source["source_ref"],
@@ -142,6 +189,8 @@ def save_source_snapshot(source: dict[str, Any], source_hash: str, path: str | N
                 source.get("competitor"),
                 source.get("region"),
                 source_hash,
+                display_label,
+                "received",
             ),
         )
 
@@ -344,6 +393,12 @@ def list_recent_source_snapshots(project_id: str, limit: int = 10, path: str | N
               raw_text,
               competitor,
               region,
+              display_label,
+              status,
+              processing_summary,
+              signal_count,
+              knowledge_count,
+              last_used_in_checklist,
               created_at
             from source_snapshots
             where project_id = ?
@@ -351,6 +406,100 @@ def list_recent_source_snapshots(project_id: str, limit: int = 10, path: str | N
             limit ?
             """,
             (project_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_source_snapshot(project_id: str, source_ref: str, path: str | None = None) -> dict[str, Any] | None:
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            select
+              source_ref,
+              project_id,
+              source_kind,
+              project_summary,
+              raw_text,
+              competitor,
+              region,
+              source_hash,
+              display_label,
+              status,
+              processing_summary,
+              signal_count,
+              knowledge_count,
+              last_used_in_checklist,
+              created_at
+            from source_snapshots
+            where project_id = ? and source_ref = ?
+            """,
+            (project_id, source_ref),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_source_snapshot(source_ref: str, updates: dict[str, Any], path: str | None = None) -> None:
+    if not updates:
+        return
+    allowed = {
+        "display_label",
+        "status",
+        "processing_summary",
+        "signal_count",
+        "knowledge_count",
+        "last_used_in_checklist",
+        "competitor",
+        "region",
+    }
+    assignments = []
+    params: list[Any] = []
+    for key, value in updates.items():
+        if key not in allowed:
+            continue
+        if value is None:
+            continue
+        assignments.append(f"{key} = ?")
+        params.append(value)
+    if not assignments:
+        return
+    params.append(source_ref)
+    with _connect(path) as connection:
+        connection.execute(
+            f"""
+            update source_snapshots
+            set {', '.join(assignments)}
+            where source_ref = ?
+            """,
+            params,
+        )
+
+
+def delete_source_snapshot(project_id: str, source_ref: str, path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute("delete from system_observations where project_id = ? and source_ref = ?", (project_id, source_ref))
+        connection.execute("delete from source_snapshots where project_id = ? and source_ref = ?", (project_id, source_ref))
+
+
+def list_observations_for_source(project_id: str, source_ref: str, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              signal_id,
+              project_id,
+              competitor,
+              region,
+              signal_type,
+              summary,
+              source_ref,
+              observed_at,
+              confidence,
+              business_impact
+            from system_observations
+            where project_id = ? and source_ref = ? and superseded_by is null
+            order by observed_at desc
+            """,
+            (project_id, source_ref),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -585,3 +734,66 @@ def update_managed_job(managed_job_id: str, updates: dict[str, Any], path: str |
 def delete_managed_job(managed_job_id: str, path: str | None = None) -> None:
     with _connect(path) as connection:
         connection.execute("delete from managed_jobs where managed_job_id = ?", (managed_job_id,))
+
+
+def upsert_knowledge_feedback(
+    project_id: str,
+    knowledge_id: str,
+    status: str,
+    corrected_title: str | None = None,
+    corrected_summary: str | None = None,
+    corrected_items: list[str] | None = None,
+    path: str | None = None,
+) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into knowledge_feedback (
+              knowledge_id,
+              project_id,
+              status,
+              corrected_title,
+              corrected_summary,
+              corrected_items_json,
+              updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            on conflict(knowledge_id, project_id) do update set
+              status = excluded.status,
+              corrected_title = excluded.corrected_title,
+              corrected_summary = excluded.corrected_summary,
+              corrected_items_json = excluded.corrected_items_json,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            """,
+            (
+                knowledge_id,
+                project_id,
+                status,
+                corrected_title,
+                corrected_summary,
+                json.dumps(corrected_items) if corrected_items is not None else None,
+            ),
+        )
+
+
+def fetch_knowledge_feedback_rows(project_id: str, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select knowledge_id, project_id, status, corrected_title, corrected_summary, corrected_items_json, updated_at
+            from knowledge_feedback
+            where project_id = ?
+            order by updated_at desc
+            """,
+            (project_id,),
+        ).fetchall()
+    feedback_rows = [dict(row) for row in rows]
+    for row in feedback_rows:
+        if row.get("corrected_items_json"):
+            try:
+                row["corrected_items"] = json.loads(row["corrected_items_json"])
+            except json.JSONDecodeError:
+                row["corrected_items"] = []
+        else:
+            row["corrected_items"] = []
+    return feedback_rows

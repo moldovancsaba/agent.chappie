@@ -68,6 +68,21 @@ GENERIC_ENTITY_WORDS = {
     "Home",
     "Page",
 }
+ENTITY_NOISE_WORDS = {
+    "analysis",
+    "competitive",
+    "content",
+    "document",
+    "intelligence",
+    "market",
+    "marketing",
+    "packaging",
+    "pricing",
+    "report",
+    "seo",
+    "source",
+    "strategy",
+}
 REGION_TERMS = ("cluster", "region", "county", "city", "area", "district", "zone")
 
 
@@ -1119,6 +1134,10 @@ def clean_entity(value: str) -> str | None:
         return None
     words = candidate.split()
     if any(word in GENERIC_ENTITY_WORDS for word in words):
+        return None
+    if candidate.lower() in ENTITY_NOISE_WORDS:
+        return None
+    if all(word.lower() in ENTITY_NOISE_WORDS for word in words):
         return None
     if words[-1].lower() in REGION_TERMS:
         return None

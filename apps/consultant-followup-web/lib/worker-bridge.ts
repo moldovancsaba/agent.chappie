@@ -15,6 +15,28 @@ type SourcePackage = {
 
 export type WorkerWorkspacePayload = {
   project_id: string;
+  source_cards: Array<{
+    source_ref: string;
+    label: string;
+    source_kind: string;
+    status: string;
+    processing_summary: string;
+    signal_count: number;
+    knowledge_count: number;
+    last_used_in_checklist: boolean;
+    created_at: string;
+    preview: string;
+  }>;
+  knowledge_cards: Array<{
+    knowledge_id: string;
+    title: string;
+    summary: string;
+    items: string[];
+    source_refs: string[];
+    evidence_refs: string[];
+    confidence: number;
+    annotation_status: string;
+  }>;
   recent_sources: Array<{
     source_ref: string;
     source_kind: string;
@@ -148,6 +170,8 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
       },
       knowledge_summary: [],
       monitor_jobs: [],
+      source_cards: [],
+      knowledge_cards: [],
       managed_sources: [],
       managed_jobs: [],
     };
@@ -245,5 +269,37 @@ export async function deleteWorkerJob(projectId: string, jobId: string) {
     `/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(jobId)}`,
     "DELETE",
     {}
+  );
+}
+
+export async function updateWorkerIngestedSource(
+  projectId: string,
+  sourceRef: string,
+  payload: Record<string, unknown>
+) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/sources/ingested/${encodeURIComponent(sourceRef)}`,
+    "PATCH",
+    payload
+  );
+}
+
+export async function deleteWorkerIngestedSource(projectId: string, sourceRef: string) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/sources/ingested/${encodeURIComponent(sourceRef)}`,
+    "DELETE",
+    {}
+  );
+}
+
+export async function updateWorkerKnowledgeCard(
+  projectId: string,
+  knowledgeId: string,
+  payload: Record<string, unknown>
+) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`,
+    "PATCH",
+    payload
   );
 }

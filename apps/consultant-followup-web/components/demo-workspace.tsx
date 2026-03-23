@@ -23,12 +23,36 @@ type JobFormState = {
   scheduleText: string;
   sourceId: string;
 };
+type KnowledgeCard = {
+  knowledge_id: string;
+  title: string;
+  summary: string;
+  items: string[];
+  source_refs: string[];
+  evidence_refs: string[];
+  confidence: number;
+  annotation_status: string;
+};
+type SourceCard = {
+  source_ref: string;
+  label: string;
+  source_kind: string;
+  status: string;
+  processing_summary: string;
+  signal_count: number;
+  knowledge_count: number;
+  last_used_in_checklist: boolean;
+  created_at: string;
+  preview: string;
+};
 type ManagementStatus = {
   tone: "success" | "error";
   message: string;
 } | null;
 type WorkspaceSnapshot = {
   project_id: string;
+  source_cards: SourceCard[];
+  knowledge_cards: KnowledgeCard[];
   recent_sources: Array<{
     source_ref: string;
     source_kind: string;
@@ -235,6 +259,12 @@ export function DemoWorkspace() {
   });
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [managementStatus, setManagementStatus] = useState<ManagementStatus>(null);
+  const [selectedTask, setSelectedTask] = useState<RecommendedTask | null>(null);
+  const [focusedSourceRef, setFocusedSourceRef] = useState<string | null>(null);
+  const [editingIngestedSourceRef, setEditingIngestedSourceRef] = useState<string | null>(null);
+  const [ingestedSourceLabel, setIngestedSourceLabel] = useState("");
+  const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
+  const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", items: "" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -614,6 +644,79 @@ export function DemoWorkspace() {
     setManagementStatus({ tone: "success", message: "Job deleted." });
   }
 
+  async function updateKnowledgeCard(
+    knowledgeId: string,
+    payload: {
+      status: "confirmed" | "dismissed" | "edited";
+      corrected_title?: string;
+      corrected_summary?: string;
+      corrected_items?: string[];
+    }
+  ) {
+    if (!projectId) {
+      return;
+    }
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setManagementStatus({ tone: "error", message: body.detail ?? "The knowledge card could not be updated." });
+      return;
+    }
+    setWorkspace(body);
+    setEditingKnowledgeId(null);
+    setKnowledgeDraft({ title: "", summary: "", items: "" });
+    setManagementStatus({ tone: "success", message: "Knowledge updated." });
+  }
+
+  async function updateIngestedSource(sourceRef: string, payload: Record<string, unknown>) {
+    if (!projectId) {
+      return;
+    }
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/sources/ingested/${encodeURIComponent(sourceRef)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    const body = await response.json();
+    if (!response.ok) {
+      setManagementStatus({ tone: "error", message: body.detail ?? "The ingested source could not be updated." });
+      return;
+    }
+    setWorkspace(body);
+    setEditingIngestedSourceRef(null);
+    setIngestedSourceLabel("");
+    setManagementStatus({
+      tone: "success",
+      message: payload.action === "reprocess" ? "Source reprocessed." : "Source metadata updated.",
+    });
+  }
+
+  async function deleteIngestedSource(sourceRef: string) {
+    if (!projectId) {
+      return;
+    }
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/sources/ingested/${encodeURIComponent(sourceRef)}`,
+      {
+        method: "DELETE",
+      }
+    );
+    const body = await response.json();
+    if (!response.ok) {
+      setManagementStatus({ tone: "error", message: body.detail ?? "The ingested source could not be deleted." });
+      return;
+    }
+    setWorkspace(body);
+    setManagementStatus({ tone: "success", message: "Ingested source deleted." });
+  }
+
   function setDecision(rank: number, status: DecisionStatus, fallbackTitle: string) {
     setTaskDecisions((current) => ({
       ...current,
@@ -658,6 +761,17 @@ export function DemoWorkspace() {
   const latestSourceLabel = workspace?.recent_sources[0]
     ? `${sourceKindLabel(workspace.recent_sources[0].source_kind)} received`
     : "No source yet";
+  const filteredKnowledgeCards = focusedSourceRef
+    ? (workspace?.knowledge_cards ?? []).filter((card) => card.source_refs.includes(focusedSourceRef))
+    : (workspace?.knowledge_cards ?? []);
+  const selectedTaskEvidence = selectedTask
+    ? workspace?.recent_activity.filter((activity) => selectedTask.evidence_refs.includes(activity.signal_id)) ?? []
+    : [];
+  const selectedTaskSources = selectedTask
+    ? workspace?.source_cards.filter((source) =>
+        selectedTaskEvidence.some((activity) => activity.source_ref === source.source_ref)
+      ) ?? []
+    : [];
 
   return (
     <section className="decision-shell">
@@ -735,26 +849,20 @@ export function DemoWorkspace() {
                             <div className="task-meta">When: this week</div>
                             <div className="task-meta">Confidence: {confidenceLabel(confidence)}{confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}</div>
                           </div>
-                          <div className="task-block">
-                            <span>Why now</span>
-                            <p>{task.why_now}</p>
-                          </div>
                           <div className="task-block impact">
                             <span>Expected impact</span>
                             <p>{task.expected_advantage}</p>
                           </div>
-                          <div className="task-evidence">
-                            <span>Evidence</span>
-                            <div className="evidence-chip-list">
-                              {task.evidence_refs.map((ref) => (
-                                <span className="evidence-chip" key={ref}>
-                                  {ref}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
+                          <p className="task-preview">{task.why_now}</p>
 
                           <div className="task-actions">
+                            <button
+                              className={`decision-button detail ${selectedTask?.rank === task.rank ? "selected" : ""}`}
+                              type="button"
+                              onClick={() => setSelectedTask(task)}
+                            >
+                              View detail
+                            </button>
                             <button
                               className={`decision-button done ${decision?.status === "done" ? "selected" : ""}`}
                               type="button"
@@ -798,10 +906,17 @@ export function DemoWorkspace() {
                   <strong>No strong action yet</strong>
                   <p>{blockedReason}</p>
                   <p>
-                    The source was received. Try a denser source with clearer competitor, pricing, offer, closure, or
-                    timing signals.
+                    The source was still processed. Open Know More to review the knowledge extracted from it, or add a
+                    denser source with clearer competitor, pricing, offer, closure, or timing signals.
                   </p>
                   <div className="guided-actions">
+                    <button
+                      className="button-secondary"
+                      type="button"
+                      onClick={() => setActiveView("know-more")}
+                    >
+                      Open Know More
+                    </button>
                     <button
                       className="button-secondary"
                       type="button"
@@ -862,31 +977,86 @@ export function DemoWorkspace() {
             <section className="panel section-card">
               <div className="section-head compact">
                 <div>
-                  <span className="section-kicker">Decision Summary</span>
-                  <h2>What happened and what to do next</h2>
-                  <p className="section-subcopy">This summary stays aligned with the checklist, not a separate dashboard.</p>
+                  <span className="section-kicker">Task Detail</span>
+                  <h2>{selectedTask ? `Why task ${selectedTask.rank} exists` : "Open a task to inspect the reasoning"}</h2>
+                  <p className="section-subcopy">Task detail is a one-to-one explanation surface for a single action, not the global knowledge view.</p>
                 </div>
               </div>
 
-              <div className="summary-stack">
-                <div className="summary-row">
-                  <span>Status</span>
-                  <strong>{currentStatus}</strong>
-                </div>
-                <div className="summary-row">
-                  <span>Confidence</span>
-                  <strong>
-                    {confidenceLabel(confidence)}
-                    {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
-                  </strong>
-                </div>
-                <div className="summary-row">
-                  <span>Latest source</span>
-                  <strong>{latestSourceLabel}</strong>
-                </div>
-              </div>
+              {selectedTask ? (
+                <div className="task-detail-shell">
+                  <div className="summary-stack">
+                    <div className="summary-row">
+                      <span>Action</span>
+                      <strong>{selectedTask.title}</strong>
+                    </div>
+                    <div className="summary-row">
+                      <span>Expected impact</span>
+                      <strong>{selectedTask.expected_advantage}</strong>
+                    </div>
+                    <div className="summary-row">
+                      <span>Confidence</span>
+                      <strong>
+                        {confidenceLabel(confidence)}
+                        {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
+                      </strong>
+                    </div>
+                  </div>
 
-              {completeResult ? <p className="surface-summary">{completeResult.result_payload.summary}</p> : null}
+                  <div className="task-block">
+                    <span>Why this task</span>
+                    <p>{selectedTask.why_now}</p>
+                  </div>
+
+                  <div className="task-evidence">
+                    <span>Evidence</span>
+                    <div className="evidence-chip-list">
+                      {selectedTask.evidence_refs.map((ref) => (
+                        <span className="evidence-chip" key={ref}>
+                          {ref}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="task-detail-list">
+                    <h3>Linked signals</h3>
+                    {selectedTaskEvidence.length ? (
+                      selectedTaskEvidence.map((activity) => (
+                        <div className="job-item" key={activity.signal_id}>
+                          <strong>{humanizeSignalType(activity.signal_type)}</strong>
+                          <span>{formatTimestamp(activity.observed_at)}</span>
+                          <p>{activity.summary}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="surface-summary">No linked signals are available for this task yet.</p>
+                    )}
+                  </div>
+
+                  <div className="task-detail-list">
+                    <h3>Linked sources</h3>
+                    {selectedTaskSources.length ? (
+                      selectedTaskSources.map((source) => (
+                        <div className="job-item" key={source.source_ref}>
+                          <strong>{source.label}</strong>
+                          <span>
+                            {sourceKindLabel(source.source_kind)} · {formatTimestamp(source.created_at)}
+                          </span>
+                          <p>{source.processing_summary}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="surface-summary">No linked source cards are available for this task yet.</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <h3>No task selected</h3>
+                  <p>Open one checklist card to inspect why it was chosen, what evidence supports it, and which sources shaped it.</p>
+                </div>
+              )}
 
               <div className="feedback-panel">
                 <h3>Help improve the next recommendation</h3>
@@ -914,59 +1084,142 @@ export function DemoWorkspace() {
               <div className="section-head">
                 <div>
                   <span className="section-kicker">Know More</span>
-                  <h2>Why these three actions were chosen</h2>
-                  <p className="section-subcopy">This view explains the decision context behind the checklist.</p>
+                  <h2>Structured knowledge from the source set</h2>
+                  <p className="section-subcopy">Know More is the knowledge surface. It stays useful even when the checklist is blocked.</p>
                 </div>
               </div>
+              {focusedSourceRef ? (
+                <div className="notice success">
+                  <p>
+                    Filtering knowledge to source <strong>{focusedSourceRef}</strong>.
+                  </p>
+                  <button className="button-secondary" type="button" onClick={() => setFocusedSourceRef(null)}>
+                    Show all knowledge
+                  </button>
+                </div>
+              ) : null}
 
               <div className="intel-columns">
-                <article className="intel-card">
-                  <h3>Market Summary</h3>
-                  {workspace ? (
-                    <ul>
-                      <li>{workspace.market_summary.pricing_changes} competitors changed pricing</li>
-                      <li>{workspace.market_summary.closure_signals} closure or distress signals detected</li>
-                      <li>{workspace.market_summary.offer_signals} offer or asset signals detected</li>
-                    </ul>
-                  ) : (
-                    <ul>
-                      <li>No market summary yet.</li>
-                      <li>This panel fills after the worker ingests a real source.</li>
-                    </ul>
-                  )}
-                </article>
-
-                <article className="intel-card">
-                  <h3>Current Context</h3>
-                  <ul>
-                    <li>
-                      {topKnowledge
-                        ? `${topKnowledge.competitor} is the strongest current signal in ${humanizeRegion(topKnowledge.region)}.`
-                        : "No strong competitor or region has been inferred yet."}
-                    </li>
-                    <li>
-                      {workspace?.recent_activity.length
-                        ? "The checklist is grounded in ingested source history."
-                        : "Submit one source to generate the first market summary."}
-                    </li>
-                    <li>The system prefers actions that can be executed inside a 7-day window.</li>
-                  </ul>
-                </article>
-
-                <article className="intel-card">
-                  <h3>Recent Signals</h3>
-                  {workspace?.recent_activity.length ? (
-                    <ul>
-                      {workspace.recent_activity.slice(0, 3).map((activity) => (
-                        <li key={activity.signal_id}>{activity.summary}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <ul>
-                      <li>No recent signals yet.</li>
-                    </ul>
-                  )}
-                </article>
+                {filteredKnowledgeCards.length ? (
+                  filteredKnowledgeCards.map((card) => (
+                    <article className="intel-card" key={card.knowledge_id}>
+                      <div className="operator-head">
+                        <h3>{card.title}</h3>
+                        <span>
+                          {confidenceLabel(card.confidence)} ({card.confidence.toFixed(2)}) · {card.annotation_status}
+                        </span>
+                      </div>
+                      <p>{card.summary}</p>
+                      <ul>
+                        {card.items.map((item, index) => (
+                          <li key={`${card.knowledge_id}-${index}`}>{item}</li>
+                        ))}
+                      </ul>
+                      <div className="evidence-chip-list">
+                        {card.source_refs.map((sourceRef) => (
+                          <button
+                            className="evidence-chip"
+                            key={sourceRef}
+                            type="button"
+                            onClick={() => setFocusedSourceRef(sourceRef)}
+                          >
+                            {sourceRef}
+                          </button>
+                        ))}
+                      </div>
+                      {editingKnowledgeId === card.knowledge_id ? (
+                        <div className="management-form">
+                          <input
+                            value={knowledgeDraft.title}
+                            onChange={(event) =>
+                              setKnowledgeDraft((current) => ({ ...current, title: event.target.value }))
+                            }
+                            placeholder="Card title"
+                          />
+                          <textarea
+                            value={knowledgeDraft.summary}
+                            onChange={(event) =>
+                              setKnowledgeDraft((current) => ({ ...current, summary: event.target.value }))
+                            }
+                            placeholder="Corrected summary"
+                          />
+                          <textarea
+                            value={knowledgeDraft.items}
+                            onChange={(event) =>
+                              setKnowledgeDraft((current) => ({ ...current, items: event.target.value }))
+                            }
+                            placeholder="One corrected item per line"
+                          />
+                          <div className="task-actions compact-actions">
+                            <button
+                              className="button-primary"
+                              type="button"
+                              onClick={() =>
+                                void updateKnowledgeCard(card.knowledge_id, {
+                                  status: "edited",
+                                  corrected_title: knowledgeDraft.title.trim() || card.title,
+                                  corrected_summary: knowledgeDraft.summary.trim() || card.summary,
+                                  corrected_items: knowledgeDraft.items
+                                    .split("\n")
+                                    .map((item) => item.trim())
+                                    .filter(Boolean),
+                                })
+                              }
+                            >
+                              Save correction
+                            </button>
+                            <button
+                              className="button-secondary"
+                              type="button"
+                              onClick={() => {
+                                setEditingKnowledgeId(null);
+                                setKnowledgeDraft({ title: "", summary: "", items: "" });
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="task-actions compact-actions">
+                          <button
+                            className="decision-button done"
+                            type="button"
+                            onClick={() => void updateKnowledgeCard(card.knowledge_id, { status: "confirmed" })}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            className="decision-button adjust"
+                            type="button"
+                            onClick={() => {
+                              setEditingKnowledgeId(card.knowledge_id);
+                              setKnowledgeDraft({
+                                title: card.title,
+                                summary: card.summary,
+                                items: card.items.join("\n"),
+                              });
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="decision-button reject"
+                            type="button"
+                            onClick={() => void updateKnowledgeCard(card.knowledge_id, { status: "dismissed" })}
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  ))
+                ) : (
+                  <article className="intel-card">
+                    <h3>No knowledge cards yet</h3>
+                    <p>Upload a real source and the worker will surface market knowledge here, even if no immediate task is strong enough yet.</p>
+                  </article>
+                )}
               </div>
             </section>
           </div>
@@ -1219,11 +1472,86 @@ export function DemoWorkspace() {
               ) : null}
 
               <div className="library-list">
-                {workspace?.recent_sources.length ? (
-                  workspace.recent_sources.map((source) => (
-                    <article className={`library-item ${source.source_ref.startsWith("source_") ? "current" : ""}`} key={source.source_ref}>
-                      <strong>{sourceKindLabel(source.source_kind)}</strong>
-                      <span>Received {formatTimestamp(source.created_at)}</span>
+                {workspace?.source_cards.length ? (
+                  workspace.source_cards.map((source) => (
+                    <article className={`library-item ${focusedSourceRef === source.source_ref ? "current" : ""}`} key={source.source_ref}>
+                      <strong>{source.label}</strong>
+                      <span>
+                        {sourceKindLabel(source.source_kind)} · {source.status} · Received {formatTimestamp(source.created_at)}
+                      </span>
+                      <p>{source.processing_summary}</p>
+                      <ul className="compact-run-list">
+                        <li>{source.signal_count} extracted signal(s)</li>
+                        <li>{source.knowledge_count} knowledge card(s)</li>
+                        <li>Last used in checklist: {source.last_used_in_checklist ? "Yes" : "No"}</li>
+                      </ul>
+                      <div className="task-actions compact-actions">
+                        <button
+                          className="decision-button detail"
+                          type="button"
+                          onClick={() => {
+                            setFocusedSourceRef(source.source_ref);
+                            setActiveView("know-more");
+                          }}
+                        >
+                          View extracted knowledge
+                        </button>
+                        <button
+                          className="decision-button"
+                          type="button"
+                          onClick={() => void updateIngestedSource(source.source_ref, { action: "reprocess" })}
+                        >
+                          Reprocess
+                        </button>
+                        {editingIngestedSourceRef === source.source_ref ? (
+                          <>
+                            <input
+                              value={ingestedSourceLabel}
+                              onChange={(event) => setIngestedSourceLabel(event.target.value)}
+                              placeholder="Source label"
+                            />
+                            <button
+                              className="decision-button adjust"
+                              type="button"
+                              onClick={() =>
+                                void updateIngestedSource(source.source_ref, {
+                                  display_label: ingestedSourceLabel.trim() || source.label,
+                                })
+                              }
+                            >
+                              Save metadata
+                            </button>
+                            <button
+                              className="decision-button"
+                              type="button"
+                              onClick={() => {
+                                setEditingIngestedSourceRef(null);
+                                setIngestedSourceLabel("");
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="decision-button adjust"
+                            type="button"
+                            onClick={() => {
+                              setEditingIngestedSourceRef(source.source_ref);
+                              setIngestedSourceLabel(source.label);
+                            }}
+                          >
+                            Edit metadata
+                          </button>
+                        )}
+                        <button
+                          className="decision-button reject"
+                          type="button"
+                          onClick={() => void deleteIngestedSource(source.source_ref)}
+                        >
+                          Delete
+                        </button>
+                      </div>
                       <p>{source.preview}</p>
                     </article>
                   ))

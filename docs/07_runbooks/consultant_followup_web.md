@@ -56,6 +56,8 @@ The Mac mini worker is responsible for:
 - normalizing ingested source material
 - recovering project context from the local brain
 - generating recent source/activity data for the app
+- generating structured knowledge cards for `Know More`
+- keeping task detail separate from the global knowledge surface
 - repairing weak-but-salvageable task impacts before final validation
 - returning a blocked result instead of leaking raw validation failures
 
@@ -127,9 +129,22 @@ The app now treats `Sources & Jobs` as a management surface:
 - sources can be added, edited, paused, resumed, and deleted
 - jobs can be added, edited, paused, resumed, and deleted
 - source cards expose current status, last run, and last extracted summary
+- ingested source cards expose signal count, knowledge count, checklist usage, and source-level actions
 - job cards expose trigger type, schedule, last three runs, last action summary, and expected impact summary
 
 The app must never invent this state locally. All CRUD actions proxy to the worker and re-render from worker responses.
+
+## Knowledge surface behavior
+
+- `Checklist` is action-only
+- `Task Detail` is one-to-one with a single checklist action
+- `Know More` is the structured knowledge surface
+
+If a rich source is processed but no immediate action is strong enough:
+
+- `Checklist` may return a blocked result
+- `Know More` must still render worker-generated knowledge cards
+- the ingested source card must still show processing outcome and extracted knowledge counts
 
 ## Auth status
 

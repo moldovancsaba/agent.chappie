@@ -13,11 +13,15 @@ from typing import Any
 from agent_chappie.local_store import (
     create_managed_job,
     create_managed_source,
+    delete_source_snapshot,
     delete_managed_job,
     delete_managed_source,
+    fetch_knowledge_feedback_rows,
     fetch_knowledge_rows,
+    get_source_snapshot,
     initialize_local_store,
     insert_observations,
+    list_observations_for_source,
     list_managed_jobs,
     list_managed_sources,
     list_monitor_rows,
@@ -27,12 +31,17 @@ from agent_chappie.local_store import (
     update_managed_job,
     update_managed_source,
     update_monitor_state,
+    update_source_snapshot,
+    upsert_knowledge_feedback,
     upsert_knowledge_state,
 )
 from agent_chappie.observation_engine import (
     SourcePackage,
     build_source_hash,
+    clean_entity,
     deduplicate_observations,
+    extract_clauses,
+    extract_named_entities,
     extract_observations,
     generate_recommended_tasks,
     normalize_source_package,
@@ -170,6 +179,13 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     observations = sync_observations_for_source(source_package, config)
     aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
     result_payload = generate_recommended_tasks(source_package, aggregated or observations)
+    knowledge_cards = build_knowledge_cards(
+        list_recent_source_snapshots(source_package.project_id, path=config.local_db_path),
+        aggregated or observations,
+        fetch_knowledge_rows(source_package.project_id, path=config.local_db_path),
+        fetch_knowledge_feedback_rows(source_package.project_id, path=config.local_db_path),
+    )
+    used_source_refs: set[str] = set()
 
     if "recommended_tasks" in result_payload:
         result_document = {
@@ -203,6 +219,18 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
             else:
                 result_document["result_payload"] = repaired_payload
                 job_result = validate_job_result(result_document)
+        if job_result["status"] == "complete" and "recommended_tasks" in job_result["result_payload"]:
+            evidence_refs = {
+                evidence_ref
+                for task in job_result["result_payload"]["recommended_tasks"]
+                for evidence_ref in task["evidence_refs"]
+            }
+            observation_lookup = {observation["signal_id"]: observation for observation in aggregated or observations}
+            used_source_refs = {
+                observation_lookup[evidence_ref]["source_ref"]
+                for evidence_ref in evidence_refs
+                if evidence_ref in observation_lookup
+            }
     else:
         job_result = validate_job_result(
             {
@@ -214,6 +242,25 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
                 "result_payload": result_payload,
             }
         )
+
+    processing_summary = (
+        job_result["result_payload"].get("summary")
+        if job_result["status"] == "complete" and isinstance(job_result["result_payload"], dict)
+        else "Knowledge extracted; no strong checklist action yet."
+        if knowledge_cards
+        else job_result["result_payload"].get("reason", "Source processed")
+    )
+    update_source_snapshot(
+        source_package.source_ref,
+        {
+            "status": "processed" if job_result["status"] == "complete" else "blocked",
+            "processing_summary": processing_summary,
+            "signal_count": len(list_observations_for_source(source_package.project_id, source_package.source_ref, path=config.local_db_path)),
+            "knowledge_count": sum(1 for card in knowledge_cards if source_package.source_ref in card["source_refs"]),
+            "last_used_in_checklist": 1 if source_package.source_ref in used_source_refs else 0,
+        },
+        path=config.local_db_path,
+    )
 
     return {
         "job_result": job_result,
@@ -255,6 +302,25 @@ def process_management_request(
         if method == "DELETE" and len(parts) == 4:
             delete_managed_source(parts[3], path=config.local_db_path)
             return {"sources": list_managed_sources(project_id, path=config.local_db_path)}, HTTPStatus.OK
+        if len(parts) == 5 and parts[3] == "ingested":
+            source_ref = parts[4]
+            if method == "PATCH":
+                if payload.get("action") == "reprocess":
+                    reprocess_source_snapshot(project_id, source_ref, config)
+                    return build_workspace_payload(project_id, config), HTTPStatus.OK
+                update_source_snapshot(
+                    source_ref,
+                    {
+                        "display_label": payload.get("display_label"),
+                        "status": payload.get("status"),
+                    },
+                    path=config.local_db_path,
+                )
+                return build_workspace_payload(project_id, config), HTTPStatus.OK
+            if method == "DELETE":
+                delete_source_snapshot(project_id, source_ref, path=config.local_db_path)
+                upsert_knowledge_state(list_recent_observations(project_id, path=config.local_db_path), config.local_db_path)
+                return build_workspace_payload(project_id, config), HTTPStatus.OK
 
     if resource == "jobs":
         if method == "POST" and len(parts) == 3:
@@ -279,6 +345,18 @@ def process_management_request(
             delete_managed_job(parts[3], path=config.local_db_path)
             return {"jobs": list_managed_jobs(project_id, path=config.local_db_path)}, HTTPStatus.OK
 
+    if resource == "knowledge" and method == "PATCH" and len(parts) == 4:
+        upsert_knowledge_feedback(
+            project_id=project_id,
+            knowledge_id=parts[3],
+            status=str(payload.get("status", "confirmed")),
+            corrected_title=payload.get("corrected_title"),
+            corrected_summary=payload.get("corrected_summary"),
+            corrected_items=payload.get("corrected_items"),
+            path=config.local_db_path,
+        )
+        return build_workspace_payload(project_id, config), HTTPStatus.OK
+
     return {"error": "not_found"}, HTTPStatus.NOT_FOUND
 
 
@@ -297,6 +375,14 @@ def sync_observations_for_source(source: SourcePackage, config: WorkerBridgeConf
     insert_observations(source.project_id, deduped, config.local_db_path)
     aggregated = list_recent_observations(source.project_id, path=config.local_db_path)
     upsert_knowledge_state(aggregated[:200], config.local_db_path)
+    update_source_snapshot(
+        source.source_ref,
+        {
+            "competitor": source.competitor,
+            "region": source.region,
+        },
+        path=config.local_db_path,
+    )
     update_monitor_state(
         "continuous_observation_loop",
         "processed",
@@ -311,7 +397,20 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     source_rows = list_recent_source_snapshots(project_id, path=config.local_db_path)
     observation_rows = list_recent_observations(project_id, path=config.local_db_path)
     knowledge_rows = fetch_knowledge_rows(project_id, path=config.local_db_path)
+    knowledge_feedback_rows = fetch_knowledge_feedback_rows(project_id, path=config.local_db_path)
     monitor_rows = list_monitor_rows(path=config.local_db_path)
+    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows)
+    source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
+
+    knowledge_summary_rows = [
+        {
+            "competitor": row["competitor"],
+            "region": row["region"],
+            "latest_observed_at": row["latest_observed_at"],
+        }
+        for row in knowledge_rows[:8]
+        if clean_entity(row["competitor"])
+    ]
 
     return {
         "project_id": project_id,
@@ -339,14 +438,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             "closure_signals": sum(1 for row in observation_rows if row["signal_type"] == "closure"),
             "offer_signals": sum(1 for row in observation_rows if row["signal_type"] in {"offer", "asset_sale"}),
         },
-        "knowledge_summary": [
-            {
-                "competitor": row["competitor"],
-                "region": row["region"],
-                "latest_observed_at": row["latest_observed_at"],
-            }
-            for row in knowledge_rows[:5]
-        ],
+        "knowledge_summary": knowledge_summary_rows[:5],
         "monitor_jobs": [
             {
                 "job_name": row["job_name"],
@@ -356,9 +448,296 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             }
             for row in monitor_rows[:5]
         ],
+        "knowledge_cards": knowledge_cards,
+        "source_cards": source_cards,
         "managed_sources": list_managed_sources(project_id, path=config.local_db_path),
         "managed_jobs": list_managed_jobs(project_id, path=config.local_db_path),
     }
+
+
+def reprocess_source_snapshot(project_id: str, source_ref: str, config: WorkerBridgeConfig) -> None:
+    snapshot = get_source_snapshot(project_id, source_ref, path=config.local_db_path)
+    if not snapshot:
+        raise ValueError("The ingested source could not be found.")
+    source = SourcePackage(
+        project_id=project_id,
+        source_kind=snapshot["source_kind"],
+        project_summary=snapshot["project_summary"],
+        raw_text=snapshot["raw_text"],
+        source_ref=snapshot["source_ref"],
+        competitor=snapshot.get("competitor"),
+        region=snapshot.get("region"),
+        file_name=snapshot.get("display_label"),
+    )
+    normalized = normalize_source_package(source)
+    observations = sync_observations_for_source(normalized, config)
+    knowledge_cards = build_knowledge_cards(
+        list_recent_source_snapshots(project_id, path=config.local_db_path),
+        list_recent_observations(project_id, path=config.local_db_path),
+        fetch_knowledge_rows(project_id, path=config.local_db_path),
+        fetch_knowledge_feedback_rows(project_id, path=config.local_db_path),
+    )
+    update_source_snapshot(
+        source_ref,
+        {
+            "status": "processed",
+            "processing_summary": f"Processed {len(observations)} signals and {len(knowledge_cards)} knowledge cards",
+            "signal_count": len(list_observations_for_source(project_id, source_ref, path=config.local_db_path)),
+            "knowledge_count": sum(1 for card in knowledge_cards if source_ref in card["source_refs"]),
+        },
+        path=config.local_db_path,
+    )
+
+
+def build_ingested_source_cards(
+    source_rows: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    source_cards: list[dict[str, Any]] = []
+    for row in source_rows[:8]:
+        signal_count = sum(1 for observation in observation_rows if observation["source_ref"] == row["source_ref"])
+        knowledge_count = sum(1 for card in knowledge_cards if row["source_ref"] in card["source_refs"])
+        source_cards.append(
+            {
+                "source_ref": row["source_ref"],
+                "label": row.get("display_label") or row["source_ref"],
+                "source_kind": row["source_kind"],
+                "status": row.get("status") or "processed",
+                "processing_summary": row.get("processing_summary") or (
+                    f"Processed {signal_count} signals and {knowledge_count} knowledge cards"
+                    if signal_count or knowledge_count
+                    else "Source extracted and stored"
+                ),
+                "signal_count": signal_count,
+                "knowledge_count": knowledge_count,
+                "last_used_in_checklist": bool(row.get("last_used_in_checklist")),
+                "created_at": row["created_at"],
+                "preview": row["raw_text"][:220],
+            }
+        )
+    return source_cards
+
+
+def build_knowledge_cards(
+    source_rows: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    knowledge_rows: list[dict[str, Any]],
+    feedback_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    feedback_lookup = {row["knowledge_id"]: row for row in feedback_rows}
+    clauses = unique_clauses(source_rows)
+    entities = unique_entities(source_rows, observation_rows, knowledge_rows)
+    cards: list[dict[str, Any]] = []
+
+    market_items = []
+    if source_rows:
+        market_items.append(f"{len(source_rows)} ingested source{'s' if len(source_rows) != 1 else ''} are shaping the current knowledge state.")
+    if observation_rows:
+        market_items.append(f"{sum(1 for row in observation_rows if row['signal_type'] == 'pricing_change')} pricing signal(s) are active.")
+        market_items.append(f"{sum(1 for row in observation_rows if row['signal_type'] in {'offer', 'asset_sale'})} offer or asset signal(s) are active.")
+    topic_items = derive_topic_items(" ".join(row["raw_text"] for row in source_rows))
+    market_items.extend(topic_items[:3])
+    cards.append(
+        knowledge_card(
+            "market_summary",
+            "Market Summary",
+            "What the system currently knows about this market or project from the ingested sources.",
+            market_items or ["No market synthesis has been derived yet."],
+            observation_rows[:4],
+            [row["source_ref"] for row in source_rows[:4]],
+            0.78 if source_rows else 0.22,
+            feedback_lookup,
+        )
+    )
+
+    cards.append(
+        knowledge_card(
+            "competitors_detected",
+            "Competitors Detected",
+            "Named companies, schools, clubs, or products the worker has extracted from the source set.",
+            entities[:6] or ["No named competitors have been extracted with enough confidence yet."],
+            observation_rows[:4],
+            [row["source_ref"] for row in source_rows[:4]],
+            0.74 if entities else 0.28,
+            feedback_lookup,
+        )
+    )
+
+    pricing_items = filter_clauses(
+        clauses,
+        ("price", "pricing", "fee", "plan", "package", "packaging", "bundle", "subscription", "onboarding"),
+    )
+    cards.append(
+        knowledge_card(
+            "pricing_packaging",
+            "Pricing / Packaging",
+            "Commercial packaging and pricing observations the worker has extracted from the source material.",
+            pricing_items[:5] or ["No pricing or packaging observations are strong enough yet."],
+            [row for row in observation_rows if row["signal_type"] == "pricing_change"][:4],
+            source_refs_for_items(pricing_items[:5], source_rows),
+            0.71 if pricing_items else 0.24,
+            feedback_lookup,
+        )
+    )
+
+    positioning_items = filter_clauses(
+        clauses,
+        ("offer", "trial", "discount", "voucher", "no engineering", "no-code", "speed", "faster", "implementation", "position"),
+    )
+    cards.append(
+        knowledge_card(
+            "offer_positioning",
+            "Offer / Positioning",
+            "Offer language, positioning claims, and tactical market signals found in the sources.",
+            positioning_items[:5] or ["No clear positioning or offer observations have been extracted yet."],
+            [row for row in observation_rows if row["signal_type"] in {"offer", "messaging_shift"}][:4],
+            source_refs_for_items(positioning_items[:5], source_rows),
+            0.73 if positioning_items else 0.25,
+            feedback_lookup,
+        )
+    )
+
+    proof_items = filter_clauses(clauses, ("testimonial", "logo", "proof", "case study", "integration", "customer"))
+    cards.append(
+        knowledge_card(
+            "proof_signals",
+            "Proof Signals",
+            "Trust cues, proof points, and credibility patterns extracted from the current source set.",
+            proof_items[:5] or ["No proof signals have been extracted yet."],
+            [row for row in observation_rows if row["signal_type"] == "proof_signal"][:4],
+            source_refs_for_items(proof_items[:5], source_rows),
+            0.69 if proof_items else 0.21,
+            feedback_lookup,
+        )
+    )
+
+    open_questions = []
+    if not any(row.get("region") and row["region"] != "region_unknown" for row in source_rows + knowledge_rows):
+        open_questions.append("Region is still weakly inferred. Add one source with explicit geography or local market scope.")
+    if not entities:
+        open_questions.append("No clear named competitors were extracted. A denser market source would improve competitor confidence.")
+    if source_rows and not observation_rows:
+        open_questions.append("The source produced knowledge but not enough action-quality signals yet. Checklist can stay blocked while Know More stays populated.")
+    if not open_questions:
+        open_questions.append("No major confidence gaps are currently blocking the knowledge surface.")
+    cards.append(
+        knowledge_card(
+            "open_questions",
+            "Open Questions",
+            "Weak-confidence areas and unresolved questions the operator may want to confirm or correct.",
+            open_questions,
+            observation_rows[:2],
+            [row["source_ref"] for row in source_rows[:3]],
+            0.55,
+            feedback_lookup,
+        )
+    )
+
+    return cards
+
+
+def knowledge_card(
+    knowledge_id: str,
+    title: str,
+    summary: str,
+    items: list[str],
+    evidence_rows: list[dict[str, Any]],
+    source_refs: list[str],
+    confidence: float,
+    feedback_lookup: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    feedback = feedback_lookup.get(knowledge_id)
+    return {
+        "knowledge_id": knowledge_id,
+        "title": feedback.get("corrected_title") if feedback and feedback.get("corrected_title") else title,
+        "summary": feedback.get("corrected_summary") if feedback and feedback.get("corrected_summary") else summary,
+        "items": feedback.get("corrected_items") if feedback and feedback.get("corrected_items") else items,
+        "source_refs": unique_values(source_refs),
+        "evidence_refs": unique_values([row["signal_id"] for row in evidence_rows]),
+        "confidence": round(confidence, 2),
+        "annotation_status": feedback["status"] if feedback else "pending",
+    }
+
+
+def unique_clauses(source_rows: list[dict[str, Any]]) -> list[str]:
+    clauses: list[str] = []
+    seen: set[str] = set()
+    for row in source_rows:
+        for clause in extract_clauses(row["raw_text"]):
+            normalized = clause.strip()
+            if len(normalized) < 16:
+                continue
+            lowered = normalized.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            clauses.append(normalized)
+    return clauses
+
+
+def unique_entities(
+    source_rows: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    knowledge_rows: list[dict[str, Any]],
+) -> list[str]:
+    values: list[str] = [row["competitor"] for row in observation_rows if row.get("competitor")]
+    values.extend(row["competitor"] for row in knowledge_rows if row.get("competitor"))
+    for row in source_rows:
+        values.extend(extract_named_entities(row["raw_text"]))
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = clean_entity(value)
+        if not normalized:
+            continue
+        if normalized.lower() in seen:
+            continue
+        seen.add(normalized.lower())
+        cleaned.append(normalized)
+    return cleaned[:12]
+
+
+def filter_clauses(clauses: list[str], tokens: tuple[str, ...]) -> list[str]:
+    return [clause for clause in clauses if any(token in clause.lower() for token in tokens)]
+
+
+def source_refs_for_items(items: list[str], source_rows: list[dict[str, Any]]) -> list[str]:
+    refs: list[str] = []
+    for item in items:
+        lowered = item.lower()
+        for row in source_rows:
+            if lowered[:60] in row["raw_text"].lower():
+                refs.append(row["source_ref"])
+                break
+    return unique_values(refs)
+
+
+def unique_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def derive_topic_items(text: str) -> list[str]:
+    normalized = text.lower()
+    items: list[str] = []
+    if any(token in normalized for token in ("seo", "search", "ranking")):
+        items.append("Search and SEO language appears repeatedly across the ingested source set.")
+    if any(token in normalized for token in ("marketing", "campaign", "demand generation")):
+        items.append("Marketing or campaign positioning is part of the current market context.")
+    if any(token in normalized for token in ("ai", "automation", "intelligence")):
+        items.append("AI or intelligence claims are central to the current narrative.")
+    if any(token in normalized for token in ("pricing", "package", "plan", "subscription")):
+        items.append("Commercial packaging language is present and should be reviewed for buyer pressure.")
+    if any(token in normalized for token in ("trial", "discount", "offer")):
+        items.append("Offer-led conversion pressure is visible in the current source material.")
+    return items
 
 
 def run_observation_loop(config: WorkerBridgeConfig) -> None:
