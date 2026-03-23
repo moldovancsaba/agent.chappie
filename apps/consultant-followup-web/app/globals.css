@@ -108,6 +108,12 @@ textarea {
   line-height: 1.7;
 }
 
+.system-status-line {
+  margin-top: 14px !important;
+  color: var(--ink) !important;
+  font-size: 0.94rem !important;
+}
+
 .project-status {
   display: grid;
   gap: 14px;
@@ -502,6 +508,13 @@ textarea {
 .field-help {
   margin: 0;
   color: var(--muted);
+  line-height: 1.6;
+}
+
+.panel-lite ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--ink);
   line-height: 1.6;
 }
 

@@ -858,11 +858,14 @@ export function DemoWorkspace() {
         ? "Monitoring active"
       : workspace?.recent_sources.length
         ? "Monitoring active"
-        : "Waiting for input";
-  const projectLabel = topKnowledge ? titleCaseWords(humanizeRegion(topKnowledge.region)) : "Current project";
+        : "Ready to process";
+  const projectLabel = topKnowledge ? titleCaseWords(humanizeRegion(topKnowledge.region)) : "Competitive environment";
   const latestSourceLabel = workspace?.recent_sources[0]
     ? `${sourceKindLabel(workspace.recent_sources[0].source_kind)} received`
     : "No source yet";
+  const systemStatusLine = workspace?.recent_sources.length
+    ? `${workspace.recent_sources.length} source${workspace.recent_sources.length === 1 ? "" : "s"} ingested • last update ${formatTimestamp(workspace.recent_sources[0]?.created_at)}`
+    : "System ready — no sources ingested yet";
   const filteredKnowledgeCards = focusedSourceRef
     ? (workspace?.knowledge_cards ?? []).filter((card) => card.source_refs.includes(focusedSourceRef))
     : (workspace?.knowledge_cards ?? []);
@@ -886,11 +889,12 @@ export function DemoWorkspace() {
       <header className="decision-header panel">
         <div className="decision-header-copy">
           <div className="eyebrow">Competitive action engine</div>
-          <h1>Your next move, not more noise.</h1>
+          <h1>We analyze your competitive environment and recommend your next 3 moves.</h1>
           <p>
-            Submit one source and Agent.Chappie turns it into the three highest-value actions to make next. You only
-            see what to do, why it matters, and what evidence triggered it.
+            Drop one source. Agent.Chappie extracts signals, builds market intelligence, and surfaces actions you can
+            execute this week when a strong advantage appears.
           </p>
+          <p className="system-status-line">{systemStatusLine}</p>
         </div>
 
           <div className="project-status">
@@ -1015,7 +1019,7 @@ export function DemoWorkspace() {
                   <p>{blockedReason}</p>
                   <p>
                     The source was still processed. We are monitoring pricing shifts, competitor positioning, and offer
-                    changes from it. Open Know More to review the current intelligence, or add a denser source if you
+                    changes from it. Open Know More to review the current intelligence, or add another source if you
                     want the worker to push toward a checklist move.
                   </p>
                   <div className="guided-actions">
@@ -1030,12 +1034,43 @@ export function DemoWorkspace() {
                       className="button-secondary"
                       type="button"
                       onClick={() => {
-                        setInputMode("url");
                         setActiveView("sources-jobs");
                       }}
                     >
-                      Try URL
+                      Add another source
                     </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state guided-empty-state">
+                  <h3>No actions recommended yet</h3>
+                  <p>
+                    We need at least one strong signal before the checklist appears:
+                    pricing change, competitor move, offer shift, or closure / expansion signal.
+                  </p>
+                  <div className="guided-grid">
+                    <article className="guided-card">
+                      <strong>Competitor website</strong>
+                      <p>Detect pricing moves, offers, positioning claims, and proof signals.</p>
+                    </article>
+                    <article className="guided-card">
+                      <strong>Internal notes</strong>
+                      <p>Extract risks, opportunities, objections, and timing pressure from messy updates.</p>
+                    </article>
+                    <article className="guided-card">
+                      <strong>Market documents</strong>
+                      <p>Map competitors, packaging pressure, proof patterns, and strategy shifts.</p>
+                    </article>
+                  </div>
+                  <div className="panel-lite">
+                    <strong>Example output</strong>
+                    <ul>
+                      <li>Launch a 7-day trial response before Essex captures price-sensitive leads.</li>
+                      <li>Call Westover owner before closure to capture players and assets.</li>
+                      <li>Update U14 pricing page before the next intake cycle.</li>
+                    </ul>
+                  </div>
+                  <div className="guided-actions">
                     <button
                       className="button-secondary"
                       type="button"
@@ -1044,37 +1079,7 @@ export function DemoWorkspace() {
                         setActiveView("sources-jobs");
                       }}
                     >
-                      Try Text
-                    </button>
-                    <button
-                      className="button-secondary"
-                      type="button"
-                      onClick={() => {
-                        setInputMode("file");
-                        setActiveView("sources-jobs");
-                        fileInputRef.current?.click();
-                      }}
-                    >
-                      Try Document
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="empty-state guided-empty-state">
-                  <h3>No checklist yet</h3>
-                  <p>
-                    Submit one real source. The checklist will appear only after the worker has enough evidence to
-                    return three distinct actions.
-                  </p>
-                  <div className="guided-actions">
-                    <button className="button-secondary" type="button" onClick={() => { setInputMode("url"); setActiveView("sources-jobs"); }}>
-                      Try URL
-                    </button>
-                    <button className="button-secondary" type="button" onClick={() => { setInputMode("text"); setActiveView("sources-jobs"); }}>
-                      Try Text
-                    </button>
-                    <button className="button-secondary" type="button" onClick={() => { setInputMode("file"); setActiveView("sources-jobs"); fileInputRef.current?.click(); }}>
-                      Try Document
+                      Add a source
                     </button>
                   </div>
                 </div>
