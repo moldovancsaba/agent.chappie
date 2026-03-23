@@ -50,6 +50,51 @@ function sqlClient() {
   return neon(env.databaseUrl);
 }
 
+function newestProjectRecord(records: ProjectRecord[]) {
+  return [...records].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+}
+
+async function loadProjectState(project: ProjectRecord | null): Promise<SessionState> {
+  if (!project) {
+    return { project: null, job: null, result: null };
+  }
+
+  if (!canUseNeon()) {
+    const results = [...memoryState().results.values()]
+      .filter((result) => result.project_id === project.projectId)
+      .sort((left, right) => right.completed_at.localeCompare(left.completed_at));
+    const result = results[0] ?? null;
+    const job = result ? (memoryState().jobs.get(result.job_id) ?? null) : null;
+    return { project, job, result };
+  }
+
+  const sql = sqlClient();
+  const resultRows = (await sql`
+    select payload
+    from demo_job_results
+    where project_id = ${project.projectId}
+    order by completed_at desc
+    limit 1
+  `) as Array<{ payload: JobResult }>;
+  const result = resultRows[0]?.payload ?? null;
+
+  const jobRows =
+    result === null
+      ? []
+      : ((await sql`
+          select payload
+          from demo_jobs
+          where job_id = ${result.job_id}
+          limit 1
+        `) as Array<{ payload: JobRequest }>);
+
+  return {
+    project,
+    job: jobRows[0]?.payload ?? null,
+    result,
+  };
+}
+
 export async function saveProject(project: ProjectRecord) {
   if (!canUseNeon()) {
     memoryState().projects.set(project.projectId, project);
@@ -149,23 +194,19 @@ export async function getJob(jobId: string): Promise<JobRequest | null> {
 
 export async function getLatestSessionState(sessionId: string): Promise<SessionState> {
   if (!canUseNeon()) {
-    const projects = [...memoryState().projects.values()]
-      .filter((project) => project.sessionId === sessionId)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    const project = projects[0] ?? null;
-    if (!project) {
-      return { project: null, job: null, result: null };
-    }
-    const results = [...memoryState().results.values()]
-      .filter((result) => result.project_id === project.projectId)
-      .sort((left, right) => right.completed_at.localeCompare(left.completed_at));
-    const result = results[0] ?? null;
-    const job = result ? (memoryState().jobs.get(result.job_id) ?? null) : null;
-    return { project, job, result };
+    const latestSessionProject = newestProjectRecord(
+      [...memoryState().projects.values()].filter((project) => project.sessionId === sessionId)
+    );
+    const latestGlobalProject = newestProjectRecord([...memoryState().projects.values()]);
+    const selectedProject =
+      latestSessionProject && latestGlobalProject
+        ? (latestSessionProject.createdAt >= latestGlobalProject.createdAt ? latestSessionProject : latestGlobalProject)
+        : (latestSessionProject ?? latestGlobalProject);
+    return loadProjectState(selectedProject);
   }
 
   const sql = sqlClient();
-  const projectRows = (await sql`
+  const sessionProjectRows = (await sql`
     select project_id, session_id, summary, created_at
     from demo_projects
     where session_id = ${sessionId}
@@ -178,42 +219,35 @@ export async function getLatestSessionState(sessionId: string): Promise<SessionS
     created_at: string;
   }>;
 
-  const projectRow = projectRows[0];
-  if (!projectRow) {
+  const globalProjectRows = (await sql`
+    select project_id, session_id, summary, created_at
+    from demo_projects
+    order by created_at desc
+    limit 1
+  `) as Array<{
+    project_id: string;
+    session_id: string;
+    summary: string;
+    created_at: string;
+  }>;
+
+  const sessionProjectRow = sessionProjectRows[0];
+  const globalProjectRow = globalProjectRows[0];
+  const selectedRow =
+    sessionProjectRow && globalProjectRow
+      ? (sessionProjectRow.created_at >= globalProjectRow.created_at ? sessionProjectRow : globalProjectRow)
+      : (sessionProjectRow ?? globalProjectRow);
+
+  if (!selectedRow) {
     return { project: null, job: null, result: null };
   }
 
-  const project: ProjectRecord = {
-    projectId: projectRow.project_id,
-    sessionId: projectRow.session_id,
-    summary: projectRow.summary,
-    createdAt: projectRow.created_at,
-  };
-
-  const resultRows = (await sql`
-    select payload
-    from demo_job_results
-    where project_id = ${project.projectId}
-    order by completed_at desc
-    limit 1
-  `) as Array<{ payload: JobResult }>;
-  const result = resultRows[0]?.payload ?? null;
-
-  const jobRows =
-    result === null
-      ? []
-      : ((await sql`
-          select payload
-          from demo_jobs
-          where job_id = ${result.job_id}
-          limit 1
-        `) as Array<{ payload: JobRequest }>);
-
-  return {
-    project,
-    job: jobRows[0]?.payload ?? null,
-    result,
-  };
+  return loadProjectState({
+    projectId: selectedRow.project_id,
+    sessionId: selectedRow.session_id,
+    summary: selectedRow.summary,
+    createdAt: selectedRow.created_at,
+  });
 }
 
 export async function saveFeedback(feedback: Feedback) {
