@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { fetchWorkerWorkspace } from "@/lib/worker-bridge";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(_: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
     const { projectId } = await context.params;
