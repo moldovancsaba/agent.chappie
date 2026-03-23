@@ -333,6 +333,25 @@ function allTasksDecided(tasks: RecommendedTask[], decisions: Record<number, Tas
   return tasks.every((task) => Boolean(decisions[task.rank]?.status));
 }
 
+function inferSourceLabel(sourceKind: SourceFormState["sourceKind"], contentText: string) {
+  const trimmed = contentText.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (sourceKind === "url") {
+    try {
+      const host = new URL(trimmed).hostname.replace(/^www\./, "");
+      return host || "Competitor page";
+    } catch {
+      return "Competitor page";
+    }
+  }
+  if (sourceKind === "uploaded_file") {
+    return "Document source";
+  }
+  return "Source note";
+}
+
 export function DemoWorkspace() {
   const [activeView, setActiveView] = useState<AppView>("checklist");
   const [inputMode, setInputMode] = useState<InputMode>("text");
@@ -608,8 +627,9 @@ export function DemoWorkspace() {
   }
 
   async function handleCreateSource() {
-    if (!projectId || !sourceForm.label.trim() || !sourceForm.contentText.trim()) {
-      setManagementStatus({ tone: "error", message: "Add a source label and source content first." });
+    const resolvedLabel = sourceForm.label.trim() || inferSourceLabel(sourceForm.sourceKind, sourceForm.contentText);
+    if (!projectId || !sourceForm.contentText.trim()) {
+      setManagementStatus({ tone: "error", message: "Add the source you want monitored first." });
       return;
     }
     const response = editingSourceId
@@ -617,7 +637,7 @@ export function DemoWorkspace() {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            label: sourceForm.label.trim(),
+            label: resolvedLabel,
             source_kind: sourceForm.sourceKind,
             content_text: sourceForm.contentText.trim(),
           }),
@@ -627,7 +647,7 @@ export function DemoWorkspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             source_id: generateId("source_cfg"),
-            label: sourceForm.label.trim(),
+            label: resolvedLabel,
             source_kind: sourceForm.sourceKind,
             content_text: sourceForm.contentText.trim(),
             status: "active",
@@ -681,7 +701,7 @@ export function DemoWorkspace() {
 
   async function handleCreateJob() {
     if (!projectId || !jobForm.name.trim()) {
-      setManagementStatus({ tone: "error", message: "Add a job name first." });
+      setManagementStatus({ tone: "error", message: "Add a job name before saving this monitoring rule." });
       return;
     }
     const response = editingJobId
@@ -1417,7 +1437,7 @@ export function DemoWorkspace() {
                                 setKnowledgeDraft({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
                               }}
                             >
-                              Cancel
+                              Close
                             </button>
                           </div>
                         </div>
@@ -1511,7 +1531,7 @@ export function DemoWorkspace() {
                     setShowJobComposer(false);
                   }}
                 >
-                  {showSourceComposer || editingSourceId ? "Close source setup" : "Add Source"}
+                  {showSourceComposer || editingSourceId ? "Hide source setup" : "Add source"}
                 </button>
                 <button
                   className="button-secondary"
@@ -1521,7 +1541,7 @@ export function DemoWorkspace() {
                     setShowSourceComposer(false);
                   }}
                 >
-                  {showJobComposer || editingJobId ? "Close job setup" : "Add Job"}
+                  {showJobComposer || editingJobId ? "Hide job setup" : "Add job"}
                 </button>
               </div>
 
@@ -1560,16 +1580,16 @@ export function DemoWorkspace() {
                       }
                     />
                     <details className="optional-fields">
-                      <summary>Optional details</summary>
+                      <summary>Add a source label (optional)</summary>
                       <input
                         value={sourceForm.label}
                         onChange={(event) => setSourceForm((current) => ({ ...current, label: event.target.value }))}
-                        placeholder="Add a short source label"
+                        placeholder="Short source label"
                       />
                     </details>
                     <div className="task-actions compact-actions">
                       <button className="button-primary" type="button" onClick={() => void handleCreateSource()}>
-                        {editingSourceId ? "Save Source" : "Add Source"}
+                        {editingSourceId ? "Save source" : "Add source"}
                       </button>
                       <button
                         className="button-secondary"
@@ -1580,7 +1600,7 @@ export function DemoWorkspace() {
                           setSourceForm({ label: "", sourceKind: "url", contentText: "" });
                         }}
                       >
-                        Cancel
+                        Close
                       </button>
                     </div>
                   </div>
@@ -1597,7 +1617,7 @@ export function DemoWorkspace() {
                     <input
                       value={jobForm.name}
                       onChange={(event) => setJobForm((current) => ({ ...current, name: event.target.value }))}
-                      placeholder="Job name"
+                      placeholder="Monitoring job name"
                     />
                     <div className="guided-actions">
                       <button className={`mode-chip ${jobForm.triggerType === "manual" ? "active" : ""}`} type="button" onClick={() => setJobForm((current) => ({ ...current, triggerType: "manual" }))}>
@@ -1622,7 +1642,7 @@ export function DemoWorkspace() {
                     />
                     <div className="task-actions compact-actions">
                       <button className="button-primary" type="button" onClick={() => void handleCreateJob()}>
-                        {editingJobId ? "Save Job" : "Add Job"}
+                        {editingJobId ? "Save job" : "Add job"}
                       </button>
                       <button
                         className="button-secondary"
@@ -1633,7 +1653,7 @@ export function DemoWorkspace() {
                           setJobForm({ name: "", triggerType: "manual", scheduleText: "", sourceId: "" });
                         }}
                       >
-                        Cancel
+                        Close
                       </button>
                     </div>
                   </div>
@@ -1729,7 +1749,7 @@ export function DemoWorkspace() {
                                 setIngestedSourceLabel("");
                               }}
                             >
-                              Cancel
+                              Close
                             </button>
                           </>
                         ) : (
