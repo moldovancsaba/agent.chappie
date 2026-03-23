@@ -120,6 +120,9 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         source_ref=payload["source_package"]["source_ref"],
         competitor=payload["source_package"].get("competitor"),
         region=payload["source_package"].get("region"),
+        file_name=payload["source_package"].get("file_name"),
+        content_type=payload["source_package"].get("content_type"),
+        content_base64=payload["source_package"].get("content_base64"),
     )
     source_rows = list_recent_source_snapshots(job_request["project_id"], path=config.local_db_path)
     knowledge_rows = fetch_knowledge_rows(job_request["project_id"], path=config.local_db_path)

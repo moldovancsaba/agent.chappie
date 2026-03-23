@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import os
 import sys
 import tempfile
 import unittest
+import zipfile
+from io import BytesIO
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -14,6 +17,7 @@ if SRC not in sys.path:
 from agent_chappie.observation_engine import (
     SourcePackage,
     deduplicate_observations,
+    extract_uploaded_file_text,
     extract_observations,
     generate_recommended_tasks,
     infer_context,
@@ -126,6 +130,32 @@ class ObservationEngineTests(unittest.TestCase):
         self.assertEqual(inferred["competitor"], "Essex County Club")
         self.assertEqual(inferred["region"], "north_cluster")
         self.assertGreaterEqual(float(inferred["confidence"]), 0.9)
+
+    def test_extract_uploaded_docx_text(self) -> None:
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body><w:p><w:r><w:t>FlowOps raised U14 prices by 15% in North Cluster.</w:t></w:r></w:p></w:body>"
+            "</w:document>"
+        )
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("word/document.xml", xml)
+
+        source = SourcePackage(
+            project_id="project_docx",
+            source_kind="uploaded_file",
+            project_summary="managed_on_worker",
+            raw_text="pricing_notes.docx",
+            source_ref="source_docx",
+            file_name="pricing_notes.docx",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            content_base64=base64.b64encode(buffer.getvalue()).decode("utf-8"),
+        )
+
+        extracted = extract_uploaded_file_text(source)
+        self.assertIn("pricing_notes.docx", extracted)
+        self.assertIn("FlowOps raised U14 prices by 15%", extracted)
 
     def test_local_store_persists_observations_and_knowledge(self) -> None:
         source = SourcePackage(

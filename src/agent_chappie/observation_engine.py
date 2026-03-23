@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import re
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +23,9 @@ class SourcePackage:
     source_ref: str
     competitor: str | None = None
     region: str | None = None
+    file_name: str | None = None
+    content_type: str | None = None
+    content_base64: str | None = None
 
 
 @dataclass
@@ -394,9 +400,9 @@ def build_closure_asset_candidate(
             "A bundled offer this week turns two distress signals into one asymmetric expansion move before other operators react."
         ),
         "expected_advantage": (
-            "Acquires players and equipment at low cost before closure finalizes, creating immediate growth capacity without waiting for organic expansion."
+            "Acquires players, equipment, and enrollment capacity at low cost before closure finalizes, creating immediate revenue upside without waiting for organic expansion."
             if domain == "academy"
-            else "Captures customers, assets, or operating capacity at low cost before the distressed competitor exits."
+            else "Captures customers, assets, or operating capacity at low cost before the distressed competitor exits, creating near-term revenue and cost advantage."
         ),
         "evidence_refs": [closure_observation["signal_id"], asset_observation["signal_id"]],
     }
@@ -443,6 +449,7 @@ def build_source_hash(source: SourcePackage) -> str:
         (
             f"{source.project_id}|{source.source_kind}|{source.project_summary}|"
             f"{source.raw_text}|{source.source_ref}|{source.competitor}|{source.region}"
+            f"|{source.file_name}|{source.content_type}|{source.content_base64 or ''}"
         ).encode("utf-8")
     ).hexdigest()
     return digest
@@ -456,6 +463,20 @@ def detect_source_kind(raw_text: str) -> str:
 
 
 def normalize_source_package(source: SourcePackage) -> SourcePackage:
+    if source.source_kind == "uploaded_file":
+        extracted_text = extract_uploaded_file_text(source)
+        return SourcePackage(
+            project_id=source.project_id,
+            source_kind="uploaded_file",
+            project_summary=source.project_summary,
+            raw_text=extracted_text,
+            source_ref=source.source_ref,
+            competitor=source.competitor,
+            region=source.region,
+            file_name=source.file_name,
+            content_type=source.content_type,
+        )
+
     source_kind = detect_source_kind(source.raw_text)
     if source_kind != "url":
         return source
@@ -474,6 +495,8 @@ def normalize_source_package(source: SourcePackage) -> SourcePackage:
         source_ref=source.source_ref,
         competitor=source.competitor,
         region=source.region,
+        file_name=source.file_name,
+        content_type=source.content_type,
     )
 
 
@@ -508,6 +531,9 @@ def recover_source_context(source: SourcePackage, knowledge_rows: list[dict[str,
         source_ref=source.source_ref,
         competitor=competitor,
         region=region,
+        file_name=source.file_name,
+        content_type=source.content_type,
+        content_base64=source.content_base64,
     )
 
 
@@ -656,6 +682,55 @@ def extract_first_url(raw_text: str) -> str | None:
     if url.startswith("www."):
         return f"https://{url}"
     return url
+
+
+def extract_uploaded_file_text(source: SourcePackage) -> str:
+    if not source.content_base64:
+        raise ValueError("The uploaded file did not include any content.")
+
+    file_name = (source.file_name or "upload").strip()
+    suffix = ""
+    if "." in file_name:
+        suffix = file_name[file_name.rfind(".") :].lower()
+    decoded = base64.b64decode(source.content_base64)
+
+    if suffix in {".txt", ".md", ".csv"}:
+        text = decoded.decode("utf-8", errors="replace")
+    elif suffix == ".docx":
+        text = extract_docx_text(decoded)
+    elif suffix == ".pdf":
+        text = extract_pdf_text(decoded)
+    else:
+        raise ValueError(
+            f"Unsupported file type '{suffix or 'unknown'}'. Supported formats are .txt, .md, .csv, .pdf, and .docx."
+        )
+
+    normalized = " ".join(text.split())
+    if len(normalized) < 40:
+        raise ValueError(f"The uploaded file '{file_name}' did not contain enough readable text to analyze.")
+
+    return f"Uploaded File: {file_name}\nExtracted Content: {normalized[:12000]}"
+
+
+def extract_docx_text(raw_bytes: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(raw_bytes)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
+    text = re.sub(r"</w:p>", "\n", document_xml)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return text
+
+
+def extract_pdf_text(raw_bytes: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:  # pragma: no cover - installation/packaging failure path
+        raise ValueError("PDF support is not installed on the worker.") from exc
+
+    reader = PdfReader(io.BytesIO(raw_bytes))
+    content = []
+    for page in reader.pages:
+        content.append(page.extract_text() or "")
+    return "\n".join(content)
 
 
 def fetch_url_text(url: str) -> dict[str, str]:

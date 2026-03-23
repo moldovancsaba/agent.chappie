@@ -22,7 +22,7 @@ The app now uses three sections only:
 - `Your Checklist` as the default view with exactly 3 ranked task cards
 - `Know More` as compressed read-only intelligence behind the checklist
 - `Sources & Jobs` as the operator-side ingestion and recurring-job surface
-- a guided first-run input module that teaches the user exactly what to submit
+- a guided first-run input module that teaches the user exactly what to submit without sample business data
 
 The main checklist view must:
 
@@ -30,7 +30,7 @@ The main checklist view must:
 - show exactly 3 visible task cards
 - expose decision actions as `Done`, `Adjust`, and `Reject`
 - include a confidence indicator for the current ranked output
-- replace abstract empty states with guided input options and a hardcoded example run
+- replace abstract empty states with guided input options and real ingestion status
 
 ## What the app does not do
 
@@ -92,9 +92,9 @@ The app must not collect or fabricate general project metadata that belongs in t
 
 - URL-only submissions are fetched and normalized on the Mac mini worker before signal extraction
 - raw text submissions are stored as local source snapshots before signal extraction
-- file submissions are accepted as one extracted text block per submission
-- the app teaches the user the difference between good and bad input for URL, text, and file modes
-- the app includes a hardcoded `Use Example` action to demonstrate expected output quality
+- file submissions are sent as real uploads and extracted on the Mac mini worker
+- the app accepts one real source per submission: URL, pasted text, or one supported document
+- supported document uploads are currently `.txt`, `.md`, `.csv`, `.pdf`, and `.docx`
 - if the worker cannot derive three distinct, high-confidence actions from the ingested evidence, it must return a blocked result instead of filler tasks
 
 ## Sources and activity
@@ -107,6 +107,7 @@ The app must not collect or fabricate general project metadata that belongs in t
 - monitor job status
 
 The frontend must not invent source inventory or recurring job history.
+The frontend also restores the latest saved project and result for the current anonymous session through `GET /api/session/[sessionId]/state`.
 
 ## Local development
 

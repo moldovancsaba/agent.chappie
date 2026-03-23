@@ -10,6 +10,12 @@ type ProjectRecord = {
   createdAt: string;
 };
 
+type SessionState = {
+  project: ProjectRecord | null;
+  job: JobRequest | null;
+  result: JobResult | null;
+};
+
 type MemoryState = {
   projects: Map<string, ProjectRecord>;
   jobs: Map<string, JobRequest>;
@@ -125,6 +131,89 @@ export async function getResult(jobId: string): Promise<JobResult | null> {
     limit 1
   `) as Array<{ payload: JobResult }>;
   return rows[0]?.payload ?? null;
+}
+
+export async function getJob(jobId: string): Promise<JobRequest | null> {
+  if (!canUseNeon()) {
+    return memoryState().jobs.get(jobId) ?? null;
+  }
+  const sql = sqlClient();
+  const rows = (await sql`
+    select payload
+    from demo_jobs
+    where job_id = ${jobId}
+    limit 1
+  `) as Array<{ payload: JobRequest }>;
+  return rows[0]?.payload ?? null;
+}
+
+export async function getLatestSessionState(sessionId: string): Promise<SessionState> {
+  if (!canUseNeon()) {
+    const projects = [...memoryState().projects.values()]
+      .filter((project) => project.sessionId === sessionId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const project = projects[0] ?? null;
+    if (!project) {
+      return { project: null, job: null, result: null };
+    }
+    const results = [...memoryState().results.values()]
+      .filter((result) => result.project_id === project.projectId)
+      .sort((left, right) => right.completed_at.localeCompare(left.completed_at));
+    const result = results[0] ?? null;
+    const job = result ? (memoryState().jobs.get(result.job_id) ?? null) : null;
+    return { project, job, result };
+  }
+
+  const sql = sqlClient();
+  const projectRows = (await sql`
+    select project_id, session_id, summary, created_at
+    from demo_projects
+    where session_id = ${sessionId}
+    order by created_at desc
+    limit 1
+  `) as Array<{
+    project_id: string;
+    session_id: string;
+    summary: string;
+    created_at: string;
+  }>;
+
+  const projectRow = projectRows[0];
+  if (!projectRow) {
+    return { project: null, job: null, result: null };
+  }
+
+  const project: ProjectRecord = {
+    projectId: projectRow.project_id,
+    sessionId: projectRow.session_id,
+    summary: projectRow.summary,
+    createdAt: projectRow.created_at,
+  };
+
+  const resultRows = (await sql`
+    select payload
+    from demo_job_results
+    where project_id = ${project.projectId}
+    order by completed_at desc
+    limit 1
+  `) as Array<{ payload: JobResult }>;
+  const result = resultRows[0]?.payload ?? null;
+
+  const jobRows =
+    result === null
+      ? []
+      : ((await sql`
+          select payload
+          from demo_jobs
+          where job_id = ${result.job_id}
+          limit 1
+        `) as Array<{ payload: JobRequest }>);
+
+  return {
+    project,
+    job: jobRows[0]?.payload ?? null,
+    result,
+  };
 }
 
 export async function saveFeedback(feedback: Feedback) {

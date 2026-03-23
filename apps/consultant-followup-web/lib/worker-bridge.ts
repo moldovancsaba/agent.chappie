@@ -8,6 +8,9 @@ type SourcePackage = {
   project_summary: string;
   raw_text: string;
   source_ref: string;
+  file_name?: string;
+  content_type?: string;
+  content_base64?: string;
 };
 
 export type WorkerWorkspacePayload = {
@@ -47,6 +50,11 @@ export async function runWorkerJob(input: {
   jobRequest: JobRequest;
   contextNotes: string;
   sourceKind: "manual_text" | "url" | "uploaded_file";
+  uploadedFile?: {
+    fileName: string;
+    contentType: string;
+    contentBase64: string;
+  };
 }): Promise<JobResult> {
   if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
     const recommendation = createDemoRecommendation({
@@ -84,6 +92,9 @@ export async function runWorkerJob(input: {
         project_summary: "managed_on_worker",
         raw_text: input.contextNotes,
         source_ref: `source_${input.jobRequest.job_id}`,
+        file_name: input.uploadedFile?.fileName,
+        content_type: input.uploadedFile?.contentType,
+        content_base64: input.uploadedFile?.contentBase64,
       } satisfies SourcePackage,
     }),
     cache: "no-store",

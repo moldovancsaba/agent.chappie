@@ -45,12 +45,6 @@ type WorkspaceSnapshot = {
   }>;
 };
 
-const EXAMPLE_INPUT = {
-  mode: "text" as const,
-  value:
-    "FlowOps increased U14 pricing by 12%, Essex County Club launched a free-trial campaign, and one nearby academy may close with equipment likely headed to a sell-off before the next intake cycle.",
-};
-
 function isCompleteResultWithTasks(
   result: JobResult | null
 ): result is JobResult & {
@@ -146,28 +140,21 @@ function inputHelper(mode: InputMode) {
   if (mode === "url") {
     return {
       label: "Paste URL",
-      placeholder: "https://competitor-site.example/pricing",
-      good: [
-        "One competitor website or pricing page",
-        "One announcement, launch page, or social post",
-        "One page with clear claims, pricing, or offers",
-      ],
-      bad: ["Generic homepage with no useful content", "Unrelated directory or map links", "Multiple links pasted together"],
+      placeholder: "Paste one source URL",
+      detail: "Submit one competitor or market page with meaningful text. The worker fetches and checks the page before generating tasks.",
     };
   }
   if (mode === "file") {
     return {
       label: "Upload File",
-      placeholder: "Upload one PDF, notes file, or report.",
-      good: ["Pricing PDF", "Meeting notes", "Competitor report"],
-      bad: ["Screenshot with no text extraction", "Multiple files", "Completely unrelated document"],
+      placeholder: "Upload one document",
+      detail: "Supported now: .txt, .md, .csv, .pdf, .docx. Unsupported formats are rejected.",
     };
   }
   return {
     label: "Paste Text",
-    placeholder: 'Example: "FlowOps increased prices by 15%, Essex launched a discount campaign, and one academy may close."',
-    good: ["One raw notes block", "One copied pricing table or announcement", "One source bundle from a call or report"],
-    bad: ["One-word summary", "Vague request with no evidence", "Multiple unrelated topics mixed together"],
+    placeholder: "Paste one source text block",
+    detail: "Paste one note bundle, copied announcement, pricing excerpt, or report section with actual signal-bearing text.",
   };
 }
 
@@ -178,6 +165,7 @@ export function DemoWorkspace() {
   const [projectId, setProjectId] = useState("");
   const [contextNotes, setContextNotes] = useState("");
   const [fileName, setFileName] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [submissionError, setSubmissionError] = useState("");
@@ -194,6 +182,44 @@ export function DemoWorkspace() {
   }, []);
 
   useEffect(() => {
+    if (!sessionId || sessionId === "anonymous-loading") {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadLatestSessionState() {
+      try {
+        const response = await fetch(`/api/session/${encodeURIComponent(sessionId)}/state`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          return;
+        }
+        const body = await response.json();
+        if (cancelled) {
+          return;
+        }
+        if (body.project?.projectId) {
+          setProjectId(body.project.projectId);
+        }
+        if (body.job_request) {
+          setJobRequest(body.job_request);
+        }
+        if (body.job_result) {
+          setJobResult(body.job_result);
+        }
+      } catch {
+        return;
+      }
+    }
+
+    void loadLatestSessionState();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
     if (!isCompleteResultWithTasks(jobResult)) {
       return;
     }
@@ -203,7 +229,7 @@ export function DemoWorkspace() {
   }, [jobResult]);
 
   useEffect(() => {
-    if (!projectId || !jobResult) {
+    if (!projectId) {
       return;
     }
 
@@ -236,8 +262,12 @@ export function DemoWorkspace() {
 
   async function submitContext(notes: string) {
     const trimmed = notes.trim();
-    if (!trimmed) {
+    if (inputMode !== "file" && !trimmed) {
       setSubmissionError("Paste one URL, one text block, or upload one file before running the job.");
+      return;
+    }
+    if (inputMode === "file" && !selectedFile) {
+      setSubmissionError("Choose one file before running the job.");
       return;
     }
 
@@ -249,17 +279,33 @@ export function DemoWorkspace() {
       const contextType = inputMode === "file" ? "working_document" : "meeting_notes";
       const sourceKind =
         inputMode === "url" ? "url" : inputMode === "file" ? "uploaded_file" : "manual_text";
-      const response = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          projectId: projectId || undefined,
-          contextNotes: trimmed,
-          contextType,
-          sourceKind,
-        }),
-      });
+      const response =
+        inputMode === "file" && selectedFile
+          ? await (async () => {
+              const form = new FormData();
+              form.set("sessionId", sessionId);
+              form.set("contextType", contextType);
+              form.set("sourceKind", sourceKind);
+              if (projectId) {
+                form.set("projectId", projectId);
+              }
+              form.set("file", selectedFile);
+              return fetch("/api/jobs", {
+                method: "POST",
+                body: form,
+              });
+            })()
+          : await fetch("/api/jobs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionId,
+                projectId: projectId || undefined,
+                contextNotes: trimmed,
+                contextType,
+                sourceKind,
+              }),
+            });
       const body = await response.json();
       if (!response.ok) {
         throw new Error(body.detail ?? "The job submission failed.");
@@ -275,6 +321,15 @@ export function DemoWorkspace() {
       }
       setJobResult(resultBody.job_result);
       setActiveView("checklist");
+      if (inputMode === "file") {
+        setSelectedFile(null);
+        setFileName("");
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+      } else {
+        setContextNotes("");
+      }
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : "Unknown submission error.");
     } finally {
@@ -287,13 +342,6 @@ export function DemoWorkspace() {
     await submitContext(contextNotes);
   }
 
-  async function handleUseExample() {
-    setInputMode(EXAMPLE_INPUT.mode);
-    setFileName("");
-    setContextNotes(EXAMPLE_INPUT.value);
-    await submitContext(EXAMPLE_INPUT.value);
-  }
-
   async function handleFileSelection(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
@@ -301,8 +349,8 @@ export function DemoWorkspace() {
     }
     setInputMode("file");
     setFileName(file.name);
-    const rawText = await file.text();
-    setContextNotes(rawText.slice(0, 20000));
+    setSelectedFile(file);
+    setContextNotes("");
     setSubmissionError("");
   }
 
@@ -396,11 +444,11 @@ export function DemoWorkspace() {
           </p>
         </div>
 
-        <div className="project-status">
-          <div className="status-stack">
-            <span className="status-label">Project</span>
-            <strong>{projectId || "Start with one source"}</strong>
-          </div>
+          <div className="project-status">
+            <div className="status-stack">
+              <span className="status-label">Project</span>
+            <strong>{projectId || "No project loaded yet"}</strong>
+            </div>
           <div className="status-stack">
             <span className="status-label">Status</span>
             <strong>{currentStatus}</strong>
@@ -519,10 +567,10 @@ export function DemoWorkspace() {
                 </div>
               ) : (
                 <div className="empty-state guided-empty-state">
-                  <h3>Start with one source</h3>
+                  <h3>No checklist yet</h3>
                   <p>
-                    Paste one competitor URL, one block of raw notes, or upload one file. Agent.Chappie will turn it
-                    into three ranked actions or tell you honestly when the source is too weak.
+                    Submit one real source. The checklist will appear only after the worker has enough evidence to
+                    return three distinct actions.
                   </p>
                   <div className="guided-actions">
                     <button className="button-secondary" type="button" onClick={() => { setInputMode("url"); setActiveView("sources-jobs"); }}>
@@ -534,23 +582,6 @@ export function DemoWorkspace() {
                     <button className="button-secondary" type="button" onClick={() => { setInputMode("file"); setActiveView("sources-jobs"); fileInputRef.current?.click(); }}>
                       Upload File
                     </button>
-                    <button className="button-primary" type="button" onClick={() => void handleUseExample()} disabled={isSubmitting}>
-                      {isSubmitting ? "Running example..." : "Use Example"}
-                    </button>
-                  </div>
-                  <div className="guided-grid">
-                    <article className="guided-card">
-                      <strong>Good URL input</strong>
-                      <p>One pricing page, announcement, or competitor post with claims, offers, or positioning.</p>
-                    </article>
-                    <article className="guided-card">
-                      <strong>Good text input</strong>
-                      <p>One raw note bundle like: “FlowOps raised prices, Essex launched free trials, one academy may close.”</p>
-                    </article>
-                    <article className="guided-card">
-                      <strong>Good file input</strong>
-                      <p>One pricing PDF, notes file, or report with text the worker can actually parse.</p>
-                    </article>
                   </div>
                 </div>
               )}
@@ -627,8 +658,8 @@ export function DemoWorkspace() {
                     </ul>
                   ) : (
                     <ul>
-                      <li>Waiting for the first source package.</li>
-                      <li>Once a source arrives, this view explains why the checklist changed.</li>
+                      <li>No market summary yet.</li>
+                      <li>This panel fills after the worker ingests a real source.</li>
                     </ul>
                   )}
                 </article>
@@ -660,7 +691,7 @@ export function DemoWorkspace() {
                     </ul>
                   ) : (
                     <ul>
-                      <li>Paste one pricing page, one raw text block, or one notes file to populate this panel.</li>
+                      <li>No recent signals yet.</li>
                     </ul>
                   )}
                 </article>
@@ -679,9 +710,6 @@ export function DemoWorkspace() {
                   <span className="section-kicker">Submit Context</span>
                   <h2>Tell the system exactly what to read</h2>
                 </div>
-                <button className="button-secondary" type="button" onClick={() => void handleUseExample()} disabled={isSubmitting}>
-                  Use Example
-                </button>
               </div>
 
               <div className="input-mode-row">
@@ -701,24 +729,7 @@ export function DemoWorkspace() {
                   <strong>{currentHelper.label}</strong>
                   <p>{currentHelper.placeholder}</p>
                 </div>
-                <div className="guidance-columns">
-                  <div>
-                    <span>Good input</span>
-                    <ul>
-                      {currentHelper.good.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <span>Bad input</span>
-                    <ul>
-                      {currentHelper.bad.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
+                <p className="field-help">{currentHelper.detail}</p>
               </div>
 
               {inputMode === "file" ? (
@@ -732,7 +743,7 @@ export function DemoWorkspace() {
                       <span className="file-upload-label">{fileName || "No file selected yet"}</span>
                     </div>
                     <p className="field-help">
-                      Max one file per submission. Text extraction must happen in the browser or a worker-supported format.
+                      Max one file per submission. Extraction happens on the worker, not in the browser.
                     </p>
                   </div>
                 </div>
@@ -750,7 +761,7 @@ export function DemoWorkspace() {
                 </div>
               )}
 
-              <input ref={fileInputRef} hidden type="file" accept=".txt,.md,.pdf,.csv" onChange={handleFileSelection} />
+              <input ref={fileInputRef} hidden type="file" accept=".txt,.md,.csv,.pdf,.docx" onChange={handleFileSelection} />
 
               <div className="field-triple single-readonly">
                 <div className="field">
@@ -791,9 +802,9 @@ export function DemoWorkspace() {
                     ))
                   ) : (
                     <div className="job-item">
-                      <strong>Monitoring starts after the first useful source</strong>
-                      <span>This panel fills from the worker, not from manual frontend setup.</span>
-                      <p>It will show recurring observation activity once the worker has real project context.</p>
+                      <strong>No monitoring activity yet</strong>
+                      <span>This panel fills from real worker state.</span>
+                      <p>It will show recurring observation activity after the first ingested source is processed.</p>
                     </div>
                   )}
                 </article>
@@ -831,9 +842,9 @@ export function DemoWorkspace() {
                   ))
                 ) : (
                   <article className="library-item">
-                    <strong>What appears here</strong>
-                    <span>Recent URLs, notes, or file text that the worker actually ingested.</span>
-                    <p>Nothing is shown until the system has real source material to work with.</p>
+                    <strong>No sources recorded yet</strong>
+                    <span>Recent URLs, notes, or extracted file text appear here after ingestion.</span>
+                    <p>Nothing is shown until the worker has processed a real source.</p>
                   </article>
                 )}
               </div>

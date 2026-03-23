@@ -47,11 +47,12 @@ The frontend may submit:
 
 - one pasted URL
 - one raw text block
-- one extracted file-text block
+- one uploaded document
 
 The Mac mini worker is responsible for:
 
 - fetching URL content
+- extracting supported document text
 - normalizing ingested source material
 - recovering project context from the local brain
 - generating recent source/activity data for the app
@@ -102,9 +103,12 @@ This local SQLite database stores:
 - keep the Mac mini worker private
 - keep app secrets in Vercel env settings only
 - `POST /api/jobs` is the app-side bridge entrypoint
+- `GET /api/session/[sessionId]/state` restores the latest saved project and result for the current anonymous session
 - `GET /api/projects/[projectId]/workspace` reads worker-generated source and activity state
 - in worker mode, the app forwards jobs to the Mac mini worker over HTTP with `x-agent-shared-secret`
 - the deployed app should remain free of sample business data and fabricated context entries
+- supported document uploads are currently: `.txt`, `.md`, `.csv`, `.pdf`, `.docx`
+- unsupported document or media formats should be rejected honestly, not shown as parsed
 
 ## Auth status
 

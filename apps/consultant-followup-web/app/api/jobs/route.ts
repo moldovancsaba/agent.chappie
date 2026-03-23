@@ -8,7 +8,47 @@ import { runWorkerJob } from "@/lib/worker-bridge";
 
 export async function POST(request: Request) {
   try {
-    const payload = demoJobSubmissionSchema.parse(await request.json());
+    const contentType = request.headers.get("content-type") ?? "";
+    let payload:
+      | {
+          sessionId: string;
+          projectId?: string;
+          contextNotes: string;
+          contextType: "meeting_notes" | "call_summary" | "working_document";
+          sourceKind: "url" | "manual_text" | "uploaded_file";
+        }
+      | null = null;
+    let uploadedFile:
+      | {
+          fileName: string;
+          contentType: string;
+          contentBase64: string;
+        }
+      | undefined;
+
+    if (contentType.includes("multipart/form-data")) {
+      const form = await request.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) {
+        throw new Error("A file must be attached for file uploads.");
+      }
+      const fileBuffer = Buffer.from(await file.arrayBuffer());
+      payload = demoJobSubmissionSchema.parse({
+        sessionId: String(form.get("sessionId") ?? ""),
+        projectId: form.get("projectId") ? String(form.get("projectId")) : undefined,
+        contextNotes: file.name,
+        contextType: String(form.get("contextType") ?? "working_document"),
+        sourceKind: "uploaded_file",
+      });
+      uploadedFile = {
+        fileName: file.name,
+        contentType: file.type || "application/octet-stream",
+        contentBase64: fileBuffer.toString("base64"),
+      };
+    } else {
+      payload = demoJobSubmissionSchema.parse(await request.json());
+    }
+
     const projectId = payload.projectId ?? generateId("demo_project");
     const jobId = generateId("job");
     const submittedAt = new Date().toISOString();
@@ -43,6 +83,7 @@ export async function POST(request: Request) {
       jobRequest,
       contextNotes: payload.contextNotes,
       sourceKind: payload.sourceKind,
+      uploadedFile,
     });
 
     await saveResult(jobResult);

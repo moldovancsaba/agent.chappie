@@ -1,1 +1,1 @@
-# No third-party Python packages are required for the local worker bridge correction pass.
+pypdf==6.1.1
