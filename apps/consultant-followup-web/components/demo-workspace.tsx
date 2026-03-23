@@ -140,21 +140,18 @@ function inputHelper(mode: InputMode) {
   if (mode === "url") {
     return {
       label: "Paste URL",
-      placeholder: "Paste one source URL",
-      detail: "Submit one competitor or market page with meaningful text. The worker fetches and checks the page before generating tasks.",
+      placeholder: "",
     };
   }
   if (mode === "file") {
     return {
       label: "Upload File",
-      placeholder: "Upload one document",
-      detail: "Supported now: .txt, .md, .csv, .pdf, .docx. Unsupported formats are rejected.",
+      placeholder: "",
     };
   }
   return {
     label: "Paste Text",
-    placeholder: "Paste one source text block",
-    detail: "Paste one note bundle, copied announcement, pricing excerpt, or report section with actual signal-bearing text.",
+    placeholder: "",
   };
 }
 
@@ -727,9 +724,7 @@ export function DemoWorkspace() {
               <div className="input-guidance panel-lite">
                 <div>
                   <strong>{currentHelper.label}</strong>
-                  <p>{currentHelper.placeholder}</p>
                 </div>
-                <p className="field-help">{currentHelper.detail}</p>
               </div>
 
               {inputMode === "file" ? (
@@ -742,9 +737,6 @@ export function DemoWorkspace() {
                       </button>
                       <span className="file-upload-label">{fileName || "No file selected yet"}</span>
                     </div>
-                    <p className="field-help">
-                      Max one file per submission. Extraction happens on the worker, not in the browser.
-                    </p>
                   </div>
                 </div>
               ) : (
@@ -755,20 +747,12 @@ export function DemoWorkspace() {
                       id="context-notes"
                       value={contextNotes}
                       onChange={(event) => setContextNotes(event.target.value)}
-                      placeholder={currentHelper.placeholder}
                     />
                   </div>
                 </div>
               )}
 
               <input ref={fileInputRef} hidden type="file" accept=".txt,.md,.csv,.pdf,.docx" onChange={handleFileSelection} />
-
-              <div className="field-triple single-readonly">
-                <div className="field">
-                  <label>Anonymous session</label>
-                  <div className="read-only-field">{sessionId}</div>
-                </div>
-              </div>
 
               <div className="button-row">
                 <button className="button-primary" type="submit" disabled={isSubmitting}>
