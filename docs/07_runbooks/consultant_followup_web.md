@@ -67,6 +67,9 @@ The Mac mini worker is responsible for:
 - extracting supported document text
 - normalizing ingested source material
 - recovering project context from the local brain
+- drafting persistent knowledge segments from the full source set
+- writing business-value tasks from those segments and linked evidence
+- judging the task set into ranked next-best-action output
 - generating recent source/activity data for the app
 - generating structured knowledge cards for `Know More`
 - keeping task detail separate from the global knowledge surface
@@ -110,6 +113,7 @@ This local SQLite database stores:
 - `system_observations`
 - `source_snapshots`
 - `project_knowledge_state`
+- `draft_knowledge_segments`
 - `monitor_state`
 - `managed_sources`
 - `managed_jobs`
@@ -157,6 +161,7 @@ The app must never invent this state locally. All CRUD actions proxy to the work
 - `Task Detail` is one-to-one with a single checklist action
 - `Know More` is the structured knowledge surface
 - `Know More` should lead with worker-generated strategic synthesis such as a competitive position snapshot
+- `Know More` should surface worker-drafted knowledge segments created from the complete source set
 - each knowledge card should surface:
   - insight
   - implication

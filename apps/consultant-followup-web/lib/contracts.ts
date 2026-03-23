@@ -70,6 +70,10 @@ export const recommendedTaskSchema = z.object({
   why_now: z.string().min(1),
   expected_advantage: z.string().min(1),
   evidence_refs: z.array(z.string().min(1)).min(1),
+  priority_label: z.enum(["critical", "high", "normal"]).optional(),
+  best_before: z.string().optional(),
+  is_next_best_action: z.boolean().optional(),
+  task_type: z.string().min(1).optional(),
 });
 
 export const jobResultCompletePayloadSchema = z.object({

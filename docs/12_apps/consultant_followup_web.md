@@ -100,9 +100,16 @@ The app now depends on a two-layer intelligence model:
 
 - hidden `SystemObservation v1` signals persisted on the worker side
 - visible ranked `recommended_tasks` returned to the app
+- persisted `draft_knowledge_segments` created by the drafter before the writer and judge finalize tasks
 
 The app must not expose the internal observation layer directly.
 The app must not collect or fabricate general project metadata that belongs in the worker brain.
+
+The real decision pipeline is now:
+
+- `Drafter`: read the full source set, normalize it, and persist editable draft knowledge segments
+- `Writer`: turn those segments plus source-linked evidence into concrete business-value tasks, including missing-information tasks when evidence gaps block a stronger move
+- `Judge`: rank the tasks, add priority and best-before timing, and mark the next best action
 
 ## Ingestion behavior
 
@@ -123,6 +130,7 @@ The app must not collect or fabricate general project metadata that belongs in t
 - competitive position snapshot
 - monitor job status
 - structured knowledge cards
+- editable draft knowledge segments
 - source-level takeaway and business impact summaries
 - knowledge feedback state
 
@@ -145,6 +153,7 @@ For rich sources such as uploaded market-analysis documents:
   - the insight
   - the implication
   - the next potential moves
+- `Know More` must also surface the drafted knowledge segments created from the full source set
 - ingested source cards must show why the source matters:
   - key takeaway
   - business impact

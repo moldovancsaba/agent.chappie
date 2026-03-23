@@ -76,6 +76,19 @@ type ManagementStatus = {
 } | null;
 type WorkspaceSnapshot = {
   project_id: string;
+  draft_segments: Array<{
+    segment_id: string;
+    project_id: string;
+    segment_kind: string;
+    title: string;
+    segment_text: string;
+    source_refs: string[];
+    evidence_refs: string[];
+    importance: number;
+    confidence: number;
+    created_at: string;
+    updated_at: string;
+  }>;
   fact_chips: Array<{
     fact_id: string;
     category: string;
@@ -272,6 +285,16 @@ function confidenceSourceLabel(value: string) {
     return "User modified";
   }
   return "Extracted";
+}
+
+function priorityLabel(value: RecommendedTask["priority_label"] | undefined) {
+  if (value === "critical") {
+    return "Critical";
+  }
+  if (value === "high") {
+    return "High";
+  }
+  return "Normal";
 }
 
 function buildConsequenceOfInaction(task: RecommendedTask) {
@@ -905,10 +928,22 @@ export function DemoWorkspace() {
   const selectedTaskEvidence = selectedTask
     ? workspace?.recent_activity.filter((activity) => selectedTask.evidence_refs.includes(activity.signal_id)) ?? []
     : [];
-  const selectedTaskSources = selectedTask
-    ? workspace?.source_cards.filter((source) =>
-        selectedTaskEvidence.some((activity) => activity.source_ref === source.source_ref)
+  const selectedTaskDraftSegments = selectedTask
+    ? workspace?.draft_segments.filter(
+        (segment) =>
+          selectedTask.evidence_refs.includes(`segment::${segment.segment_id}`) ||
+          selectedTask.evidence_refs.includes(segment.segment_id) ||
+          segment.evidence_refs.some((ref) => selectedTask.evidence_refs.includes(ref))
       ) ?? []
+    : [];
+  const selectedTaskSourceRefs = Array.from(
+    new Set([
+      ...selectedTaskEvidence.map((activity) => activity.source_ref),
+      ...selectedTaskDraftSegments.flatMap((segment) => segment.source_refs),
+    ])
+  );
+  const selectedTaskSources = selectedTask
+    ? workspace?.source_cards.filter((source) => selectedTaskSourceRefs.includes(source.source_ref)) ?? []
     : [];
   const selectedTaskSteps = selectedTask
     ? buildExecutionSteps(
@@ -991,9 +1026,11 @@ export function DemoWorkspace() {
                         <div className="task-content">
                           <h3>{task.title}</h3>
                           <div className="task-meta-row">
-                            <div className="task-meta">When: this week</div>
+                            <div className="task-meta">Priority: {priorityLabel(task.priority_label)}</div>
+                            <div className="task-meta">Best before: {task.best_before ?? "This week"}</div>
                             <div className="task-meta">Confidence: {confidenceLabel(confidence)}{confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}</div>
                           </div>
+                          {task.is_next_best_action ? <div className="task-meta nba">Next best action</div> : null}
                           <div className="task-block impact">
                             <span>Expected impact</span>
                             <p>{task.expected_advantage}</p>
@@ -1049,7 +1086,21 @@ export function DemoWorkspace() {
               ) : blockedResult ? (
                 <div className="notice error">
                   <strong>No immediate move detected</strong>
+                  <p>
+                    We processed the source and drafted knowledge from it, but no pricing, offer, closure, or timing
+                    signal was strong enough yet to justify three high-confidence moves this week.
+                  </p>
                   <p>{blockedReason}</p>
+                  {workspace?.draft_segments.length ? (
+                    <div className="task-block">
+                      <span>What the worker still learned from this source</span>
+                      <ul>
+                        {workspace.draft_segments.slice(0, 3).map((segment) => (
+                          <li key={segment.segment_id}>{segment.segment_text}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   <p>
                     The source was still processed. We are monitoring pricing shifts, competitor positioning, and offer
                     changes from it. Open Know More to review the current intelligence, or add another source if you
@@ -1142,6 +1193,14 @@ export function DemoWorkspace() {
                       <strong>{selectedTask.expected_advantage}</strong>
                     </div>
                     <div className="summary-row">
+                      <span>Priority</span>
+                      <strong>{priorityLabel(selectedTask.priority_label)}</strong>
+                    </div>
+                    <div className="summary-row">
+                      <span>Best before</span>
+                      <strong>{selectedTask.best_before ?? "This week"}</strong>
+                    </div>
+                    <div className="summary-row">
                       <span>Confidence</span>
                       <strong>
                         {confidenceLabel(confidence)}
@@ -1209,6 +1268,24 @@ export function DemoWorkspace() {
                       ))
                     ) : (
                       <p className="surface-summary">No linked source cards are available for this task yet.</p>
+                    )}
+                  </div>
+
+                  <div className="task-detail-list">
+                    <h3>Draft segments behind this task</h3>
+                    {selectedTaskDraftSegments.length ? (
+                      selectedTaskDraftSegments.map((segment) => (
+                        <div className="job-item" key={segment.segment_id}>
+                          <strong>{segment.title}</strong>
+                          <span>
+                            {humanizeFactCategory(segment.segment_kind)} · {confidenceLabel(segment.confidence)} (
+                            {segment.confidence.toFixed(2)})
+                          </span>
+                          <p>{segment.segment_text}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="surface-summary">No draft segments are linked to this task yet.</p>
                     )}
                   </div>
                 </div>
@@ -1318,6 +1395,43 @@ export function DemoWorkspace() {
                       >
                         {humanizeFactCategory(chip.category)}: {chip.label}
                       </button>
+                    ))}
+                  </div>
+                </article>
+              ) : null}
+
+              {workspace?.draft_segments.length ? (
+                <article className="intel-card">
+                  <div className="operator-head">
+                    <h3>Draft Knowledge Segments</h3>
+                    <span>{workspace.draft_segments.length} segments</span>
+                  </div>
+                  <p>
+                    These are the editable draft segments the drafter built from the full source set. The writer uses
+                    them to create business-value tasks, and the judge decides which move should surface first.
+                  </p>
+                  <div className="intel-columns">
+                    {workspace.draft_segments.slice(0, 8).map((segment) => (
+                      <article className="intel-card mini" key={segment.segment_id}>
+                        <div className="operator-head">
+                          <h3>{segment.title}</h3>
+                          <span>
+                            {humanizeFactCategory(segment.segment_kind)} · {confidenceLabel(segment.confidence)} (
+                            {segment.confidence.toFixed(2)})
+                          </span>
+                        </div>
+                        <p>{segment.segment_text}</p>
+                        <div className="summary-stack">
+                          <div className="summary-row">
+                            <span>Importance</span>
+                            <strong>{segment.importance.toFixed(2)}</strong>
+                          </div>
+                          <div className="summary-row">
+                            <span>Source refs</span>
+                            <strong>{segment.source_refs.length}</strong>
+                          </div>
+                        </div>
+                      </article>
                     ))}
                   </div>
                 </article>

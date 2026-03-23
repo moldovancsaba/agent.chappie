@@ -43,6 +43,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue(workspace["knowledge_cards"])
             self.assertTrue(workspace["source_cards"])
             self.assertTrue(workspace["fact_chips"])
+            self.assertTrue(workspace["draft_segments"])
             competitors = next(card for card in workspace["knowledge_cards"] if card["knowledge_id"] == "competitors_detected")
             self.assertTrue(any("Fortitude AI" in item for item in competitors["items"]))
             self.assertNotIn("Competitive", competitors["items"])
@@ -91,7 +92,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertEqual(market_card["annotation_status"], "edited")
             self.assertEqual(market_card["confidence_source"], "extracted")
 
-    def test_process_job_payload_keeps_knowledge_when_checklist_blocks(self) -> None:
+    def test_process_job_payload_writes_tasks_from_draft_segments_for_rich_source(self) -> None:
         payload = {
             "job_request": {
                 "job_id": "job_blocked_knowledge",
@@ -125,7 +126,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
             initialize_local_store(db_path)
             result = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
-            self.assertEqual(result["job_result"]["status"], "blocked")
+            self.assertEqual(result["job_result"]["status"], "complete")
+            self.assertTrue(result["job_result"]["result_payload"]["recommended_tasks"])
 
             workspace = build_workspace_payload(
                 "project_blocked_knowledge",
@@ -133,13 +135,14 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             )
             self.assertTrue(workspace["knowledge_cards"])
             self.assertTrue(workspace["fact_chips"])
-            self.assertEqual(workspace["source_cards"][0]["status"], "blocked")
-            self.assertEqual(
-                workspace["source_cards"][0]["processing_summary"],
-                "Knowledge extracted; no strong checklist action yet.",
-            )
+            self.assertTrue(workspace["draft_segments"])
+            self.assertEqual(workspace["source_cards"][0]["status"], "processed")
             self.assertIn("competitive_snapshot", workspace)
             self.assertTrue(any(fact["category"] in {"pricing", "offer", "proof", "positioning"} for fact in workspace["fact_chips"]))
+            top_task = result["job_result"]["result_payload"]["recommended_tasks"][0]
+            self.assertIn("priority_label", top_task)
+            self.assertIn("best_before", top_task)
+            self.assertIn("is_next_best_action", top_task)
 
 
 if __name__ == "__main__":

@@ -140,6 +140,17 @@ This means:
 - the public website should not depend on direct public exposure of the Mac mini
 - the governed triad remains the worker-side decision core
 
+## Competitive recommendation pipeline
+
+The competitive-intelligence product surface now depends on a second explicit worker-side pipeline:
+
+- `Drafter`: read the complete source set and persist editable draft knowledge segments
+- `Writer`: turn those segments and linked evidence into concrete business-value tasks
+- `Judge`: rank the candidate tasks, add best-before timing, and choose the next best action
+
+This pipeline must remain worker-authoritative.
+The frontend may display draft segments, written tasks, and judged metadata, but it must not generate them.
+
 ## Layered platform boundary
 
 Agent.Chappie is now documented as three layers with explicit boundaries.

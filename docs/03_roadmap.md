@@ -217,6 +217,27 @@ Status:
 
 - partially accepted
 
+## Phase 6l - Drafter, Writer, Judge recommendation pipeline
+
+Status:
+
+- in implementation
+
+Acceptance criteria:
+
+- every ingested source contributes to worker-drafted knowledge segments
+- draft knowledge segments are persisted in the local worker brain
+- writer can generate concrete business-value tasks from those segments, including missing-information tasks when evidence gaps block a stronger move
+- judge adds task priority, best-before timing, and next-best-action selection
+- the app surfaces draft segments, written tasks, and judged metadata without moving logic into the frontend
+
+Proof requirements:
+
+- persisted `draft_knowledge_segments` in the local worker store
+- workspace payload evidence showing draft segments
+- task output with `priority_label`, `best_before`, and `is_next_best_action`
+- updated app and runbook documentation
+
 Acceptance criteria:
 
 - the demo bridge is replaced by a real private worker bridge path

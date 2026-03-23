@@ -127,6 +127,20 @@ def initialize_local_store(path: str | None = None) -> str:
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
               primary key (knowledge_id, project_id)
             );
+
+            create table if not exists draft_knowledge_segments (
+              segment_id text primary key,
+              project_id text not null,
+              segment_kind text not null,
+              title text not null,
+              segment_text text not null,
+              source_refs_json text not null,
+              evidence_refs_json text not null,
+              importance real not null,
+              confidence real not null,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
             """
         )
         _ensure_column(connection, "source_snapshots", "display_label", "text")
@@ -548,6 +562,69 @@ def list_observations_for_source(project_id: str, source_ref: str, path: str | N
             (project_id, source_ref),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def replace_draft_segments(project_id: str, segments: list[dict[str, Any]], path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute("delete from draft_knowledge_segments where project_id = ?", (project_id,))
+        for segment in segments:
+            connection.execute(
+                """
+                insert into draft_knowledge_segments (
+                  segment_id,
+                  project_id,
+                  segment_kind,
+                  title,
+                  segment_text,
+                  source_refs_json,
+                  evidence_refs_json,
+                  importance,
+                  confidence
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    segment["segment_id"],
+                    project_id,
+                    segment["segment_kind"],
+                    segment["title"],
+                    segment["segment_text"],
+                    json.dumps(segment.get("source_refs", [])),
+                    json.dumps(segment.get("evidence_refs", [])),
+                    float(segment["importance"]),
+                    float(segment["confidence"]),
+                ),
+            )
+
+
+def list_draft_segments(project_id: str, limit: int = 24, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              segment_id,
+              project_id,
+              segment_kind,
+              title,
+              segment_text,
+              source_refs_json,
+              evidence_refs_json,
+              importance,
+              confidence,
+              created_at,
+              updated_at
+            from draft_knowledge_segments
+            where project_id = ?
+            order by importance desc, updated_at desc
+            limit ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+    segments = [dict(row) for row in rows]
+    for segment in segments:
+        segment["source_refs"] = json.loads(segment.pop("source_refs_json") or "[]")
+        segment["evidence_refs"] = json.loads(segment.pop("evidence_refs_json") or "[]")
+    return segments
 
 
 def list_monitor_rows(path: str | None = None) -> list[dict[str, Any]]:

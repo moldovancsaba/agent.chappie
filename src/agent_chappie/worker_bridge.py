@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,12 +23,14 @@ from agent_chappie.local_store import (
     get_source_snapshot,
     initialize_local_store,
     insert_observations,
+    list_draft_segments,
     list_observations_for_source,
     list_managed_jobs,
     list_managed_sources,
     list_monitor_rows,
     list_recent_observations,
     list_recent_source_snapshots,
+    replace_draft_segments,
     save_source_snapshot,
     update_managed_job,
     update_managed_source,
@@ -181,10 +184,9 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
 
     enqueue_source_package(source_package, config)
     observations = sync_observations_for_source(source_package, config)
-    aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
-    result_payload = generate_recommended_tasks(source_package, aggregated or observations)
     refreshed_sources = list_recent_source_snapshots(source_package.project_id, path=config.local_db_path)
     refreshed_knowledge = fetch_knowledge_rows(source_package.project_id, path=config.local_db_path)
+    aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
     fact_chips = build_fact_chips(refreshed_sources, aggregated or observations, refreshed_knowledge)
     knowledge_cards = build_knowledge_cards(
         refreshed_sources,
@@ -193,6 +195,11 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         fetch_knowledge_feedback_rows(source_package.project_id, path=config.local_db_path),
         fact_chips,
     )
+    draft_segments = build_draft_segments(refreshed_sources, aggregated or observations, knowledge_cards, fact_chips)
+    replace_draft_segments(source_package.project_id, draft_segments, path=config.local_db_path)
+    result_payload = generate_recommended_tasks(source_package, aggregated or observations)
+    if "recommended_tasks" not in result_payload:
+        result_payload = write_tasks_from_segments(source_package, aggregated or observations, draft_segments, knowledge_cards, fact_chips)
     used_source_refs: set[str] = set()
 
     if "recommended_tasks" in result_payload:
@@ -212,18 +219,29 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         except ValidationError:
             repaired_payload = repair_recommended_tasks(source_package, observations, result_payload)
             if repaired_payload is None:
-                job_result = validate_job_result(
-                    {
-                        "job_id": job_request["job_id"],
-                        "app_id": job_request["app_id"],
-                        "project_id": job_request["project_id"],
-                        "status": "blocked",
-                        "completed_at": utc_now_iso(),
-                        "result_payload": {
-                            "reason": "insufficient_output_quality",
-                        },
-                    }
+                fallback_payload = write_tasks_from_segments(
+                    source_package,
+                    aggregated or observations,
+                    draft_segments,
+                    knowledge_cards,
+                    fact_chips,
                 )
+                if "recommended_tasks" in fallback_payload:
+                    result_document["result_payload"] = fallback_payload
+                    job_result = validate_job_result(result_document)
+                else:
+                    job_result = validate_job_result(
+                        {
+                            "job_id": job_request["job_id"],
+                            "app_id": job_request["app_id"],
+                            "project_id": job_request["project_id"],
+                            "status": "blocked",
+                            "completed_at": utc_now_iso(),
+                            "result_payload": {
+                                "reason": "insufficient_output_quality",
+                            },
+                        }
+                    )
             else:
                 result_document["result_payload"] = repaired_payload
                 job_result = validate_job_result(result_document)
@@ -423,6 +441,10 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     monitor_rows = list_monitor_rows(path=config.local_db_path)
     fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
     knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
+    draft_segments = list_draft_segments(project_id, path=config.local_db_path)
+    if not draft_segments and (source_rows or observation_rows or knowledge_cards or fact_chips):
+        draft_segments = build_draft_segments(source_rows, observation_rows, knowledge_cards, fact_chips)
+        replace_draft_segments(project_id, draft_segments, path=config.local_db_path)
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
     competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows)
 
@@ -463,6 +485,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             "offer_signals": sum(1 for row in observation_rows if row["signal_type"] in {"offer", "asset_sale"}),
         },
         "fact_chips": fact_chips,
+        "draft_segments": draft_segments,
         "competitive_snapshot": competitive_snapshot,
         "knowledge_summary": knowledge_summary_rows[:5],
         "monitor_jobs": [
@@ -713,6 +736,311 @@ def build_knowledge_cards(
     )
 
     return cards
+
+
+def build_draft_segments(
+    source_rows: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_segment(
+        segment_id: str,
+        segment_kind: str,
+        title: str,
+        segment_text: str,
+        source_refs: list[str],
+        evidence_refs: list[str],
+        importance: float,
+        confidence: float,
+    ) -> None:
+        key = f"{segment_kind}|{title}|{segment_text}".lower()
+        if key in seen:
+            return
+        seen.add(key)
+        segments.append(
+            {
+                "segment_id": segment_id,
+                "segment_kind": segment_kind,
+                "title": title,
+                "segment_text": segment_text,
+                "source_refs": unique_values(source_refs),
+                "evidence_refs": unique_values(evidence_refs),
+                "importance": round(float(importance), 2),
+                "confidence": round(float(confidence), 2),
+            }
+        )
+
+    for card in knowledge_cards:
+        add_segment(
+            f"segment:{card['knowledge_id']}",
+            card["knowledge_id"],
+            card["title"],
+            f"{card['insight']} {card['implication']}",
+            card.get("source_refs", []),
+            card.get("evidence_refs", []),
+            min(0.99, 0.45 + float(card["confidence"])),
+            float(card["confidence"]),
+        )
+        for index, item in enumerate(card.get("items", [])[:5]):
+            add_segment(
+                f"segment:{card['knowledge_id']}:{index + 1}",
+                card["knowledge_id"],
+                card["title"],
+                item,
+                card.get("source_refs", []),
+                card.get("evidence_refs", []),
+                min(0.95, 0.38 + float(card["confidence"])),
+                float(card["confidence"]),
+            )
+
+    for chip in fact_chips:
+        add_segment(
+            f"fact:{chip['fact_id']}",
+            str(chip["category"]),
+            humanize_fact_category(str(chip["category"])),
+            str(chip["label"]),
+            chip.get("source_refs", []),
+            chip.get("evidence_refs", []),
+            min(0.92, 0.35 + float(chip["confidence"])),
+            float(chip["confidence"]),
+        )
+
+    for row in source_rows[:8]:
+        clauses = [clause for clause in extract_clauses(row["raw_text"]) if len(clause.strip()) > 28 and not is_technical_residue(clause)]
+        for index, clause in enumerate(clauses[:6]):
+            add_segment(
+                f"source:{row['source_ref']}:{index + 1}",
+                "source_clause",
+                row.get("display_label") or row["source_ref"],
+                normalize_fact_label(clause) or clause,
+                [row["source_ref"]],
+                [],
+                0.34,
+                0.44,
+            )
+
+    return sorted(segments, key=lambda segment: (segment["importance"], segment["confidence"]), reverse=True)[:40]
+
+
+def humanize_fact_category(value: str) -> str:
+    if value == "pricing":
+        return "Pricing"
+    if value == "offer":
+        return "Offer"
+    if value == "positioning":
+        return "Positioning"
+    if value == "proof":
+        return "Proof"
+    if value == "segment":
+        return "Segment"
+    if value == "timing":
+        return "Timing"
+    if value == "opportunity":
+        return "Opportunity"
+    if value == "competitor":
+        return "Competitor"
+    return value.replace("_", " ").title()
+
+
+def write_tasks_from_segments(
+    source: SourcePackage,
+    observations: list[dict[str, Any]],
+    draft_segments: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
+) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    for segment in draft_segments:
+        task = segment_to_task(source, segment, observations, knowledge_cards, fact_chips)
+        if task:
+            candidates.append(task)
+
+    if len(candidates) < 3:
+        candidates.extend(build_missing_information_tasks(source, draft_segments, fact_chips))
+
+    judged = judge_tasks(candidates[:9], source)
+    if not judged:
+        return {
+            "reason": "The worker could not derive three distinct, high-confidence actions from the supplied evidence.",
+        }
+    return {
+        "recommended_tasks": judged[:3],
+        "summary": "Three judged actions were written from worker-synthesized draft knowledge segments and available evidence.",
+    }
+
+
+def segment_to_task(
+    source: SourcePackage,
+    segment: dict[str, Any],
+    observations: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    segment_text = str(segment["segment_text"])
+    lowered = segment_text.lower()
+    evidence_refs = segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"]
+    domain = infer_domain_from_sources(source, fact_chips)
+
+    if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
+        return {
+            "rank": 0,
+            "title": "Pull the live pricing, package, and onboarding terms this week and publish one comparison response before buyers lock in a competitor frame",
+            "why_now": f"The worker drafted a pricing segment from the source set: {segment_text}",
+            "expected_advantage": "Improves pricing-page conversion and reduces blind offer changes this week by confirming the real commercial comparison buyers will make.",
+            "evidence_refs": evidence_refs,
+            "task_type": "information_request",
+        }
+    if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
+        channel = "enrollment page" if domain == "academy" else "homepage comparison section"
+        return {
+            "rank": 0,
+            "title": f"Rewrite the {channel} this week to answer the strongest offer and proof pressure before comparison-stage buyers default to the current market leader",
+            "why_now": f"The worker drafted a buyer-pressure segment: {segment_text}",
+            "expected_advantage": "Improves conversion for comparison-stage buyers this week by answering the exact low-friction or trust claim competitors are using against you.",
+            "evidence_refs": evidence_refs,
+            "task_type": "competitive_response",
+        }
+    if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
+        return {
+            "rank": 0,
+            "title": "Request the missing competitor, pricing, or buyer-proof source this week before making the wrong response move",
+            "why_now": f"The worker found a signal gap that blocks a stronger recommendation: {segment_text}",
+            "expected_advantage": "Improves conversion and win rate this week by resolving the missing competitor, pricing, or buyer-pressure fact that is limiting the next best action.",
+            "evidence_refs": evidence_refs,
+            "task_type": "information_request",
+        }
+    if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
+        return {
+            "rank": 0,
+            "title": "Contact the exposed competitor this week and test whether there is a capture opportunity in customers, staff, assets, or distribution",
+            "why_now": f"The worker drafted an asymmetric opportunity segment: {segment_text}",
+            "expected_advantage": "Creates near-term revenue or cost advantage this week by moving before a competitor distress or transition signal closes.",
+            "evidence_refs": evidence_refs,
+            "task_type": "capture_move",
+        }
+    if segment["importance"] >= 0.7:
+        return {
+            "rank": 0,
+            "title": "Publish one buyer-facing response this week before the current comparison narrative hardens",
+            "why_now": f"The worker synthesized a high-importance competitor signal from the source set: {segment_text}",
+            "expected_advantage": "Improves conversion and win rate this week by responding to the strongest buyer pressure the worker can currently prove.",
+            "evidence_refs": evidence_refs,
+            "task_type": "general_business_value",
+        }
+    return None
+
+
+def build_missing_information_tasks(
+    source: SourcePackage,
+    draft_segments: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    strongest = draft_segments[:3]
+    domain = infer_domain_from_sources(source, fact_chips)
+    audience = "buyers" if domain == "general" else "families"
+
+    for segment in strongest:
+        evidence_refs = segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"]
+        if segment["segment_kind"] == "competitor":
+            candidates.append(
+                {
+                    "rank": 0,
+                    "title": "Pull one live competitor page this week and capture the exact pricing, proof, and offer claims buyers will compare against you",
+                    "why_now": f"The drafter identified a competitor signal that is still too broad for a stronger move: {segment['segment_text']}",
+                    "expected_advantage": f"Improves conversion for active {audience} this week by replacing broad market assumptions with the exact competitor claims now shaping comparison decisions.",
+                    "evidence_refs": evidence_refs,
+                    "task_type": "information_request",
+                }
+            )
+        elif segment["segment_kind"] == "proof":
+            candidates.append(
+                {
+                    "rank": 0,
+                    "title": "Publish one stronger proof block this week where buyers hesitate most in the current comparison flow",
+                    "why_now": f"The drafter found a proof signal in the market: {segment['segment_text']}",
+                    "expected_advantage": f"Improves conversion for comparison-stage {audience} this week by reducing trust friction versus the strongest proof language currently visible in the market.",
+                    "evidence_refs": evidence_refs,
+                    "task_type": "general_business_value",
+                }
+            )
+        elif segment["segment_kind"] == "source_clause":
+            candidates.append(
+                {
+                    "rank": 0,
+                    "title": "Publish one operator response this week from the strongest clause in this source instead of leaving it as passive market context",
+                    "why_now": f"The drafter isolated a high-importance market signal in this source that is still sitting below task threshold: {segment['segment_text']}",
+                    "expected_advantage": "Improves conversion and execution speed this week by converting one validated market observation into a concrete business move before the window closes.",
+                    "evidence_refs": evidence_refs,
+                    "task_type": "general_business_value",
+                }
+            )
+
+    if not candidates:
+        candidates.append(
+            {
+                "rank": 0,
+                "title": "Request one sharper source this week that exposes a competitor move, buyer objection, or timing window the worker can act on",
+                "why_now": "The drafter created knowledge segments, but the writer still lacks one decisive competitor or timing signal to turn that market picture into a dominant move.",
+                "expected_advantage": "Improves win rate and conversion next week by filling the evidence gap that is currently preventing a stronger competitive response.",
+                "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
+                "task_type": "information_request",
+            }
+        )
+
+    return candidates
+
+
+def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    judged: list[dict[str, Any]] = []
+    for task in tasks:
+        key = normalize_task_key(task["title"])
+        if key in seen:
+            continue
+        seen.add(key)
+        judged.append(task)
+
+    judged.sort(key=lambda task: task_priority_score(task), reverse=True)
+    now = datetime.now(UTC)
+    for index, task in enumerate(judged[:3], start=1):
+        task["rank"] = index
+        task["is_next_best_action"] = index == 1
+        task["priority_label"] = "critical" if index == 1 else "high" if index == 2 else "normal"
+        best_before_days = 2 if index == 1 else 4 if index == 2 else 6
+        task["best_before"] = (now + timedelta(days=best_before_days)).date().isoformat()
+    return judged[:3]
+
+
+def task_priority_score(task: dict[str, Any]) -> int:
+    title = task["title"].lower()
+    why = task["why_now"].lower()
+    score = 0
+    if "this week" in title or "this week" in why:
+        score += 3
+    if any(token in title or token in why for token in ("before", "closure", "capture", "pricing", "trial", "offer")):
+        score += 3
+    if task.get("task_type") == "capture_move":
+        score += 3
+    if task.get("task_type") == "information_request":
+        score += 1
+    return score
+
+
+def normalize_task_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def infer_domain_from_sources(source: SourcePackage, fact_chips: list[dict[str, Any]]) -> str:
+    combined = " ".join([source.project_summary, source.raw_text, *[str(chip["label"]) for chip in fact_chips]])
+    normalized = combined.lower()
+    if any(token in normalized for token in ("academy", "club", "u14", "families", "intake", "enrollment")):
+        return "academy"
+    return "general"
 
 
 def build_fact_chips(
