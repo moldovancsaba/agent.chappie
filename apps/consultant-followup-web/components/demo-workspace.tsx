@@ -1545,6 +1545,27 @@ export function DemoWorkspace() {
                 </button>
               </div>
 
+              {workspace ? (
+                <div className="compact-meta">
+                  <div className="summary-row">
+                    <span>Ingested sources in this workspace</span>
+                    <strong>{workspace.source_cards.length}</strong>
+                  </div>
+                  <div className="summary-row">
+                    <span>Recent signals available</span>
+                    <strong>{workspace.recent_activity.length}</strong>
+                  </div>
+                </div>
+              ) : projectId ? (
+                <div className="notice">
+                  <p>Loading the current workspace…</p>
+                </div>
+              ) : (
+                <div className="notice">
+                  <p>No project is loaded in this browser session yet. Add one source here to start a workspace, or return to the session that created the earlier sources.</p>
+                </div>
+              )}
+
               {showSourceComposer || editingSourceId ? (
                 <div className="operator-composer">
                   <div className="task-block">
@@ -1772,9 +1793,9 @@ export function DemoWorkspace() {
                   ))
                 ) : (
                   <article className="source-asset empty-asset">
-                    <strong>No sources yet</strong>
-                    <span>Add one competitor page or document.</span>
-                    <p>We’ll monitor it and surface actions when something changes.</p>
+                    <strong>No sources in this workspace yet</strong>
+                    <span>This page only shows sources linked to the current loaded project.</span>
+                    <p>Add one competitor page or document here, or return to the browser session that created the earlier sources if you expected existing cards.</p>
                     <ul>
                       <li>pricing page</li>
                       <li>offer page</li>
