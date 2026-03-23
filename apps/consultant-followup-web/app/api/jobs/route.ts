@@ -34,17 +34,14 @@ export async function POST(request: Request) {
     await saveProject({
       projectId,
       sessionId: payload.sessionId,
-      summary: payload.projectSummary,
+      summary: "managed_on_worker",
       createdAt: submittedAt,
     });
     await saveJob(jobRequest);
 
     const jobResult = await runWorkerJob({
       jobRequest,
-      projectSummary: payload.projectSummary,
       contextNotes: payload.contextNotes,
-      competitor: payload.competitor,
-      region: payload.region,
     });
 
     await saveResult(jobResult);

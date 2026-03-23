@@ -135,13 +135,10 @@ export const feedbackSchema = z.object({
 });
 
 export const demoJobSubmissionSchema = z.object({
-  projectSummary: z.string().min(1),
   contextNotes: z.string().min(1),
   contextType: contextTypeSchema,
   sessionId: z.string().min(1),
   projectId: z.string().min(1).optional(),
-  competitor: z.string().min(1).optional(),
-  region: z.string().min(1).optional(),
 });
 
 export type JobRequest = z.infer<typeof jobRequestSchema>;

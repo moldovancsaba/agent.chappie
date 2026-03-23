@@ -29,6 +29,20 @@ DEMO_STORAGE_MODE=memory
 DATABASE_URL=postgres://user:password@host/database?sslmode=require
 ```
 
+## Frontend boundary
+
+The frontend now submits only raw source material.
+
+Do not add frontend fields for:
+
+- project summary
+- competitor
+- region
+- synthetic source inventory
+- synthetic recurring jobs
+
+Those are generated or maintained on the Mac mini worker.
+
 ## Neon mode
 
 Neon remains for app-visible shared state only:
@@ -76,6 +90,7 @@ This local SQLite database stores:
 - keep app secrets in Vercel env settings only
 - `POST /api/jobs` is the app-side bridge entrypoint
 - in worker mode, the app forwards jobs to the Mac mini worker over HTTP with `x-agent-shared-secret`
+- the deployed app should remain free of sample business data and fabricated context entries
 
 ## Auth status
 

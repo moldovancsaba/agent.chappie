@@ -6,12 +6,13 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 
 ## What the app does
 
-- accepts one demo-safe client project summary
 - accepts one raw competitive context input
 - submits one `Job Request v1`
 - retrieves one `Job Result v1`
 - submits one `Feedback v1`
 - presents the product as a single decision surface, not a dashboard
+
+The frontend does not own or generate the general project context. That context is inferred, enriched, and maintained on the Mac mini worker.
 
 ## Surface structure
 
@@ -40,7 +41,7 @@ The main checklist view must:
 ## Identity model for the public test
 
 - `app_id` stays fixed as `app_consultant_followup`
-- `project_id` is generated per demo project when needed
+- `project_id` is generated or assigned through the worker-backed flow
 - `requested_by` uses an anonymous session form such as `anonymous:<session_id>`
 - feedback is demo-only and non-authoritative
 
@@ -69,6 +70,7 @@ The app-side bridge entrypoint is:
 - `POST /api/jobs`
 
 The worker remains protected by a shared-secret header and returns only user-facing ranked tasks.
+The app sends only raw source material and job identity. It does not send competitor, region, or project-summary fields.
 
 Shared state can still live in Neon for the app layer, but internal intelligence state remains local to the Mac mini worker.
 
@@ -80,6 +82,7 @@ The app now depends on a two-layer intelligence model:
 - visible ranked `recommended_tasks` returned to the app
 
 The app must not expose the internal observation layer directly.
+The app must not collect or fabricate general project metadata that belongs in the worker brain.
 
 ## Local development
 

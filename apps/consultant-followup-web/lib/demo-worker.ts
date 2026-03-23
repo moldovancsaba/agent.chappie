@@ -5,8 +5,8 @@ function includesOneOf(value: string, needles: string[]) {
   return needles.some((needle) => value.includes(needle));
 }
 
-export function createDemoRecommendation(input: { projectSummary: string; contextNotes: string }) {
-  const haystack = `${input.projectSummary}\n${input.contextNotes}`.toLowerCase();
+export function createDemoRecommendation(input: { contextNotes: string }) {
+  const haystack = input.contextNotes.toLowerCase();
   const tasks: RecommendedTask[] = [];
 
   if (includesOneOf(haystack, ["recap", "summary", "meeting notes", "meeting"])) {

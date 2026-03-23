@@ -5,10 +5,6 @@ import { FormEvent, useEffect, useState } from "react";
 import { feedbackSchema, type JobRequest, type JobResult, type RecommendedTask } from "@/lib/contracts";
 import { generateId } from "@/lib/ids";
 
-const SAMPLE_SUMMARY = "We run a soccer academy for talented boys and need practical decisions from regional competitor signals, not generic advice.";
-const SAMPLE_NOTES =
-  "FlowOps raised prices again, a nearby academy may close, and there is talk of a local equipment sell-off before the next intake cycle.";
-
 type AppView = "checklist" | "know-more" | "sources-jobs";
 type DecisionStatus = "done" | "edited" | "declined";
 type TaskDecision = {
@@ -43,10 +39,6 @@ function readOrCreateSessionId() {
   const created = generateId("demo_session");
   window.localStorage.setItem("agent-chappie-demo-session", created);
   return created;
-}
-
-function humanizeRegion(region: string) {
-  return region.replaceAll("_", " ");
 }
 
 function confidenceLabel(confidence: number | undefined) {
@@ -116,10 +108,7 @@ export function DemoWorkspace() {
   const [activeView, setActiveView] = useState<AppView>("checklist");
   const [sessionId, setSessionId] = useState("anonymous-loading");
   const [projectId, setProjectId] = useState("");
-  const [projectSummary, setProjectSummary] = useState(SAMPLE_SUMMARY);
-  const [contextNotes, setContextNotes] = useState(SAMPLE_NOTES);
-  const [competitor, setCompetitor] = useState("FlowOps");
-  const [region, setRegion] = useState("north_cluster");
+  const [contextNotes, setContextNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [submissionError, setSubmissionError] = useState("");
@@ -154,11 +143,8 @@ export function DemoWorkspace() {
         body: JSON.stringify({
           sessionId,
           projectId: projectId || undefined,
-          projectSummary,
           contextNotes,
           contextType: "meeting_notes",
-          competitor: competitor || undefined,
-          region: region || undefined,
         }),
       });
       const body = await response.json();
@@ -264,18 +250,18 @@ export function DemoWorkspace() {
     <section className="decision-shell">
       <header className="decision-header panel">
         <div className="decision-header-copy">
-          <div className="eyebrow">Public test MVP · no login</div>
+          <div className="eyebrow">Worker-managed decision surface</div>
           <h1>Your next move, not more noise.</h1>
           <p>
-            Agent.Chappie keeps the observation layer hidden, learns from competitive context in the background, and
-            shows only the next three actions worth making.
+            The frontend submits only raw source material. Agent.Chappie manages the general project context on the Mac
+            mini and returns only the next three actions worth making.
           </p>
         </div>
 
         <div className="project-status">
           <div className="status-stack">
             <span className="status-label">Project</span>
-            <strong>{projectId || "North Cluster Soccer Academy"}</strong>
+            <strong>{projectId || "Assigned by worker"}</strong>
           </div>
           <div className="status-stack">
             <span className="status-label">Status</span>
@@ -487,8 +473,8 @@ export function DemoWorkspace() {
                 <article className="intel-card">
                   <h3>Market Situation</h3>
                   <ul>
-                    <li>{competitor || "Regional competitor"} is creating comparison pressure in {humanizeRegion(region)}.</li>
-                    <li>Enrollment risk rises when parents see better offers, faster proof, or cheaper alternatives.</li>
+                    <li>The worker maintains the general project context and competitive scope outside the frontend.</li>
+                    <li>The app only shows compressed reasoning derived from the latest submitted source package.</li>
                     <li>The current response window is measured in days, not quarters.</li>
                   </ul>
                 </article>
@@ -520,83 +506,47 @@ export function DemoWorkspace() {
               <div className="section-head">
                 <div>
                   <span className="section-kicker">Sources &amp; Jobs</span>
-                  <h2>Ingestion layer for recurring, triggered, and ad hoc context</h2>
+                  <h2>Submit raw source material only</h2>
                 </div>
-                <button
-                  className="button-secondary"
-                  type="button"
-                  onClick={() => {
-                    setProjectSummary(SAMPLE_SUMMARY);
-                    setContextNotes(SAMPLE_NOTES);
-                    setCompetitor("FlowOps");
-                    setRegion("north_cluster");
-                  }}
-                >
-                  Load sample dataset
-                </button>
               </div>
 
               <div className="operator-grid">
                 <article className="operator-card">
                   <div className="operator-head">
                     <h3>Recurring Monitoring</h3>
-                    <button className="operator-add" type="button">
-                      + Add Job
-                    </button>
                   </div>
                   <div className="job-item">
-                    <strong>Check competitor website</strong>
-                    <span>Every Tuesday · 03:00</span>
-                    <p>Last: 3 updates detected · last action: pricing adjustment triggered · impact: high</p>
+                    <strong>Managed on the Mac mini worker</strong>
+                    <span>Recurring monitoring is not configured in the frontend.</span>
+                    <p>The worker owns competitor scans, schedule rules, and continuous observation state.</p>
                   </div>
                 </article>
 
                 <article className="operator-card">
                   <div className="operator-head">
                     <h3>Event-Based Jobs</h3>
-                    <button className="operator-add" type="button">
-                      + Add Job
-                    </button>
                   </div>
                   <div className="job-item">
-                    <strong>Google Sheet update</strong>
-                    <span>Trigger: new row</span>
-                    <p>Last: 2 signals extracted · last action: none</p>
+                    <strong>Triggered from submitted source packages</strong>
+                    <span>Paste raw notes, a URL summary, or extracted file text.</span>
+                    <p>The frontend no longer creates general project metadata or monitoring rules.</p>
                   </div>
                 </article>
               </div>
 
-              <div className="field-grid">
-                <div className="field">
-                  <label htmlFor="project-summary">Project summary</label>
-                  <textarea
-                    id="project-summary"
-                    value={projectSummary}
-                    onChange={(event) => setProjectSummary(event.target.value)}
-                    placeholder="Describe the academy, the client, or the project pressure in one short paragraph."
-                  />
-                </div>
-
+              <div className="field-grid single-column">
                 <div className="field">
                   <label htmlFor="context-notes">Context package</label>
                   <textarea
                     id="context-notes"
                     value={contextNotes}
                     onChange={(event) => setContextNotes(event.target.value)}
-                    placeholder="Paste one messy source package: notes, URL summary, file summary, or copied competitor copy."
+                    placeholder="Paste one raw source package: notes, copied competitor copy, a URL summary, or extracted file text."
                   />
                 </div>
               </div>
 
-              <div className="field-triple">
-                <div className="field">
-                  <label htmlFor="competitor">Competitor</label>
-                  <input id="competitor" value={competitor} onChange={(event) => setCompetitor(event.target.value)} />
-                </div>
-                <div className="field">
-                  <label htmlFor="region">Region</label>
-                  <input id="region" value={region} onChange={(event) => setRegion(event.target.value)} />
-                </div>
+              <div className="field-triple single-readonly">
                 <div className="field">
                   <label>Anonymous session</label>
                   <div className="read-only-field">{sessionId}</div>
@@ -616,25 +566,20 @@ export function DemoWorkspace() {
               <div className="section-head compact">
                 <div>
                   <span className="section-kicker">Context Library</span>
-                  <h2>Source material used by the system</h2>
+                  <h2>Worker-managed source handling</h2>
                 </div>
               </div>
 
               <div className="library-list">
                 <article className="library-item">
-                  <strong>Long_Island_Soccer.pdf</strong>
-                  <span>Extracted: pricing table</span>
-                  <p>Last used: 2 tasks ago</p>
-                </article>
-                <article className="library-item">
-                  <strong>Untitled.md</strong>
-                  <span>Extracted: competitor list</span>
-                  <p>Last used: 1 task ago</p>
+                  <strong>Worker-managed source inventory</strong>
+                  <span>Submitted raw input is forwarded to the worker.</span>
+                  <p>General source snapshots and project knowledge are managed on the Mac mini only.</p>
                 </article>
                 <article className="library-item current">
                   <strong>Current inline context</strong>
-                  <span>Competitor: {competitor || "not set"}</span>
-                  <p>{contextNotes.slice(0, 130)}{contextNotes.length > 130 ? "..." : ""}</p>
+                  <span>Raw source package sent from this browser</span>
+                  <p>{contextNotes ? `${contextNotes.slice(0, 130)}${contextNotes.length > 130 ? "..." : ""}` : "No source package submitted yet."}</p>
                 </article>
               </div>
 

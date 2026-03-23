@@ -8,20 +8,14 @@ type SourcePackage = {
   project_summary: string;
   raw_text: string;
   source_ref: string;
-  competitor?: string;
-  region?: string;
 };
 
 export async function runWorkerJob(input: {
   jobRequest: JobRequest;
-  projectSummary: string;
   contextNotes: string;
-  competitor?: string;
-  region?: string;
 }): Promise<JobResult> {
   if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
     const recommendation = createDemoRecommendation({
-      projectSummary: input.projectSummary,
       contextNotes: input.contextNotes,
     });
     return jobResultSchema.parse({
@@ -53,11 +47,9 @@ export async function runWorkerJob(input: {
       job_request: input.jobRequest,
       source_package: {
         source_kind: "manual_text",
-        project_summary: input.projectSummary,
+        project_summary: "managed_on_worker",
         raw_text: input.contextNotes,
         source_ref: `source_${input.jobRequest.job_id}`,
-        competitor: input.competitor,
-        region: input.region,
       } satisfies SourcePackage,
     }),
     cache: "no-store",
