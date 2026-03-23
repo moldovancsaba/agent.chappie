@@ -62,6 +62,7 @@ type SourceCard = {
   status: string;
   processing_summary: string;
   last_used_in_checklist: boolean;
+  signal_count: number;
   key_takeaway: string;
   business_impact: string;
   linked_tasks: string[];
@@ -362,6 +363,8 @@ export function DemoWorkspace() {
     sourceId: "",
   });
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
+  const [showSourceComposer, setShowSourceComposer] = useState(false);
+  const [showJobComposer, setShowJobComposer] = useState(false);
   const [managementStatus, setManagementStatus] = useState<ManagementStatus>(null);
   const [selectedTask, setSelectedTask] = useState<RecommendedTask | null>(null);
   const [focusedSourceRef, setFocusedSourceRef] = useState<string | null>(null);
@@ -638,6 +641,7 @@ export function DemoWorkspace() {
     setWorkspace((current) => (current ? { ...current, managed_sources: body.sources ?? [] } : current));
     setSourceForm({ label: "", sourceKind: "url", contentText: "" });
     setEditingSourceId(null);
+    setShowSourceComposer(false);
     setManagementStatus({ tone: "success", message: editingSourceId ? "Source updated." : "Source saved." });
   }
 
@@ -711,6 +715,7 @@ export function DemoWorkspace() {
     setWorkspace((current) => (current ? { ...current, managed_jobs: body.jobs ?? [] } : current));
     setJobForm({ name: "", triggerType: "manual", scheduleText: "", sourceId: "" });
     setEditingJobId(null);
+    setShowJobComposer(false);
     setManagementStatus({ tone: "success", message: editingJobId ? "Job updated." : "Job saved." });
   }
 
@@ -1488,154 +1493,107 @@ export function DemoWorkspace() {
       {activeView === "sources-jobs" ? (
         <section className="content-grid">
           <div className="primary-column">
-            <form className="panel section-card" onSubmit={handleSubmit}>
+            <section className="panel section-card">
               <div className="section-head">
                 <div>
-                  <span className="section-kicker">Submit Context</span>
-                  <h2>Tell the system exactly what to read</h2>
-                  <p className="section-subcopy">Submit one source at a time. The worker ingests it and updates the checklist if the evidence is strong enough.</p>
-                </div>
-              </div>
-
-              <div className="input-mode-row">
-                <button className={`mode-chip ${inputMode === "url" ? "active" : ""}`} type="button" onClick={() => setInputMode("url")}>
-                  URL
-                </button>
-                <button className={`mode-chip ${inputMode === "text" ? "active" : ""}`} type="button" onClick={() => setInputMode("text")}>
-                  Text
-                </button>
-                <button className={`mode-chip ${inputMode === "file" ? "active" : ""}`} type="button" onClick={() => { setInputMode("file"); fileInputRef.current?.click(); }}>
-                  Document
-                </button>
-              </div>
-
-              {inputMode === "file" ? (
-                <div className="field-grid single-column">
-                  <div className="field">
-                    <div className="file-upload-row">
-                      <button className="button-secondary" type="button" onClick={() => fileInputRef.current?.click()}>
-                        Choose document
-                      </button>
-                      <span className="file-upload-label">{fileName || "No file selected yet"}</span>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="field-grid single-column">
-                  <div className="field">
-                    <textarea
-                      id="context-notes"
-                      value={contextNotes}
-                      onChange={(event) => setContextNotes(event.target.value)}
-                      placeholder={inputMode === "url" ? "https://..." : "Paste source text"}
-                    />
-                  </div>
-                </div>
-              )}
-
-              <input ref={fileInputRef} hidden type="file" accept=".txt,.md,.csv,.pdf,.docx" onChange={handleFileSelection} />
-
-              <div className="button-row">
-                <button className="button-primary" type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Analyzing source..." : "Analyze source"}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <aside className="secondary-column">
-            <section className="panel section-card">
-              <div className="section-head compact">
-                <div>
                   <span className="section-kicker">Sources &amp; Jobs</span>
-                  <h2>What the system has taken in</h2>
-                  <p className="section-subcopy">These cards show real worker activity, not placeholder inventory.</p>
+                  <h2>Monitor your market and capture signals automatically.</h2>
+                  <p className="section-subcopy">Add one source first. The worker will watch it, synthesize what changed, and surface actions when a strong move emerges.</p>
                 </div>
               </div>
 
-              <div className="operator-grid">
-                <article className="operator-card">
-                  <div className="operator-head">
-                    <h3>Sources</h3>
+              <div className="monitoring-actions">
+                <button
+                  className="button-primary"
+                  type="button"
+                  onClick={() => {
+                    setShowSourceComposer((current) => !current);
+                    setShowJobComposer(false);
+                  }}
+                >
+                  {showSourceComposer || editingSourceId ? "Close source setup" : "Add Source"}
+                </button>
+                <button
+                  className="button-secondary"
+                  type="button"
+                  onClick={() => {
+                    setShowJobComposer((current) => !current);
+                    setShowSourceComposer(false);
+                  }}
+                >
+                  {showJobComposer || editingJobId ? "Close job setup" : "Add Job"}
+                </button>
+              </div>
+
+              {showSourceComposer || editingSourceId ? (
+                <div className="operator-composer">
+                  <div className="task-block">
+                    <span>Step 1</span>
+                    <p>What do you want to monitor?</p>
                   </div>
-                  <div className="management-form">
-                    <input
-                      value={sourceForm.label}
-                      onChange={(event) => setSourceForm((current) => ({ ...current, label: event.target.value }))}
-                      placeholder="Source label"
-                    />
-                    <div className="guided-actions">
-                      <button className={`mode-chip ${sourceForm.sourceKind === "url" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "url" }))}>
-                        URL
-                      </button>
-                      <button className={`mode-chip ${sourceForm.sourceKind === "manual_text" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "manual_text" }))}>
-                        Text
-                      </button>
-                      <button className={`mode-chip ${sourceForm.sourceKind === "uploaded_file" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "uploaded_file" }))}>
-                        Document
-                      </button>
+                  <div className="guided-actions">
+                    <button className={`mode-chip ${sourceForm.sourceKind === "url" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "url" }))}>
+                      Competitor page
+                    </button>
+                    <button className={`mode-chip ${sourceForm.sourceKind === "manual_text" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "manual_text" }))}>
+                      Notes
+                    </button>
+                    <button className={`mode-chip ${sourceForm.sourceKind === "uploaded_file" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "uploaded_file" }))}>
+                      Document
+                    </button>
+                  </div>
+
+                  <div className="management-form compact-form">
+                    <div className="task-block">
+                      <span>Step 2</span>
+                      <p>{sourceForm.sourceKind === "url" ? "Paste the page you want monitored." : sourceForm.sourceKind === "manual_text" ? "Paste the notes or copied source text." : "Paste the extracted document text or source reference."}</p>
                     </div>
                     <textarea
                       value={sourceForm.contentText}
                       onChange={(event) => setSourceForm((current) => ({ ...current, contentText: event.target.value }))}
-                      placeholder="Source content or source address"
+                      placeholder={
+                        sourceForm.sourceKind === "url"
+                          ? "https://competitor.example/pricing"
+                          : sourceForm.sourceKind === "manual_text"
+                            ? "Paste the source text you want the worker to monitor"
+                            : "Paste extracted document text or the source reference"
+                      }
                     />
+                    <details className="optional-fields">
+                      <summary>Optional details</summary>
+                      <input
+                        value={sourceForm.label}
+                        onChange={(event) => setSourceForm((current) => ({ ...current, label: event.target.value }))}
+                        placeholder="Add a short source label"
+                      />
+                    </details>
                     <div className="task-actions compact-actions">
                       <button className="button-primary" type="button" onClick={() => void handleCreateSource()}>
                         {editingSourceId ? "Save Source" : "Add Source"}
                       </button>
-                      {editingSourceId ? (
-                        <button
-                          className="button-secondary"
-                          type="button"
-                          onClick={() => {
-                            setEditingSourceId(null);
-                            setSourceForm({ label: "", sourceKind: "url", contentText: "" });
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      ) : null}
+                      <button
+                        className="button-secondary"
+                        type="button"
+                        onClick={() => {
+                          setEditingSourceId(null);
+                          setShowSourceComposer(false);
+                          setSourceForm({ label: "", sourceKind: "url", contentText: "" });
+                        }}
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
-                  {workspace?.managed_sources.length ? (
-                    workspace.managed_sources.map((source) => (
-                      <div className="job-item" key={source.source_id}>
-                        <strong>{source.label}</strong>
-                        <span>
-                          {sourceKindLabel(source.source_kind)} · {source.status}
-                        </span>
-                        <p>Last run: {formatTimestamp(source.last_run_at)} · last result: {source.last_result_summary ?? "Not yet"}</p>
-                        <div className="task-actions compact-actions">
-                          <button className="decision-button adjust" type="button" onClick={() => {
-                            setEditingSourceId(source.source_id);
-                            setSourceForm({ label: source.label, sourceKind: source.source_kind as SourceFormState["sourceKind"], contentText: source.content_text });
-                          }}>
-                            Edit
-                          </button>
-                          <button className="decision-button" type="button" onClick={() => void updateSource(source.source_id, { status: source.status === "active" ? "paused" : "active" })}>
-                            {source.status === "active" ? "Pause" : "Resume"}
-                          </button>
-                          <button className="decision-button reject" type="button" onClick={() => void deleteSource(source.source_id)}>
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="job-item">
-                      <strong>No saved sources yet</strong>
-                      <span>Add one source to make this a real management surface.</span>
-                      <p>Saved sources keep their status and latest result summary here.</p>
-                    </div>
-                  )}
-                </article>
+                </div>
+              ) : null}
 
-                <article className="operator-card">
-                  <div className="operator-head">
-                    <h3>Jobs</h3>
+              {showJobComposer || editingJobId ? (
+                <div className="operator-composer secondary-composer">
+                  <div className="task-block">
+                    <span>Monitoring job</span>
+                    <p>Use jobs when a source should run again on a schedule or on a trigger.</p>
                   </div>
-                  <div className="management-form">
+                  <div className="management-form compact-form">
                     <input
                       value={jobForm.name}
                       onChange={(event) => setJobForm((current) => ({ ...current, name: event.target.value }))}
@@ -1666,63 +1624,21 @@ export function DemoWorkspace() {
                       <button className="button-primary" type="button" onClick={() => void handleCreateJob()}>
                         {editingJobId ? "Save Job" : "Add Job"}
                       </button>
-                      {editingJobId ? (
-                        <button
-                          className="button-secondary"
-                          type="button"
-                          onClick={() => {
-                            setEditingJobId(null);
-                            setJobForm({ name: "", triggerType: "manual", scheduleText: "", sourceId: "" });
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      ) : null}
+                      <button
+                        className="button-secondary"
+                        type="button"
+                        onClick={() => {
+                          setEditingJobId(null);
+                          setShowJobComposer(false);
+                          setJobForm({ name: "", triggerType: "manual", scheduleText: "", sourceId: "" });
+                        }}
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
-                  {workspace?.managed_jobs.length ? (
-                    workspace.managed_jobs.map((job) => (
-                      <div className="job-item" key={job.managed_job_id}>
-                        <strong>{job.name}</strong>
-                        <span>
-                          {titleCaseWords(job.trigger_type)} · {job.status}
-                          {job.schedule_text ? ` · ${job.schedule_text}` : ""}
-                        </span>
-                        <p>
-                          Last run: {formatTimestamp(job.last_run_at)} · last action: {job.last_action_summary ?? "Not yet"} · expected impact: {job.last_expected_impact ?? "Not yet"}
-                        </p>
-                        {job.last_runs.length ? (
-                          <ul className="compact-run-list">
-                            {job.last_runs.slice(0, 3).map((run, index) => (
-                              <li key={`${job.managed_job_id}-${index}`}>{formatTimestamp(run.at)} · {run.status} · {run.summary}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        <div className="task-actions compact-actions">
-                          <button className="decision-button adjust" type="button" onClick={() => {
-                            setEditingJobId(job.managed_job_id);
-                            setJobForm({ name: job.name, triggerType: job.trigger_type as JobFormState["triggerType"], scheduleText: job.schedule_text ?? "", sourceId: job.source_id ?? "" });
-                          }}>
-                            Edit
-                          </button>
-                          <button className="decision-button" type="button" onClick={() => void updateJob(job.managed_job_id, { status: job.status === "active" ? "paused" : "active" })}>
-                            {job.status === "active" ? "Pause" : "Resume"}
-                          </button>
-                          <button className="decision-button reject" type="button" onClick={() => void deleteJob(job.managed_job_id)}>
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="job-item">
-                      <strong>No saved jobs yet</strong>
-                      <span>Add one job to control how monitoring should run.</span>
-                      <p>Jobs keep trigger type, schedule, status, and recent execution history here.</p>
-                    </div>
-                  )}
-                </article>
-              </div>
+                </div>
+              ) : null}
 
               {managementStatus ? (
                 <div className={`notice ${managementStatus.tone}`}>
@@ -1730,20 +1646,25 @@ export function DemoWorkspace() {
                 </div>
               ) : null}
 
-              <div className="library-list">
+              <div className="sources-workspace">
                 {workspace?.source_cards.length ? (
                   workspace.source_cards.map((source) => (
-                    <article className={`library-item ${focusedSourceRef === source.source_ref ? "current" : ""}`} key={source.source_ref}>
-                      <strong>{source.label}</strong>
-                      <span>
-                        {sourceKindLabel(source.source_kind)} · {source.status} · Received {formatTimestamp(source.created_at)}
-                      </span>
+                    <article className={`source-asset ${focusedSourceRef === source.source_ref ? "current" : ""}`} key={source.source_ref}>
+                      <div className="operator-head">
+                        <div>
+                          <strong>{source.label}</strong>
+                          <span>
+                            {sourceKindLabel(source.source_kind)} · Last update {formatTimestamp(source.created_at)}
+                          </span>
+                        </div>
+                        <span className="asset-badge">{source.signal_count} signals</span>
+                      </div>
                       <div className="task-block">
-                        <span>Key takeaway</span>
+                        <span>Key change</span>
                         <p>{source.key_takeaway}</p>
                       </div>
                       <div className="task-block">
-                        <span>Business impact</span>
+                        <span>Impact</span>
                         <p>{source.business_impact}</p>
                       </div>
                       <div className="summary-stack">
@@ -1752,8 +1673,8 @@ export function DemoWorkspace() {
                           <strong>{confidenceLabel(source.confidence)} ({source.confidence.toFixed(2)})</strong>
                         </div>
                         <div className="summary-row">
-                          <span>Used in checklist</span>
-                          <strong>{source.last_used_in_checklist ? "Yes" : "No"}</strong>
+                          <span>Used in</span>
+                          <strong>{source.linked_tasks.length ? `Task #${Math.min(source.linked_tasks.length, 3)}` : "Knowledge only"}</strong>
                         </div>
                       </div>
                       <div className="task-block">
@@ -1765,7 +1686,7 @@ export function DemoWorkspace() {
                             ))}
                           </ul>
                         ) : (
-                          <p>No checklist task is currently linked to this source.</p>
+                          <p>This source is improving the market brief even though no checklist task depends on it yet.</p>
                         )}
                       </div>
                       <div className="task-actions compact-actions">
@@ -1779,11 +1700,7 @@ export function DemoWorkspace() {
                         >
                           View extracted knowledge
                         </button>
-                        <button
-                          className="decision-button"
-                          type="button"
-                          onClick={() => void updateIngestedSource(source.source_ref, { action: "reprocess" })}
-                        >
+                        <button className="decision-button" type="button" onClick={() => void updateIngestedSource(source.source_ref, { action: "reprocess" })}>
                           Reprocess
                         </button>
                         {editingIngestedSourceRef === source.source_ref ? (
@@ -1802,7 +1719,7 @@ export function DemoWorkspace() {
                                 })
                               }
                             >
-                              Save metadata
+                              Save
                             </button>
                             <button
                               className="decision-button"
@@ -1824,30 +1741,93 @@ export function DemoWorkspace() {
                               setIngestedSourceLabel(source.label);
                             }}
                           >
-                            Edit metadata
+                            Edit
                           </button>
                         )}
-                        <button
-                          className="decision-button reject"
-                          type="button"
-                          onClick={() => void deleteIngestedSource(source.source_ref)}
-                        >
+                        <button className="decision-button reject" type="button" onClick={() => void deleteIngestedSource(source.source_ref)}>
                           Delete
                         </button>
                       </div>
-                      <p>{source.processing_summary}</p>
                     </article>
                   ))
                 ) : (
-                  <article className="library-item">
-                    <strong>No sources recorded yet</strong>
-                    <span>Recent URLs, notes, or extracted file text appear here after ingestion.</span>
-                    <p>Nothing is shown until the worker has processed a real source.</p>
+                  <article className="source-asset empty-asset">
+                    <strong>No sources yet</strong>
+                    <span>Add one competitor page or document.</span>
+                    <p>We’ll monitor it and surface actions when something changes.</p>
+                    <ul>
+                      <li>pricing page</li>
+                      <li>offer page</li>
+                      <li>landing page</li>
+                    </ul>
                   </article>
                 )}
               </div>
 
-              <div className="operator-grid">
+              {workspace?.managed_jobs.length || workspace?.monitor_jobs.length ? (
+                <div className="monitoring-secondary">
+                  <div className="section-head compact">
+                    <div>
+                      <span className="section-kicker">Monitoring</span>
+                      <h3>Jobs</h3>
+                    </div>
+                  </div>
+                  <div className="secondary-assets">
+                    {workspace?.managed_jobs.length ? (
+                      workspace.managed_jobs.map((job) => (
+                        <article className="job-item" key={job.managed_job_id}>
+                          <strong>{job.name}</strong>
+                          <span>
+                            {titleCaseWords(job.trigger_type)} · {job.status}
+                            {job.schedule_text ? ` · ${job.schedule_text}` : ""}
+                          </span>
+                          <p>{job.last_action_summary ?? "No action generated yet."}</p>
+                          <div className="task-actions compact-actions">
+                            <button
+                              className="decision-button adjust"
+                              type="button"
+                              onClick={() => {
+                                setEditingJobId(job.managed_job_id);
+                                setShowJobComposer(true);
+                                setJobForm({ name: job.name, triggerType: job.trigger_type as JobFormState["triggerType"], scheduleText: job.schedule_text ?? "", sourceId: job.source_id ?? "" });
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button className="decision-button" type="button" onClick={() => void updateJob(job.managed_job_id, { status: job.status === "active" ? "paused" : "active" })}>
+                              {job.status === "active" ? "Pause" : "Resume"}
+                            </button>
+                            <button className="decision-button reject" type="button" onClick={() => void deleteJob(job.managed_job_id)}>
+                              Delete
+                            </button>
+                          </div>
+                        </article>
+                      ))
+                    ) : (
+                      workspace.monitor_jobs.map((job) => (
+                        <article className="job-item" key={job.job_name}>
+                          <strong>{job.job_name}</strong>
+                          <span>Status: {job.status}</span>
+                          <p>Last run: {formatTimestamp(job.last_run_at)} · last source: {job.last_source_ref ?? "none"}</p>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          </div>
+
+          <aside className="secondary-column">
+            <section className="panel section-card">
+              <div className="section-head compact">
+                <div>
+                  <span className="section-kicker">Monitoring brief</span>
+                  <h2>What your monitoring workspace is tracking</h2>
+                  <p className="section-subcopy">This panel shows what the worker has seen recently and whether monitoring is active.</p>
+                </div>
+              </div>
+              <div className="secondary-assets">
                 <article className="operator-card">
                   <div className="operator-head">
                     <h3>Recent Signals</h3>
@@ -1863,8 +1843,8 @@ export function DemoWorkspace() {
                   ) : (
                     <div className="job-item">
                       <strong>No source activity yet</strong>
-                      <span>Submit one URL, one text block, or one file to create the first activity trace.</span>
-                      <p>The system will show what it actually ingested, not a fabricated source list.</p>
+                      <span>Add one source and the worker will start showing real signal changes here.</span>
+                      <p>This panel stays grounded in actual monitoring activity, not placeholders.</p>
                     </div>
                   )}
                 </article>
@@ -1884,8 +1864,8 @@ export function DemoWorkspace() {
                   ) : (
                     <div className="job-item">
                       <strong>No monitoring activity yet</strong>
-                      <span>This panel fills from real worker state.</span>
-                      <p>It will show recurring observation activity after the first ingested source is processed.</p>
+                      <span>Monitoring becomes visible after the first source is ingested.</span>
+                      <p>You’ll see recurring observation activity here once a saved source or job runs again.</p>
                     </div>
                   )}
                 </article>

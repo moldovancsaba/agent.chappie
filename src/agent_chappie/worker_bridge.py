@@ -550,6 +550,7 @@ def build_ingested_source_cards(
                     else "Source extracted and stored"
                 ),
                 "last_used_in_checklist": bool(row.get("last_used_in_checklist")),
+                "signal_count": signal_count,
                 "key_takeaway": row.get("key_takeaway") or derive_source_takeaway(row, knowledge_cards),
                 "business_impact": row.get("business_impact") or derive_source_business_impact(row, knowledge_cards),
                 "linked_tasks": parse_json_list(row.get("linked_task_titles_json")),

@@ -30,6 +30,7 @@ export type WorkerWorkspacePayload = {
     status: string;
     processing_summary: string;
     last_used_in_checklist: boolean;
+    signal_count: number;
     key_takeaway: string;
     business_impact: string;
     linked_tasks: string[];

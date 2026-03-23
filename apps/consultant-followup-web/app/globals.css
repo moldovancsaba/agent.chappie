@@ -711,6 +711,89 @@ textarea {
   gap: 12px;
 }
 
+.monitoring-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.operator-composer {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(42, 36, 24, 0.1);
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.secondary-composer {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.compact-form {
+  margin-bottom: 0;
+}
+
+.optional-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.optional-fields summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.optional-fields input {
+  margin-top: 10px;
+}
+
+.sources-workspace,
+.secondary-assets {
+  display: grid;
+  gap: 14px;
+}
+
+.source-asset {
+  padding: 18px;
+  border-radius: 22px;
+  background: var(--surface-strong);
+  border: 1px solid rgba(42, 36, 24, 0.08);
+}
+
+.source-asset.current {
+  border-color: rgba(15, 105, 93, 0.18);
+}
+
+.empty-asset ul {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.asset-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(15, 105, 93, 0.12);
+  color: var(--ok);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.monitoring-secondary {
+  margin-top: 20px;
+  display: grid;
+  gap: 12px;
+}
+
 .management-form {
   display: grid;
   gap: 10px;
@@ -757,6 +840,10 @@ textarea {
   .guided-grid,
   .guidance-columns {
     grid-template-columns: 1fr;
+  }
+
+  .monitoring-actions {
+    flex-direction: column;
   }
 
   .page-shell {
