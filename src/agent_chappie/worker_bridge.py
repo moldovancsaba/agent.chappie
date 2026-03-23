@@ -11,13 +11,21 @@ from pathlib import Path
 from typing import Any
 
 from agent_chappie.local_store import (
+    create_managed_job,
+    create_managed_source,
+    delete_managed_job,
+    delete_managed_source,
     fetch_knowledge_rows,
     initialize_local_store,
     insert_observations,
+    list_managed_jobs,
+    list_managed_sources,
     list_monitor_rows,
     list_recent_observations,
     list_recent_source_snapshots,
     save_source_snapshot,
+    update_managed_job,
+    update_managed_source,
     update_monitor_state,
     upsert_knowledge_state,
 )
@@ -29,9 +37,10 @@ from agent_chappie.observation_engine import (
     generate_recommended_tasks,
     normalize_source_package,
     recover_source_context,
+    repair_recommended_tasks,
     utc_now_iso,
 )
-from agent_chappie.validation import validate_job_request, validate_job_result
+from agent_chappie.validation import ValidationError, validate_job_request, validate_job_result
 
 
 @dataclass
@@ -74,6 +83,14 @@ def create_server(config: WorkerBridgeConfig) -> ThreadingHTTPServer:
                     project_id = parts[1]
                     self._send_json(HTTPStatus.OK, build_workspace_payload(project_id, config))
                     return
+                if len(parts) == 3 and parts[2] == "sources":
+                    project_id = parts[1]
+                    self._send_json(HTTPStatus.OK, {"sources": list_managed_sources(project_id, path=config.local_db_path)})
+                    return
+                if len(parts) == 3 and parts[2] == "jobs":
+                    project_id = parts[1]
+                    self._send_json(HTTPStatus.OK, {"jobs": list_managed_jobs(project_id, path=config.local_db_path)})
+                    return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
@@ -94,7 +111,27 @@ def create_server(config: WorkerBridgeConfig) -> ThreadingHTTPServer:
                     )
                 return
 
+            if self.path.startswith("/projects/"):
+                try:
+                    content_length = int(self.headers.get("content-length", "0"))
+                    raw = self.rfile.read(content_length) if content_length else b"{}"
+                    payload = json.loads(raw or b"{}")
+                    response, status = process_management_request(self.command, self.path, payload, config)
+                    self._send_json(status, response)
+                except Exception as exc:  # noqa: BLE001
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": "worker_management_failed", "detail": str(exc)},
+                    )
+                return
+
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
+        def do_PATCH(self) -> None:  # noqa: N802
+            self.do_POST()
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            self.do_POST()
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
             return
@@ -135,19 +172,37 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     result_payload = generate_recommended_tasks(source_package, aggregated or observations)
 
     if "recommended_tasks" in result_payload:
-        job_result = validate_job_result(
-            {
-                "job_id": job_request["job_id"],
-                "app_id": job_request["app_id"],
-                "project_id": job_request["project_id"],
-                "status": "complete",
-                "completed_at": utc_now_iso(),
-                "result_payload": result_payload,
-                "decision_summary": {"route": "proceed", "confidence": 0.82},
-                "trace_run_id": f"worker-{job_request['job_id']}",
-                "trace_refs": [observation["signal_id"] for observation in observations],
-            }
-        )
+        result_document = {
+            "job_id": job_request["job_id"],
+            "app_id": job_request["app_id"],
+            "project_id": job_request["project_id"],
+            "status": "complete",
+            "completed_at": utc_now_iso(),
+            "result_payload": result_payload,
+            "decision_summary": {"route": "proceed", "confidence": 0.82},
+            "trace_run_id": f"worker-{job_request['job_id']}",
+            "trace_refs": [observation["signal_id"] for observation in observations],
+        }
+        try:
+            job_result = validate_job_result(result_document)
+        except ValidationError:
+            repaired_payload = repair_recommended_tasks(source_package, observations, result_payload)
+            if repaired_payload is None:
+                job_result = validate_job_result(
+                    {
+                        "job_id": job_request["job_id"],
+                        "app_id": job_request["app_id"],
+                        "project_id": job_request["project_id"],
+                        "status": "blocked",
+                        "completed_at": utc_now_iso(),
+                        "result_payload": {
+                            "reason": "insufficient_output_quality",
+                        },
+                    }
+                )
+            else:
+                result_document["result_payload"] = repaired_payload
+                job_result = validate_job_result(result_document)
     else:
         job_result = validate_job_result(
             {
@@ -165,6 +220,66 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         "observation_count": len(observations),
         "observation_refs": [observation["signal_id"] for observation in observations],
     }
+
+
+def process_management_request(
+    method: str,
+    path: str,
+    payload: dict[str, Any],
+    config: WorkerBridgeConfig,
+) -> tuple[dict[str, Any], HTTPStatus]:
+    parts = path.strip("/").split("/")
+    if len(parts) < 3 or parts[0] != "projects":
+        return {"error": "not_found"}, HTTPStatus.NOT_FOUND
+
+    project_id = parts[1]
+    resource = parts[2]
+
+    if resource == "sources":
+        if method == "POST" and len(parts) == 3:
+            create_managed_source(
+                {
+                    "source_id": payload["source_id"],
+                    "project_id": project_id,
+                    "label": payload["label"],
+                    "source_kind": payload["source_kind"],
+                    "content_text": payload["content_text"],
+                    "status": payload.get("status", "active"),
+                },
+                path=config.local_db_path,
+            )
+            return {"sources": list_managed_sources(project_id, path=config.local_db_path)}, HTTPStatus.OK
+        if method == "PATCH" and len(parts) == 4:
+            update_managed_source(parts[3], payload, path=config.local_db_path)
+            return {"sources": list_managed_sources(project_id, path=config.local_db_path)}, HTTPStatus.OK
+        if method == "DELETE" and len(parts) == 4:
+            delete_managed_source(parts[3], path=config.local_db_path)
+            return {"sources": list_managed_sources(project_id, path=config.local_db_path)}, HTTPStatus.OK
+
+    if resource == "jobs":
+        if method == "POST" and len(parts) == 3:
+            create_managed_job(
+                {
+                    "managed_job_id": payload["managed_job_id"],
+                    "project_id": project_id,
+                    "name": payload["name"],
+                    "trigger_type": payload["trigger_type"],
+                    "schedule_text": payload.get("schedule_text"),
+                    "status": payload.get("status", "active"),
+                    "source_id": payload.get("source_id"),
+                    "last_runs": payload.get("last_runs", []),
+                },
+                path=config.local_db_path,
+            )
+            return {"jobs": list_managed_jobs(project_id, path=config.local_db_path)}, HTTPStatus.OK
+        if method == "PATCH" and len(parts) == 4:
+            update_managed_job(parts[3], payload, path=config.local_db_path)
+            return {"jobs": list_managed_jobs(project_id, path=config.local_db_path)}, HTTPStatus.OK
+        if method == "DELETE" and len(parts) == 4:
+            delete_managed_job(parts[3], path=config.local_db_path)
+            return {"jobs": list_managed_jobs(project_id, path=config.local_db_path)}, HTTPStatus.OK
+
+    return {"error": "not_found"}, HTTPStatus.NOT_FOUND
 
 
 def enqueue_source_package(source: SourcePackage, config: WorkerBridgeConfig) -> None:
@@ -241,6 +356,8 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             }
             for row in monitor_rows[:5]
         ],
+        "managed_sources": list_managed_sources(project_id, path=config.local_db_path),
+        "managed_jobs": list_managed_jobs(project_id, path=config.local_db_path),
     }
 
 

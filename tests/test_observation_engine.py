@@ -21,7 +21,9 @@ from agent_chappie.observation_engine import (
     extract_observations,
     generate_recommended_tasks,
     infer_context,
+    repair_recommended_tasks,
 )
+from agent_chappie.validation import ValidationError, validate_job_result
 from agent_chappie.local_store import (
     fetch_knowledge_rows,
     initialize_local_store,
@@ -156,6 +158,94 @@ class ObservationEngineTests(unittest.TestCase):
         extracted = extract_uploaded_file_text(source)
         self.assertIn("pricing_notes.docx", extracted)
         self.assertIn("FlowOps raised U14 prices by 15%", extracted)
+
+    def test_repair_recommended_tasks_rewrites_vague_expected_advantage(self) -> None:
+        source = SourcePackage(
+            project_id="project_repair",
+            source_kind="manual_text",
+            project_summary="North Cluster soccer academy",
+            raw_text="FlowOps raised U14 prices by 15% and Essex County Club launched a free-trial campaign.",
+            source_ref="source_repair",
+        )
+        observations = extract_observations(source)
+        payload = {
+            "recommended_tasks": [
+                {
+                    "rank": 1,
+                    "title": "Launch a 7-day switch campaign with a free trial for U14 families before Essex County Club and FlowOps reset the north cluster market",
+                    "why_now": "FlowOps raised pricing while Essex County Club pushed free trial messaging in north cluster.",
+                    "expected_advantage": "Creates advantage quickly.",
+                    "evidence_refs": [observations[0]["signal_id"], observations[1]["signal_id"]],
+                },
+                {
+                    "rank": 2,
+                    "title": "Update the U14 pricing page and launch a 7-day comparison offer against FlowOps",
+                    "why_now": "FlowOps changed pricing in north cluster: FlowOps raised U14 prices by 15%.",
+                    "expected_advantage": "Improves positioning.",
+                    "evidence_refs": [observations[0]["signal_id"]],
+                },
+                {
+                    "rank": 3,
+                    "title": "Add a free trial response to the enrollment page this week",
+                    "why_now": "Essex County Club launched a free-trial campaign in north cluster.",
+                    "expected_advantage": "Helps a lot.",
+                    "evidence_refs": [observations[1]["signal_id"]],
+                },
+            ],
+            "summary": "Three actions.",
+        }
+        with self.assertRaises(ValidationError):
+            validate_job_result(
+                {
+                    "job_id": "job_bad",
+                    "app_id": "app",
+                    "project_id": source.project_id,
+                    "status": "complete",
+                    "completed_at": "2026-03-23T12:00:00Z",
+                    "result_payload": payload,
+                }
+            )
+        repaired = repair_recommended_tasks(source, observations, payload)
+        self.assertIsNotNone(repaired)
+        assert repaired is not None
+        self.assertTrue(any("conversion" in task["expected_advantage"].lower() or "intake" in task["expected_advantage"].lower() for task in repaired["recommended_tasks"]))
+
+    def test_repair_recommended_tasks_returns_none_when_evidence_missing(self) -> None:
+        source = SourcePackage(
+            project_id="project_repair_none",
+            source_kind="manual_text",
+            project_summary="North Cluster soccer academy",
+            raw_text="FlowOps raised U14 prices by 15%.",
+            source_ref="source_repair_none",
+        )
+        observations = extract_observations(source)
+        payload = {
+            "recommended_tasks": [
+                {
+                    "rank": 1,
+                    "title": "Launch a 7-day switch campaign this week",
+                    "why_now": "FlowOps raised pricing in north cluster.",
+                    "expected_advantage": "Better outcome.",
+                    "evidence_refs": ["missing_signal"],
+                },
+                {
+                    "rank": 2,
+                    "title": "Update the pricing page this week",
+                    "why_now": "FlowOps raised pricing in north cluster.",
+                    "expected_advantage": "Better outcome.",
+                    "evidence_refs": ["missing_signal"],
+                },
+                {
+                    "rank": 3,
+                    "title": "Add a comparison offer this week",
+                    "why_now": "FlowOps raised pricing in north cluster.",
+                    "expected_advantage": "Better outcome.",
+                    "evidence_refs": ["missing_signal"],
+                },
+            ],
+            "summary": "Three actions.",
+        }
+        self.assertIsNone(repair_recommended_tasks(source, observations, payload))
 
     def test_local_store_persists_observations_and_knowledge(self) -> None:
         source = SourcePackage(

@@ -68,6 +68,37 @@ def initialize_local_store(path: str | None = None) -> str:
               details_json text,
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+
+            create table if not exists managed_sources (
+              source_id text primary key,
+              project_id text not null,
+              label text not null,
+              source_kind text not null,
+              content_text text not null,
+              status text not null,
+              last_run_at text,
+              last_result_status text,
+              last_result_summary text,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            create table if not exists managed_jobs (
+              managed_job_id text primary key,
+              project_id text not null,
+              name text not null,
+              trigger_type text not null,
+              schedule_text text,
+              status text not null,
+              source_id text,
+              last_run_at text,
+              last_result_status text,
+              last_action_summary text,
+              last_expected_impact text,
+              last_runs_json text,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
             """
         )
     return db_path
@@ -340,3 +371,217 @@ def list_monitor_rows(path: str | None = None) -> list[dict[str, Any]]:
             """
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_managed_sources(project_id: str, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              source_id,
+              project_id,
+              label,
+              source_kind,
+              content_text,
+              status,
+              last_run_at,
+              last_result_status,
+              last_result_summary,
+              created_at,
+              updated_at
+            from managed_sources
+            where project_id = ?
+            order by updated_at desc
+            """,
+            (project_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_managed_source(source: dict[str, Any], path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into managed_sources (
+              source_id,
+              project_id,
+              label,
+              source_kind,
+              content_text,
+              status,
+              last_run_at,
+              last_result_status,
+              last_result_summary
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source["source_id"],
+                source["project_id"],
+                source["label"],
+                source["source_kind"],
+                source["content_text"],
+                source["status"],
+                source.get("last_run_at"),
+                source.get("last_result_status"),
+                source.get("last_result_summary"),
+            ),
+        )
+
+
+def update_managed_source(source_id: str, updates: dict[str, Any], path: str | None = None) -> None:
+    if not updates:
+        return
+    allowed = {
+        "label",
+        "source_kind",
+        "content_text",
+        "status",
+        "last_run_at",
+        "last_result_status",
+        "last_result_summary",
+    }
+    assignments = []
+    params: list[Any] = []
+    for key, value in updates.items():
+        if key not in allowed:
+            continue
+        assignments.append(f"{key} = ?")
+        params.append(value)
+    if not assignments:
+        return
+    assignments.append("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")
+    params.append(source_id)
+    with _connect(path) as connection:
+        connection.execute(
+            f"""
+            update managed_sources
+            set {', '.join(assignments)}
+            where source_id = ?
+            """,
+            params,
+        )
+
+
+def delete_managed_source(source_id: str, path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute("delete from managed_sources where source_id = ?", (source_id,))
+
+
+def list_managed_jobs(project_id: str, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              managed_job_id,
+              project_id,
+              name,
+              trigger_type,
+              schedule_text,
+              status,
+              source_id,
+              last_run_at,
+              last_result_status,
+              last_action_summary,
+              last_expected_impact,
+              last_runs_json,
+              created_at,
+              updated_at
+            from managed_jobs
+            where project_id = ?
+            order by updated_at desc
+            """,
+            (project_id,),
+        ).fetchall()
+    jobs = [dict(row) for row in rows]
+    for job in jobs:
+      if job.get("last_runs_json"):
+        try:
+          job["last_runs"] = json.loads(job["last_runs_json"])
+        except json.JSONDecodeError:
+          job["last_runs"] = []
+      else:
+        job["last_runs"] = []
+    return jobs
+
+
+def create_managed_job(job: dict[str, Any], path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into managed_jobs (
+              managed_job_id,
+              project_id,
+              name,
+              trigger_type,
+              schedule_text,
+              status,
+              source_id,
+              last_run_at,
+              last_result_status,
+              last_action_summary,
+              last_expected_impact,
+              last_runs_json
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job["managed_job_id"],
+                job["project_id"],
+                job["name"],
+                job["trigger_type"],
+                job.get("schedule_text"),
+                job["status"],
+                job.get("source_id"),
+                job.get("last_run_at"),
+                job.get("last_result_status"),
+                job.get("last_action_summary"),
+                job.get("last_expected_impact"),
+                json.dumps(job.get("last_runs", [])),
+            ),
+        )
+
+
+def update_managed_job(managed_job_id: str, updates: dict[str, Any], path: str | None = None) -> None:
+    if not updates:
+        return
+    allowed = {
+        "name",
+        "trigger_type",
+        "schedule_text",
+        "status",
+        "source_id",
+        "last_run_at",
+        "last_result_status",
+        "last_action_summary",
+        "last_expected_impact",
+        "last_runs_json",
+    }
+    assignments = []
+    params: list[Any] = []
+    for key, value in updates.items():
+        if key == "last_runs":
+            key = "last_runs_json"
+            value = json.dumps(value)
+        if key not in allowed:
+            continue
+        assignments.append(f"{key} = ?")
+        params.append(value)
+    if not assignments:
+        return
+    assignments.append("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")
+    params.append(managed_job_id)
+    with _connect(path) as connection:
+        connection.execute(
+            f"""
+            update managed_jobs
+            set {', '.join(assignments)}
+            where managed_job_id = ?
+            """,
+            params,
+        )
+
+
+def delete_managed_job(managed_job_id: str, path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute("delete from managed_jobs where managed_job_id = ?", (managed_job_id,))

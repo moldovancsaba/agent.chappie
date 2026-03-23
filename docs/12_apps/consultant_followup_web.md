@@ -72,6 +72,12 @@ The app-side bridge entrypoint is:
 
 - `POST /api/jobs`
 - `GET /api/projects/[projectId]/workspace`
+- `POST /api/projects/[projectId]/sources`
+- `PATCH /api/projects/[projectId]/sources/[sourceId]`
+- `DELETE /api/projects/[projectId]/sources/[sourceId]`
+- `POST /api/projects/[projectId]/jobs`
+- `PATCH /api/projects/[projectId]/jobs/[jobId]`
+- `DELETE /api/projects/[projectId]/jobs/[jobId]`
 
 The worker remains protected by a shared-secret header and returns only user-facing ranked tasks.
 The app sends only raw source material and job identity. It does not send competitor, region, or project-summary fields.
@@ -108,6 +114,22 @@ The app must not collect or fabricate general project metadata that belongs in t
 
 The frontend must not invent source inventory or recurring job history.
 The frontend also restores the latest saved project and result for the current anonymous session through `GET /api/session/[sessionId]/state`.
+
+`Sources & Jobs` is a real management surface, not a passive readout. It now supports:
+
+- add, edit, pause, resume, and delete for sources
+- add, edit, pause, resume, and delete for jobs
+- visible last run, last result summary, and current status for sources
+- visible trigger type, schedule, last three runs, last action summary, and expected impact summary for jobs
+
+The app remains thin: these CRUD operations proxy to the Mac mini worker and read back worker-managed state.
+
+## Output safety
+
+- `expected_advantage` remains strictly validated for measurable business effect
+- weak but repairable task impacts are rewritten on the worker before final validation
+- if repair is not possible, the worker must return a blocked result such as `insufficient_output_quality`
+- the UI must not expose raw internal validation errors to the user
 
 ## Local development
 

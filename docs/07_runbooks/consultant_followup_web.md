@@ -56,6 +56,8 @@ The Mac mini worker is responsible for:
 - normalizing ingested source material
 - recovering project context from the local brain
 - generating recent source/activity data for the app
+- repairing weak-but-salvageable task impacts before final validation
+- returning a blocked result instead of leaking raw validation failures
 
 ## Neon mode
 
@@ -95,6 +97,8 @@ This local SQLite database stores:
 - `source_snapshots`
 - `project_knowledge_state`
 - `monitor_state`
+- `managed_sources`
+- `managed_jobs`
 
 ## Vercel deployment notes
 
@@ -105,10 +109,27 @@ This local SQLite database stores:
 - `POST /api/jobs` is the app-side bridge entrypoint
 - `GET /api/session/[sessionId]/state` restores the latest saved project and result for the current anonymous session
 - `GET /api/projects/[projectId]/workspace` reads worker-generated source and activity state
+- `POST /api/projects/[projectId]/sources` adds a managed source
+- `PATCH /api/projects/[projectId]/sources/[sourceId]` edits or pauses a managed source
+- `DELETE /api/projects/[projectId]/sources/[sourceId]` removes a managed source
+- `POST /api/projects/[projectId]/jobs` adds a managed job
+- `PATCH /api/projects/[projectId]/jobs/[jobId]` edits or pauses a managed job
+- `DELETE /api/projects/[projectId]/jobs/[jobId]` removes a managed job
 - in worker mode, the app forwards jobs to the Mac mini worker over HTTP with `x-agent-shared-secret`
 - the deployed app should remain free of sample business data and fabricated context entries
 - supported document uploads are currently: `.txt`, `.md`, `.csv`, `.pdf`, `.docx`
 - unsupported document or media formats should be rejected honestly, not shown as parsed
+
+## Sources & Jobs behavior
+
+The app now treats `Sources & Jobs` as a management surface:
+
+- sources can be added, edited, paused, resumed, and deleted
+- jobs can be added, edited, paused, resumed, and deleted
+- source cards expose current status, last run, and last extracted summary
+- job cards expose trigger type, schedule, last three runs, last action summary, and expected impact summary
+
+The app must never invent this state locally. All CRUD actions proxy to the worker and re-render from worker responses.
 
 ## Auth status
 

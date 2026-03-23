@@ -44,6 +44,35 @@ export type WorkerWorkspacePayload = {
     last_run_at: string | null;
     last_source_ref: string | null;
   }>;
+  managed_sources: Array<{
+    source_id: string;
+    project_id: string;
+    label: string;
+    source_kind: string;
+    content_text: string;
+    status: string;
+    last_run_at: string | null;
+    last_result_status: string | null;
+    last_result_summary: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+  managed_jobs: Array<{
+    managed_job_id: string;
+    project_id: string;
+    name: string;
+    trigger_type: string;
+    schedule_text: string | null;
+    status: string;
+    source_id: string | null;
+    last_run_at: string | null;
+    last_result_status: string | null;
+    last_action_summary: string | null;
+    last_expected_impact: string | null;
+    last_runs: Array<{ at: string; status: string; summary: string }>;
+    created_at: string;
+    updated_at: string;
+  }>;
 };
 
 export async function runWorkerJob(input: {
@@ -119,6 +148,8 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
       },
       knowledge_summary: [],
       monitor_jobs: [],
+      managed_sources: [],
+      managed_jobs: [],
     };
   }
 
@@ -137,4 +168,82 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
     throw new Error(payload.detail ?? "Worker bridge failed to return workspace data.");
   }
   return payload as WorkerWorkspacePayload;
+}
+
+async function sendWorkerManagementRequest(
+  path: string,
+  method: "POST" | "PATCH" | "DELETE",
+  payload: Record<string, unknown>
+) {
+  if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
+    throw new Error("Worker management is unavailable in demo mode.");
+  }
+
+  const response = await fetch(`${env.agentApiBaseUrl.replace(/\/$/, "")}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "x-agent-shared-secret": env.agentSharedSecret ?? "",
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body.detail ?? "Worker management request failed.");
+  }
+  return body;
+}
+
+export async function createWorkerSource(
+  projectId: string,
+  payload: { source_id: string; label: string; source_kind: string; content_text: string; status?: string }
+) {
+  return sendWorkerManagementRequest(`/projects/${encodeURIComponent(projectId)}/sources`, "POST", payload);
+}
+
+export async function updateWorkerSource(projectId: string, sourceId: string, payload: Record<string, unknown>) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}`,
+    "PATCH",
+    payload
+  );
+}
+
+export async function deleteWorkerSource(projectId: string, sourceId: string) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}`,
+    "DELETE",
+    {}
+  );
+}
+
+export async function createWorkerJob(
+  projectId: string,
+  payload: {
+    managed_job_id: string;
+    name: string;
+    trigger_type: string;
+    schedule_text?: string;
+    status?: string;
+    source_id?: string;
+  }
+) {
+  return sendWorkerManagementRequest(`/projects/${encodeURIComponent(projectId)}/jobs`, "POST", payload);
+}
+
+export async function updateWorkerJob(projectId: string, jobId: string, payload: Record<string, unknown>) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(jobId)}`,
+    "PATCH",
+    payload
+  );
+}
+
+export async function deleteWorkerJob(projectId: string, jobId: string) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(jobId)}`,
+    "DELETE",
+    {}
+  );
 }

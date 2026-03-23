@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from agent_chappie.validation import validate_job_result, validate_system_observation
+from agent_chappie.validation import ValidationError, validate_job_result, validate_system_observation
 
 
 @dataclass
@@ -157,6 +157,51 @@ def generate_recommended_tasks(
         if len(tasks) == 3
         else "High-confidence competitive actions were prioritized from current source input and stored market observations.",
     }
+
+
+def repair_recommended_tasks(
+    source: SourcePackage,
+    observations: list[dict[str, Any]],
+    result_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    tasks = result_payload.get("recommended_tasks")
+    if not isinstance(tasks, list):
+        return None
+    observation_lookup = {observation["signal_id"]: observation for observation in observations}
+    repaired_tasks: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            return None
+        repaired = dict(task)
+        evidence_observations = [
+            observation_lookup[signal_id]
+            for signal_id in repaired.get("evidence_refs", [])
+            if signal_id in observation_lookup
+        ]
+        if not evidence_observations:
+            return None
+        repaired["expected_advantage"] = rewrite_expected_advantage(
+            source,
+            repaired.get("expected_advantage", ""),
+            evidence_observations,
+        )
+        repaired_tasks.append(repaired)
+    repaired_payload = dict(result_payload)
+    repaired_payload["recommended_tasks"] = repaired_tasks
+    try:
+        validate_job_result(
+            {
+                "job_id": "repair-check",
+                "app_id": "repair-check",
+                "project_id": source.project_id,
+                "status": "complete",
+                "completed_at": utc_now_iso(),
+                "result_payload": repaired_payload,
+            }
+        )
+    except ValidationError:
+        return None
+    return repaired_payload
 
 
 def build_task_candidates(source: SourcePackage, observations: list[dict[str, Any]]) -> list[TaskCandidate]:
@@ -831,6 +876,51 @@ def measurable_advantage(domain: str, advantage_type: str) -> str:
     }
     lookup = academy_advantages if domain == "academy" else general_advantages
     return lookup[advantage_type]
+
+
+def rewrite_expected_advantage(
+    source: SourcePackage,
+    current_value: str,
+    evidence_observations: list[dict[str, Any]],
+) -> str:
+    normalized = current_value.strip().lower().rstrip(".")
+    measurable_tokens = ("enrollment", "revenue", "cost", "margin", "conversion", "win rate", "positioning", "retention", "intake")
+    vague_advantage_phrases = {
+        "improve positioning",
+        "improves positioning",
+        "creates advantage quickly",
+        "create advantage quickly",
+        "helps a lot",
+        "better outcome",
+        "creates advantage",
+        "create advantage",
+    }
+    if any(token in normalized for token in measurable_tokens) and normalized not in vague_advantage_phrases:
+        return current_value
+
+    domain = infer_domain(source)
+    signal_types = {observation["signal_type"] for observation in evidence_observations}
+    if {"closure", "asset_sale"} & signal_types:
+        return (
+            "Acquires players, equipment, and enrollment capacity at low cost before closure finalizes, creating immediate revenue upside without waiting for organic expansion."
+            if domain == "academy"
+            else "Captures customers, assets, or operating capacity at low cost before the distressed competitor exits, creating near-term revenue and cost advantage."
+        )
+    if "pricing_change" in signal_types and "offer" in signal_types:
+        return (
+            "Captures switching parents before the intake window by giving price-sensitive families one visible alternative instead of losing them to competitor price and offer pressure."
+            if domain == "academy"
+            else "Captures price-sensitive buyers before the active buying window closes and improves conversion against competitor price and offer pressure."
+        )
+    if "pricing_change" in signal_types:
+        return measurable_advantage(domain, "pricing")
+    if "offer" in signal_types or "messaging_shift" in signal_types or "proof_signal" in signal_types:
+        return measurable_advantage(domain, "positioning")
+    if "opening" in signal_types:
+        return measurable_advantage(domain, "conversion")
+    if "vendor_adoption" in signal_types:
+        return measurable_advantage(domain, "retention")
+    return current_value
 
 
 def extract_action_detail(signal_phrase: str) -> dict[str, str | None]:

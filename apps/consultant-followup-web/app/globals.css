@@ -677,6 +677,38 @@ textarea {
   gap: 12px;
 }
 
+.management-form {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.management-form input,
+.management-form textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(42, 36, 24, 0.12);
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--ink);
+}
+
+.management-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.compact-actions {
+  margin-top: 12px;
+}
+
+.compact-run-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .library-item.current {
   border-color: rgba(15, 105, 93, 0.18);
 }
