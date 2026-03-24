@@ -684,6 +684,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
     knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
     draft_segments = list_draft_segments(project_id, path=config.local_db_path)
+    draft_segments = [normalize_legacy_product_voice_in_segment(segment) for segment in draft_segments]
     if not draft_segments and (source_rows or observation_rows or knowledge_cards or fact_chips):
         draft_segments = build_draft_segments(
             project_id,
@@ -941,8 +942,8 @@ def build_knowledge_cards(
             "Market Summary",
             "What the system currently knows about this market or project from the ingested sources.",
             market_items or ["No market synthesis has been derived yet."],
-            "The current source set is building a market picture even if there is no immediate checklist move yet.",
-            "Use this summary to decide whether the market is shifting toward pricing pressure, offer pressure, or proof-based positioning pressure.",
+            "We are building a market picture from your source set even if there is no immediate checklist move yet.",
+            "Use this summary to decide whether your market is shifting toward pricing pressure, offer pressure, or proof-based positioning pressure.",
             [
                 "Compare your current positioning against the strongest pattern in the source set.",
                 "Add one denser source if the market story still feels incomplete.",
@@ -1111,7 +1112,7 @@ def build_draft_segments(
             f"segment:{card['knowledge_id']}",
             card["knowledge_id"],
             card["title"],
-            f"{card['insight']} {card['implication']}",
+            normalize_legacy_product_voice(f"{card['insight']} {card['implication']}"),
             card.get("source_refs", []),
             card.get("evidence_refs", []),
             min(0.99, 0.45 + float(card["confidence"])),
@@ -1122,7 +1123,7 @@ def build_draft_segments(
                 f"segment:{card['knowledge_id']}:{index + 1}",
                 card["knowledge_id"],
                 card["title"],
-                item,
+                normalize_legacy_product_voice(item),
                 card.get("source_refs", []),
                 card.get("evidence_refs", []),
                 min(0.95, 0.38 + float(card["confidence"])),
@@ -1613,6 +1614,29 @@ def select_diverse_tasks(tasks: list[dict[str, Any]], target_count: int) -> list
 
 def normalize_task_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def normalize_legacy_product_voice(value: str) -> str:
+    text = str(value or "")
+    replacements = {
+        "The current source set is building a market picture even if there is no immediate checklist move yet.": "We are building a market picture from your source set even if there is no immediate checklist move yet.",
+        "Use this summary to decide whether the market is shifting toward pricing pressure, offer pressure, or proof-based positioning pressure.": "Use this summary to decide whether your market is shifting toward pricing pressure, offer pressure, or proof-based positioning pressure.",
+        "The worker drafted a pricing segment from the source set:": "We drafted a pricing segment from your source set:",
+        "The worker drafted a buyer-pressure segment:": "We drafted a buyer-pressure segment from your source set:",
+        "The worker found a signal gap that blocks a stronger recommendation:": "We found a signal gap that blocks a stronger recommendation:",
+        "The worker drafted an asymmetric opportunity segment:": "We drafted an asymmetric opportunity segment from your source set:",
+        "The worker synthesized a high-importance competitor signal from the source set:": "We synthesized a high-importance competitor signal from your source set:",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def normalize_legacy_product_voice_in_segment(segment: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(segment)
+    normalized["segment_text"] = normalize_legacy_product_voice(str(segment.get("segment_text") or ""))
+    normalized["title"] = normalize_legacy_product_voice(str(segment.get("title") or ""))
+    return normalized
 
 
 def infer_domain_from_sources(source: SourcePackage, fact_chips: list[dict[str, Any]]) -> str:
