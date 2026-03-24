@@ -1114,6 +1114,40 @@ export function DemoWorkspace() {
     });
   }
 
+  async function deleteDraftSegment(
+    segmentId: string,
+    payload: {
+      status: "deleted_silent" | "deleted_with_annotation" | "held_for_later";
+      original_payload?: Record<string, unknown>;
+      reason?: string;
+    }
+  ) {
+    if (!projectId) {
+      return;
+    }
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/draft-segments/${encodeURIComponent(segmentId)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setManagementStatus({ tone: "error", message: body.detail ?? "The draft segment could not be updated." });
+      return;
+    }
+    setWorkspace(body);
+    setKnowledgeDeleteReason((current) => ({ ...current, [segmentId]: "" }));
+    setManagementStatus({
+      tone: "success",
+      message:
+        payload.status === "deleted_with_annotation"
+          ? "Draft segment deleted and recorded as guidance for future generations."
+          : payload.status === "held_for_later"
+            ? "Draft segment held for later."
+            : "Draft segment deleted.",
+    });
+  }
+
   async function updateIngestedSource(sourceRef: string, payload: Record<string, unknown>) {
     if (!projectId) {
       return;
@@ -1966,6 +2000,84 @@ export function DemoWorkspace() {
                             <span>Source refs</span>
                             <strong>{segment.source_refs.length}</strong>
                           </div>
+                        </div>
+                        <div className="task-actions">
+                          <button
+                            className="decision-button reject"
+                            type="button"
+                            onClick={() =>
+                              void deleteDraftSegment(segment.segment_id, {
+                                status: "deleted_silent",
+                                original_payload: {
+                                  title: segment.title,
+                                  summary: segment.segment_text,
+                                  segment_kind: segment.segment_kind,
+                                  source_refs: segment.source_refs,
+                                },
+                              })
+                            }
+                          >
+                            Delete
+                          </button>
+                          <button
+                            className="decision-button reject"
+                            type="button"
+                            onClick={() =>
+                              void deleteDraftSegment(segment.segment_id, {
+                                status: "deleted_with_annotation",
+                                original_payload: {
+                                  title: segment.title,
+                                  summary: segment.segment_text,
+                                  segment_kind: segment.segment_kind,
+                                  source_refs: segment.source_refs,
+                                },
+                                reason: knowledgeDeleteReason[segment.segment_id]?.trim() || undefined,
+                              })
+                            }
+                          >
+                            Delete and teach
+                          </button>
+                          <button
+                            className="decision-button adjust"
+                            type="button"
+                            onClick={() =>
+                              void deleteDraftSegment(segment.segment_id, {
+                                status: "held_for_later",
+                                original_payload: {
+                                  title: segment.title,
+                                  summary: segment.segment_text,
+                                  segment_kind: segment.segment_kind,
+                                  source_refs: segment.source_refs,
+                                },
+                                reason: knowledgeDeleteReason[segment.segment_id]?.trim() || undefined,
+                              })
+                            }
+                          >
+                            Hold for later
+                          </button>
+                          {segment.source_refs[0] ? (
+                            <button
+                              className="decision-button reject"
+                              type="button"
+                              onClick={() => void deleteIngestedSource(segment.source_refs[0])}
+                            >
+                              Remove source and rebuild
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="adjust-shell">
+                          <label htmlFor={`segment-reason-${segment.segment_id}`}>What should We avoid?</label>
+                          <textarea
+                            id={`segment-reason-${segment.segment_id}`}
+                            value={knowledgeDeleteReason[segment.segment_id] ?? ""}
+                            onChange={(event) =>
+                              setKnowledgeDeleteReason((current) => ({
+                                ...current,
+                                [segment.segment_id]: event.target.value,
+                              }))
+                            }
+                            placeholder="Optional for Delete and teach or Hold for later."
+                          />
                         </div>
                       </article>
                     ))}

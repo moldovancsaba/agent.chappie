@@ -14,10 +14,12 @@ if SRC not in sys.path:
 
 from agent_chappie.local_store import (
     initialize_local_store,
+    list_draft_segments,
     list_evidence_units,
     list_generation_memory_rows,
     list_task_feedback_rows,
     save_source_snapshot,
+    upsert_draft_segment_feedback,
     upsert_knowledge_feedback,
 )
 from agent_chappie.observation_engine import SourcePackage, build_source_hash, clean_entity, extract_action_detail
@@ -403,6 +405,40 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertNotIn("proof_signals", knowledge_ids)
             held_segments = [segment for segment in workspace["draft_segments"] if segment["segment_kind"] == "held_knowledge"]
             self.assertTrue(any(segment["title"] == "Proof Signals" for segment in held_segments))
+
+    def test_workspace_hides_deleted_draft_segment(self) -> None:
+        source = SourcePackage(
+            project_id="project_draft_segment_delete",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text="Fortitude AI uses pricing bundles, customer testimonials, and SEO positioning claims.",
+            source_ref="source_draft_segment_delete",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            save_source_snapshot(source.__dict__, build_source_hash(source), db_path)
+            initial_segments = list_draft_segments("project_draft_segment_delete", path=db_path)
+            if not initial_segments:
+                workspace = build_workspace_payload(
+                    "project_draft_segment_delete",
+                    WorkerBridgeConfig(local_db_path=db_path),
+                )
+                initial_segments = workspace["draft_segments"]
+            self.assertTrue(initial_segments)
+            upsert_draft_segment_feedback(
+                project_id="project_draft_segment_delete",
+                segment_id=initial_segments[0]["segment_id"],
+                status="deleted_silent",
+                original_payload={"title": initial_segments[0]["title"]},
+                path=db_path,
+            )
+            workspace = build_workspace_payload(
+                "project_draft_segment_delete",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+            visible_ids = {segment["segment_id"] for segment in workspace["draft_segments"]}
+            self.assertNotIn(initial_segments[0]["segment_id"], visible_ids)
 
     def test_process_job_payload_writes_tasks_from_draft_segments_for_rich_source(self) -> None:
         payload = {

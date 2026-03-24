@@ -419,6 +419,18 @@ export async function deleteWorkerKnowledgeCard(
   );
 }
 
+export async function deleteWorkerDraftSegment(
+  projectId: string,
+  segmentId: string,
+  payload: Record<string, unknown>
+) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/draft-segments/${encodeURIComponent(segmentId)}`,
+    "DELETE",
+    payload
+  );
+}
+
 export async function submitWorkerTaskFeedback(projectId: string, payload: Feedback) {
   return sendWorkerManagementRequest(
     `/projects/${encodeURIComponent(projectId)}/task-feedback`,

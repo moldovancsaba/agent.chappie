@@ -230,6 +230,11 @@ If a stored result still matches known stale legacy task patterns, the app must 
   - silent delete with no teaching signal
   - delete with annotation so We store what to avoid
   - hold-for-later so the card leaves the live surface and returns to draft/parking state
+- draft segment cards must also support:
+  - silent delete
+  - delete with annotation
+  - hold-for-later
+  - source-level rebuild when a linked source still exists
 
 The app remains thin: these CRUD operations proxy to the Mac mini worker and read back worker-managed state.
 

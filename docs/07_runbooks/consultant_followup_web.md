@@ -230,6 +230,11 @@ The app now treats `Sources & Jobs` as a management surface:
   - silent delete without teaching
   - delete with annotation so We record what to avoid
   - hold for later so the card leaves the live surface and returns to draft/parking state
+- draft knowledge segment cards now support the same operator controls:
+  - `Delete`
+  - `Delete and teach`
+  - `Hold for later`
+  - `Remove source and rebuild` when a source still anchors the segment
 
 The app must never invent this state locally. All CRUD actions proxy to the worker and re-render from worker responses.
 Use `We` for the service voice and `You` for the operator in all user-facing copy.

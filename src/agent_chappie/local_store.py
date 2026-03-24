@@ -142,6 +142,16 @@ def initialize_local_store(path: str | None = None) -> str:
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
 
+            create table if not exists draft_segment_feedback (
+              segment_id text not null,
+              project_id text not null,
+              status text not null,
+              reason text,
+              original_payload_json text,
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              primary key (segment_id, project_id)
+            );
+
             create table if not exists task_feedback (
               feedback_id text primary key,
               task_id text,
@@ -681,6 +691,66 @@ def list_draft_segments(project_id: str, limit: int = 24, path: str | None = Non
         segment["source_refs"] = json.loads(segment.pop("source_refs_json") or "[]")
         segment["evidence_refs"] = json.loads(segment.pop("evidence_refs_json") or "[]")
     return segments
+
+
+def upsert_draft_segment_feedback(
+    project_id: str,
+    segment_id: str,
+    *,
+    status: str,
+    reason: str | None = None,
+    original_payload: dict[str, Any] | None = None,
+    path: str | None = None,
+) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into draft_segment_feedback (
+              segment_id,
+              project_id,
+              status,
+              reason,
+              original_payload_json,
+              updated_at
+            )
+            values (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            on conflict(segment_id, project_id) do update set
+              status = excluded.status,
+              reason = excluded.reason,
+              original_payload_json = excluded.original_payload_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                segment_id,
+                project_id,
+                status,
+                reason,
+                json.dumps(original_payload) if original_payload is not None else None,
+            ),
+        )
+
+
+def list_draft_segment_feedback_rows(project_id: str, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              segment_id,
+              project_id,
+              status,
+              reason,
+              original_payload_json,
+              updated_at
+            from draft_segment_feedback
+            where project_id = ?
+            order by updated_at desc
+            """,
+            (project_id,),
+        ).fetchall()
+    feedback_rows = [dict(row) for row in rows]
+    for row in feedback_rows:
+        row["original_payload"] = json.loads(row.pop("original_payload_json") or "null")
+    return feedback_rows
 
 
 def replace_evidence_units(project_id: str, units: list[dict[str, Any]], path: str | None = None) -> None:

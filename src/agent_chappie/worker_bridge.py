@@ -25,6 +25,7 @@ from agent_chappie.local_store import (
     get_source_snapshot,
     initialize_local_store,
     insert_observations,
+    list_draft_segment_feedback_rows,
     list_draft_segments,
     list_evidence_units,
     list_generation_memory_rows,
@@ -41,6 +42,7 @@ from agent_chappie.local_store import (
     save_generation_memory_rows,
     save_replacement_history,
     save_task_feedback_rows,
+    upsert_draft_segment_feedback,
     update_managed_job,
     update_managed_source,
     update_monitor_state,
@@ -415,6 +417,17 @@ def process_management_request(
         )
         return build_workspace_payload(project_id, config), HTTPStatus.OK
 
+    if resource == "draft-segments" and method == "DELETE" and len(parts) == 4:
+        upsert_draft_segment_feedback(
+            project_id=project_id,
+            segment_id=parts[3],
+            status=str(payload.get("status", "deleted_silent")),
+            reason=str(payload.get("reason") or "") or None,
+            original_payload=payload.get("original_payload"),
+            path=config.local_db_path,
+        )
+        return build_workspace_payload(project_id, config), HTTPStatus.OK
+
     if resource == "task-feedback" and method == "POST" and len(parts) == 3:
         return process_task_feedback(project_id, payload, config), HTTPStatus.OK
 
@@ -716,6 +729,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     observation_rows = list_recent_observations(project_id, path=config.local_db_path)
     knowledge_rows = fetch_knowledge_rows(project_id, path=config.local_db_path)
     knowledge_feedback_rows = fetch_knowledge_feedback_rows(project_id, path=config.local_db_path)
+    draft_segment_feedback_rows = list_draft_segment_feedback_rows(project_id, path=config.local_db_path)
     monitor_rows = list_monitor_rows(path=config.local_db_path)
     fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
     evidence_units = build_evidence_units(project_id, source_rows, observation_rows, fact_chips)
@@ -734,6 +748,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     else:
         draft_segments = list_draft_segments(project_id, path=config.local_db_path)
         draft_segments = [normalize_legacy_product_voice_in_segment(segment) for segment in draft_segments]
+    draft_segments = apply_draft_segment_feedback(draft_segments, draft_segment_feedback_rows)
     draft_segments = append_held_knowledge_segments(draft_segments, knowledge_feedback_rows)
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards, evidence_units)
     competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows, evidence_units)
@@ -1239,6 +1254,21 @@ def append_held_knowledge_segments(
         )
         existing_ids.add(segment_id)
     return draft_segments + held_segments
+
+
+def apply_draft_segment_feedback(
+    draft_segments: list[dict[str, Any]],
+    feedback_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    hidden_statuses = {"deleted", "deleted_silent", "deleted_with_annotation", "held", "held_for_later"}
+    hidden_ids = {
+        str(row.get("segment_id") or "")
+        for row in feedback_rows
+        if str(row.get("status") or "") in hidden_statuses
+    }
+    if not hidden_ids:
+        return draft_segments
+    return [segment for segment in draft_segments if str(segment.get("segment_id") or "") not in hidden_ids]
 
 
 def build_draft_segments(
