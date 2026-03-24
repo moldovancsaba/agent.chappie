@@ -146,6 +146,7 @@ The next evidence layer is now explicit:
 - task detail should surface human-readable evidence chips, not raw internal evidence ids
 - task detail should narrow linked evidence to task-scoped supporting sources before falling back to broader workspace evidence
 - supporting sources should now be explicitly ranked per task so weak or off-theme sources can be excluded instead of merely displayed
+- `why_now` and `expected_advantage` should now be synthesized from the selected task support bundle instead of relying on generic bucket templates
 
 ## Sources and activity
 
