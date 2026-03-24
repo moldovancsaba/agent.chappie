@@ -165,6 +165,7 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
   - target segment
   - mechanism
   - done definition
+- execution steps and done definition should be synthesized from that same winning bundle, not from generic move-bucket templates alone
 - supporting sources should be explicitly scored per task so weaker sources can be excluded before task detail renders
 - one source may produce multiple knowledge cards
 - multiple sources may strengthen one knowledge card

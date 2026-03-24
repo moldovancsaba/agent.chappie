@@ -209,6 +209,7 @@ Task detail should be evidence-bundle-specific:
 - show strongest evidence excerpt when available
 - show target channel, target segment, and done definition when the writer/judge provide them
 - prefer worker-authored execution steps when available instead of frontend-only reconstruction
+- worker-authored execution steps and done definitions should use the strongest excerpt, chosen competitor, and chosen channel so each task detail reads like a task-instance playbook
 - execution steps must be operational, not generic filler
 
 If a rich source is processed but no immediate action is strong enough:
