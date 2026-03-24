@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -13,10 +14,53 @@ if SRC not in sys.path:
 
 from agent_chappie.local_store import initialize_local_store, save_source_snapshot, upsert_knowledge_feedback
 from agent_chappie.observation_engine import SourcePackage, build_source_hash
-from agent_chappie.worker_bridge import WorkerBridgeConfig, build_workspace_payload, process_job_payload, process_task_feedback
+from agent_chappie.worker_bridge import (
+    WorkerBridgeConfig,
+    build_auto_research_sources,
+    build_workspace_payload,
+    process_job_payload,
+    process_task_feedback,
+)
 
 
 class WorkerBridgeKnowledgeTests(unittest.TestCase):
+    def test_auto_research_rejects_irrelevant_public_results(self) -> None:
+        source = SourcePackage(
+            project_id="project_auto_research",
+            source_kind="manual_text",
+            project_summary="Marketing and SEO intelligence platform analysis",
+            raw_text=(
+                "Competitive Analysis in the Marketing and SEO Intelligence Market with a Fortitude AI Focus. "
+                "The document compares onboarding friction, buyer proof, packaging, pricing, and trial offers."
+            ),
+            source_ref="source_auto_research",
+            file_name="competitive-analysis.docx",
+        )
+        with mock.patch(
+            "agent_chappie.worker_bridge.search_public_web_urls",
+            return_value=[
+                "https://oncodaily.com/oncolibrary/fortitude-101/",
+                "https://fortitude.ai/pricing",
+            ],
+        ), mock.patch(
+            "agent_chappie.worker_bridge.fetch_url_text",
+            side_effect=[
+                {
+                    "title": "FORTITUDE-101 in gastric cancer",
+                    "content": "Oncology gastric patient trial results and bemarituzumab treatment updates " * 10,
+                },
+                {
+                    "title": "Fortitude AI pricing and onboarding",
+                    "content": "Fortitude AI pricing onboarding trial testimonials SEO marketing analytics platform " * 10,
+                },
+            ],
+        ):
+            packages = build_auto_research_sources(source, [])
+
+        self.assertEqual(len(packages), 1)
+        self.assertIn("fortitude.ai/pricing", packages[0].raw_text)
+        self.assertNotIn("oncodaily.com", packages[0].raw_text)
+
     def test_workspace_payload_surfaces_knowledge_for_rich_source_without_actions(self) -> None:
         source = SourcePackage(
             project_id="project_knowledge",

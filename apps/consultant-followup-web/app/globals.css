@@ -628,6 +628,18 @@ textarea {
   border: 1px solid rgba(42, 36, 24, 0.08);
 }
 
+.intel-card.auto-collected,
+.source-asset.auto-collected {
+  background: rgba(219, 244, 255, 0.62);
+  border-color: rgba(19, 113, 148, 0.22);
+}
+
+.evidence-chip.auto-collected {
+  background: rgba(219, 244, 255, 0.8);
+  border-color: rgba(19, 113, 148, 0.22);
+  color: #155f7f;
+}
+
 .intel-card ul {
   margin: 12px 0 0;
   padding-left: 18px;

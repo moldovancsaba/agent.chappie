@@ -182,6 +182,8 @@ The app must never invent this state locally. All CRUD actions proxy to the work
 - `Know More` is the structured knowledge surface
 - `Know More` should lead with worker-generated strategic synthesis such as a competitive position snapshot
 - `Know More` should surface worker-drafted knowledge segments created from the complete source set
+- when Agent.Chappie can fetch missing public-web competitor context itself, that enrichment should happen automatically and be stored in the local brain before the system asks the operator to research anything
+- auto-collected enrichment must remain visually distinct from operator-provided sources in the UI
 - each knowledge card should surface:
   - insight
   - implication
@@ -194,7 +196,7 @@ The app must never invent this state locally. All CRUD actions proxy to the work
 
 If a rich source is processed but no immediate action is strong enough:
 
-- `Checklist` may return a blocked result
+- `Checklist` should still return exactly three tasks, using lower-confidence exploratory moves only after system-executed enrichment and stronger action synthesis have already been attempted
 - `Know More` must still render worker-generated knowledge cards
 - the blocked state should read like active monitoring, not failure
 - the ingested source card must still show processing outcome and source-level value

@@ -265,6 +265,9 @@ function humanizeFactCategory(value: string) {
 }
 
 function sourceKindLabel(value: string) {
+  if (value === "auto_research_url") {
+    return "Auto research";
+  }
   if (value === "manual_text") {
     return "Text";
   }
@@ -313,13 +316,24 @@ function buildConsequenceOfInaction(task: RecommendedTask) {
 }
 
 function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
-  const sourceLine = sourceLabels.length ? `Pull the linked source evidence from ${sourceLabels.join(", ")} and confirm the exact claim or trigger.` : "Pull the linked evidence and confirm the exact trigger before editing anything.";
+  const sourceLine =
+    task.task_type === "information_request"
+      ? sourceLabels.length
+        ? `Review the current intelligence from ${sourceLabels.join(", ")} and identify the one proprietary or missing input the system still cannot collect automatically.`
+        : "Review the current intelligence and identify the one proprietary or missing input the system still cannot collect automatically."
+      : sourceLabels.length
+        ? `Use the linked intelligence already collected from ${sourceLabels.join(", ")} as the basis for this move.`
+        : "Use the linked intelligence already collected by the system as the basis for this move.";
   return [
     sourceLine,
     `Execute the dominant move now: ${task.title}.`,
     "Make the customer-facing or operator-facing change visible this week so the market can actually see the move.",
     "Check whether the move directly reduced the threat or captured the opportunity described in the expected impact.",
   ];
+}
+
+function isAutoCollectedSourceKind(value: string) {
+  return value === "auto_research_url";
 }
 
 function buildDefaultDecisions(tasks: RecommendedTask[]) {
@@ -1002,6 +1016,9 @@ export function DemoWorkspace() {
     }
     return sourceLabelByRef.get(sourceRef) ?? fallbackSourceLabel(sourceRef);
   };
+  const autoCollectedSourceRefs = new Set(
+    (workspace?.source_cards ?? []).filter((source) => isAutoCollectedSourceKind(source.source_kind)).map((source) => source.source_ref)
+  );
   const confidence = completeResult?.decision_summary?.confidence;
   const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
   const topKnowledge = workspace?.knowledge_summary[0];
@@ -1493,7 +1510,7 @@ export function DemoWorkspace() {
                   <div className="evidence-chip-list">
                     {workspace.fact_chips.map((chip) => (
                       <button
-                        className="evidence-chip"
+                        className={`evidence-chip ${chip.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? "auto-collected" : ""}`}
                         key={chip.fact_id}
                         type="button"
                         onClick={() => setFocusedSourceRef(chip.source_refs[0] ?? null)}
@@ -1517,7 +1534,10 @@ export function DemoWorkspace() {
                   </p>
                   <div className="intel-columns">
                     {workspace.draft_segments.slice(0, 8).map((segment) => (
-                      <article className="intel-card mini" key={segment.segment_id}>
+                      <article
+                        className={`intel-card mini ${segment.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? "auto-collected" : ""}`}
+                        key={segment.segment_id}
+                      >
                         <div className="operator-head">
                           <h3>{segment.title}</h3>
                           <span>
@@ -1545,13 +1565,19 @@ export function DemoWorkspace() {
               <div className="intel-columns">
                 {filteredKnowledgeCards.length ? (
                   filteredKnowledgeCards.map((card) => (
-                    <article className="intel-card" key={card.knowledge_id}>
+                    <article
+                      className={`intel-card ${card.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? "auto-collected" : ""}`}
+                      key={card.knowledge_id}
+                    >
                       <div className="operator-head">
                         <h3>{card.title}</h3>
                         <span>
                           {confidenceLabel(card.confidence)} ({card.confidence.toFixed(2)}) · {card.annotation_status} · {confidenceSourceLabel(card.confidence_source)}
                         </span>
                       </div>
+                      {card.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? (
+                        <p className="surface-summary">Auto-collected by Agent.Chappie from public web research and merged into the local brain.</p>
+                      ) : null}
                       <p>{card.summary}</p>
                       <div className="task-block">
                         <span>Insight</span>
@@ -1909,7 +1935,10 @@ export function DemoWorkspace() {
               <div className="sources-workspace">
                 {workspace?.source_cards.length ? (
                   workspace.source_cards.map((source) => (
-                    <article className={`source-asset ${focusedSourceRef === source.source_ref ? "current" : ""}`} key={source.source_ref}>
+                    <article
+                      className={`source-asset ${focusedSourceRef === source.source_ref ? "current" : ""} ${isAutoCollectedSourceKind(source.source_kind) ? "auto-collected" : ""}`}
+                      key={source.source_ref}
+                    >
                       <div className="operator-head">
                         <div>
                           <strong>{source.label}</strong>

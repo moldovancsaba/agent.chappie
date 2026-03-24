@@ -108,7 +108,7 @@ The app must not collect or fabricate general project metadata that belongs in t
 The real decision pipeline is now:
 
 - `Drafter`: read the full source set, normalize it, and persist editable draft knowledge segments
-- `Writer`: turn those segments plus source-linked evidence into concrete business-value tasks, including missing-information tasks when evidence gaps block a stronger move
+- `Writer`: turn those segments plus source-linked evidence into concrete business-value tasks, including system-executed enrichment before asking the operator for missing information
 - `Judge`: rank the tasks, add priority and best-before timing, and mark the next best action
 
 ## Ingestion behavior
@@ -118,7 +118,9 @@ The real decision pipeline is now:
 - file submissions are sent as real uploads and extracted on the Mac mini worker
 - the app accepts one real source per submission: URL, pasted text, or one supported document
 - supported document uploads are currently `.txt`, `.md`, `.csv`, `.pdf`, and `.docx`
-- if the worker cannot derive three distinct, high-confidence actions from the ingested evidence, it must return a blocked result instead of filler tasks
+- when the worker can enrich missing public-web context itself, it should do that automatically before recommending an operator research task
+- auto-collected public-web enrichment must be written into the local worker brain and surfaced distinctly in `Know More`
+- the checklist should still return exactly three tasks, preferring action-taking moves over information-request tasks whenever competitive pressure exists
 
 ## Sources and activity
 

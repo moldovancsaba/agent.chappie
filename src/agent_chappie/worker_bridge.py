@@ -5,6 +5,8 @@ import os
 import re
 import threading
 import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
@@ -49,10 +51,13 @@ from agent_chappie.observation_engine import (
     deduplicate_observations,
     extract_action_detail,
     extract_clauses,
+    extract_labeled_field,
     extract_named_entities,
     extract_observations,
     extract_signal_phrase,
+    fetch_url_text,
     generate_recommended_tasks,
+    host_to_entity,
     humanize_region,
     normalize_source_package,
     recover_source_context,
@@ -70,6 +75,7 @@ class WorkerBridgeConfig:
     queue_dir: str = "runtime_status/observation_queue"
     local_db_path: str = "runtime_status/agent_brain.sqlite3"
     poll_interval_seconds: int = 60
+    auto_research_enabled: bool = False
 
 
 def load_config() -> WorkerBridgeConfig:
@@ -80,6 +86,7 @@ def load_config() -> WorkerBridgeConfig:
         queue_dir=os.environ.get("AGENT_OBSERVATION_QUEUE_DIR", "runtime_status/observation_queue"),
         local_db_path=os.environ.get("AGENT_LOCAL_DB_PATH", "runtime_status/agent_brain.sqlite3"),
         poll_interval_seconds=int(os.environ.get("AGENT_OBSERVATION_POLL_SECONDS", "60")),
+        auto_research_enabled=os.environ.get("AGENT_AUTO_RESEARCH_ENABLED", "1") == "1",
     )
 
 
@@ -187,6 +194,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
 
     enqueue_source_package(source_package, config)
     observations = sync_observations_for_source(source_package, config)
+    enrich_project_with_auto_research(source_package, config)
     refreshed_sources = list_recent_source_snapshots(source_package.project_id, path=config.local_db_path)
     refreshed_knowledge = fetch_knowledge_rows(source_package.project_id, path=config.local_db_path)
     aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
@@ -420,6 +428,251 @@ def sync_observations_for_source(source: SourcePackage, config: WorkerBridgeConf
         path=config.local_db_path,
     )
     return deduped
+
+
+def enrich_project_with_auto_research(source: SourcePackage, config: WorkerBridgeConfig) -> None:
+    if not config.auto_research_enabled:
+        return
+    if source.source_kind in {"url", "auto_research_url"}:
+        return
+
+    existing_sources = list_recent_source_snapshots(source.project_id, limit=40, path=config.local_db_path)
+    existing_hashes = {row.get("source_hash") for row in existing_sources if row.get("source_hash")}
+    for auto_source in build_auto_research_sources(source, existing_sources):
+        source_hash = build_source_hash(auto_source)
+        if source_hash in existing_hashes:
+            continue
+        try:
+            sync_observations_for_source(auto_source, config)
+        except Exception:
+            continue
+
+
+def build_auto_research_sources(
+    source: SourcePackage,
+    existing_sources: list[dict[str, Any]],
+) -> list[SourcePackage]:
+    competitors = []
+    if source.competitor and clean_entity(source.competitor):
+        competitors.append(normalize_research_entity(clean_entity(source.competitor) or ""))
+    for entity in extract_named_entities(source.raw_text):
+        cleaned = clean_entity(entity)
+        if cleaned and cleaned not in competitors:
+            normalized = normalize_research_entity(cleaned)
+            if normalized and normalized not in competitors:
+                competitors.append(normalized)
+    competitors = [name for name in competitors if len(name) >= 3][:2]
+    if not competitors:
+        return []
+
+    existing_urls = {
+        extract_labeled_field(str(row.get("raw_text") or ""), "Source URL")
+        for row in existing_sources
+    }
+    existing_urls = {url for url in existing_urls if url}
+    market_terms = extract_market_terms(source)
+    packages: list[SourcePackage] = []
+    seen_urls: set[str] = set()
+    query_suffixes = ("pricing", "trial", "testimonials")
+
+    for competitor in competitors:
+        for suffix in query_suffixes:
+            for url in search_public_web_urls(f"{competitor} {suffix}", max_results=2):
+                if url in seen_urls or url in existing_urls:
+                    continue
+                seen_urls.add(url)
+                try:
+                    fetched = fetch_url_text(url)
+                except Exception:
+                    continue
+                if len(fetched.get("content", "").strip()) < 220:
+                    continue
+                if not is_relevant_auto_research_result(
+                    competitor=competitor,
+                    source=source,
+                    url=url,
+                    fetched=fetched,
+                    market_terms=market_terms,
+                ):
+                    continue
+                digest = build_source_hash(
+                    SourcePackage(
+                        project_id=source.project_id,
+                        source_kind="auto_research_url",
+                        project_summary=source.project_summary,
+                        raw_text=fetched["content"],
+                        source_ref=f"auto_source_{source.project_id}",
+                        competitor=competitor,
+                        region=source.region,
+                        file_name=fetched.get("title"),
+                    )
+                )[:12]
+                packages.append(
+                    SourcePackage(
+                        project_id=source.project_id,
+                        source_kind="auto_research_url",
+                        project_summary=source.project_summary,
+                        raw_text=format_auto_research_source(url, fetched.get("title", competitor), fetched.get("content", "")),
+                        source_ref=f"auto_source_{digest}",
+                        competitor=competitor,
+                        region=source.region,
+                        file_name=fetched.get("title") or f"{competitor} web source",
+                    )
+                )
+                break
+            if len(packages) >= 3:
+                return packages
+    return packages
+
+
+def normalize_research_entity(value: str) -> str:
+    candidate = " ".join((value or "").split()).strip()
+    if not candidate:
+        return ""
+    candidate = re.sub(
+        r"\b(Focus|Analysis|Market|Intelligence|Report|Guide|Study|Platform|Software)\b$",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip(" -,:;")
+    return clean_entity(candidate) or candidate
+
+
+def extract_market_terms(source: SourcePackage) -> set[str]:
+    text = " ".join(
+        part
+        for part in (
+            source.project_summary or "",
+            source.file_name or "",
+            source.raw_text or "",
+        )
+        if part
+    ).lower()
+    allowlist = {
+        "marketing",
+        "seo",
+        "search",
+        "analytics",
+        "intelligence",
+        "agency",
+        "pricing",
+        "trial",
+        "offer",
+        "onboarding",
+        "integration",
+        "testimonial",
+        "proof",
+        "buyer",
+        "buyers",
+        "campaign",
+        "conversion",
+        "software",
+        "saas",
+        "operator",
+    }
+    return {term for term in allowlist if term in text}
+
+
+def is_relevant_auto_research_result(
+    *,
+    competitor: str,
+    source: SourcePackage,
+    url: str,
+    fetched: dict[str, str],
+    market_terms: set[str],
+) -> bool:
+    title = str(fetched.get("title") or "")
+    content = str(fetched.get("content") or "")
+    haystack = f"{title} {content}".lower()
+    host = urllib.parse.urlparse(url).netloc.lower()
+    competitor_lc = competitor.lower()
+    competitor_tokens = [token for token in re.findall(r"[a-z0-9]+", competitor_lc) if len(token) >= 3]
+    matched_competitor_tokens = sum(1 for token in competitor_tokens if token in haystack or token in host)
+    host_entity = host_to_entity(host)
+    host_entity_lc = (host_entity or "").lower()
+
+    if matched_competitor_tokens == 0 and competitor_lc not in host_entity_lc:
+        return False
+
+    bad_domain_terms = {
+        "oncology",
+        "cancer",
+        "tumor",
+        "gastric",
+        "pharma",
+        "clinical",
+        "patient",
+        "hospital",
+        "treatment",
+        "trial results",
+        "medical",
+        "bemarituzumab",
+    }
+    if any(term in haystack for term in bad_domain_terms):
+        if not market_terms or sum(1 for term in market_terms if term in haystack) < 2:
+            return False
+
+    matched_market_terms = sum(1 for term in market_terms if term in haystack)
+    if market_terms and matched_market_terms == 0:
+        return False
+
+    competitor_root = competitor_tokens[0] if competitor_tokens else competitor_lc
+    official_domain_hint = competitor_root.replace(" ", "")
+    if official_domain_hint and official_domain_hint in host:
+        return True
+
+    if matched_competitor_tokens >= 2:
+        return True
+    if matched_competitor_tokens >= 1 and matched_market_terms >= 2:
+        return True
+    if matched_competitor_tokens >= 1 and source.source_kind == "url":
+        return True
+    return False
+
+
+def search_public_web_urls(query: str, max_results: int = 3) -> list[str]:
+    search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}"
+    request = urllib.request.Request(
+        search_url,
+        headers={
+            "User-Agent": "Agent.Chappie/1.0 (+https://agent-chappie.vercel.app)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        html = response.read().decode("utf-8", errors="replace")
+
+    urls: list[str] = []
+    for encoded in re.findall(r"uddg=([^&\"]+)", html):
+        url = urllib.parse.unquote(encoded)
+        if url.startswith("http") and "duckduckgo.com" not in urllib.parse.urlparse(url).netloc:
+            urls.append(url)
+    for raw in re.findall(r'href=\"(https?://[^\"#]+)\"', html):
+        if "duckduckgo.com" in urllib.parse.urlparse(raw).netloc:
+            continue
+        urls.append(raw)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        normalized = url.rstrip("/")
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(url)
+        if len(deduped) >= max_results:
+            break
+    return deduped
+
+
+def format_auto_research_source(url: str, title: str, content: str) -> str:
+    return "\n".join(
+        [
+            f"Auto Research URL: {url}",
+            f"Auto Research Title: {title}",
+            f"Auto Research Content: {content}",
+        ]
+    )
 
 
 def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict[str, Any]:
