@@ -113,6 +113,13 @@ The real decision pipeline is now:
 - `Writer`: turn those segments plus source-linked evidence into concrete business-value tasks, including system-executed enrichment before asking the operator for missing information
 - `Judge`: rank the tasks, add priority and best-before timing, and mark the next best action
 
+The next evidence layer is now explicit:
+
+- persisted `evidence_units` in the local brain
+- one source may produce many evidence units
+- many sources may strengthen the same knowledge card
+- `Know More` should be rebuilt from those units instead of flattening each source into one broad summary
+
 ## Ingestion behavior
 
 - URL-only submissions are fetched and normalized on the Mac mini worker before signal extraction

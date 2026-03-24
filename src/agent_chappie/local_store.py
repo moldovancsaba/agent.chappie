@@ -176,6 +176,21 @@ def initialize_local_store(path: str | None = None) -> str:
               created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+
+            create table if not exists evidence_units (
+              unit_id text primary key,
+              project_id text not null,
+              source_ref text not null,
+              unit_kind text not null,
+              label text not null,
+              excerpt text,
+              competitor text,
+              segment text,
+              channel text,
+              timing text,
+              confidence real not null,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
             """
         )
         _ensure_column(connection, "source_snapshots", "display_label", "text")
@@ -660,6 +675,70 @@ def list_draft_segments(project_id: str, limit: int = 24, path: str | None = Non
         segment["source_refs"] = json.loads(segment.pop("source_refs_json") or "[]")
         segment["evidence_refs"] = json.loads(segment.pop("evidence_refs_json") or "[]")
     return segments
+
+
+def replace_evidence_units(project_id: str, units: list[dict[str, Any]], path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute("delete from evidence_units where project_id = ?", (project_id,))
+        for unit in units:
+            connection.execute(
+                """
+                insert into evidence_units (
+                  unit_id,
+                  project_id,
+                  source_ref,
+                  unit_kind,
+                  label,
+                  excerpt,
+                  competitor,
+                  segment,
+                  channel,
+                  timing,
+                  confidence
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    unit["unit_id"],
+                    project_id,
+                    unit["source_ref"],
+                    unit["unit_kind"],
+                    unit["label"],
+                    unit.get("excerpt"),
+                    unit.get("competitor"),
+                    unit.get("segment"),
+                    unit.get("channel"),
+                    unit.get("timing"),
+                    float(unit["confidence"]),
+                ),
+            )
+
+
+def list_evidence_units(project_id: str, limit: int = 400, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              unit_id,
+              project_id,
+              source_ref,
+              unit_kind,
+              label,
+              excerpt,
+              competitor,
+              segment,
+              channel,
+              timing,
+              confidence,
+              created_at
+            from evidence_units
+            where project_id = ?
+            order by confidence desc, created_at desc
+            limit ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def list_monitor_rows(path: str | None = None) -> list[dict[str, Any]]:

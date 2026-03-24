@@ -14,6 +14,7 @@ if SRC not in sys.path:
 
 from agent_chappie.local_store import (
     initialize_local_store,
+    list_evidence_units,
     list_generation_memory_rows,
     list_task_feedback_rows,
     save_source_snapshot,
@@ -107,6 +108,41 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("insight", competitors)
             self.assertIn("implication", competitors)
             self.assertIn("potential_moves", competitors)
+            source_ref = workspace["source_cards"][0]["source_ref"]
+            card_refs = [card["knowledge_id"] for card in workspace["knowledge_cards"] if source_ref in card["source_refs"]]
+            self.assertGreaterEqual(len(card_refs), 3)
+            evidence_units = list_evidence_units("project_knowledge", path=db_path)
+            self.assertTrue(evidence_units)
+
+    def test_multiple_sources_can_strengthen_one_knowledge_card(self) -> None:
+        source_a = SourcePackage(
+            project_id="project_multi_source",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text="Fortitude AI pricing bundles and onboarding friction are visible in the market.",
+            source_ref="source_multi_a",
+        )
+        source_b = SourcePackage(
+            project_id="project_multi_source",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text="Another source confirms pricing pressure, onboarding comparison, and offer friction around Fortitude AI.",
+            source_ref="source_multi_b",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            save_source_snapshot(source_a.__dict__, build_source_hash(source_a), db_path)
+            save_source_snapshot(source_b.__dict__, build_source_hash(source_b), db_path)
+
+            workspace = build_workspace_payload(
+                "project_multi_source",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+
+            pricing_card = next(card for card in workspace["knowledge_cards"] if card["knowledge_id"] == "pricing_packaging")
+            self.assertGreaterEqual(len(set(pricing_card["source_refs"])), 2)
+            self.assertTrue(pricing_card["support_count"] >= 2)
 
     def test_workspace_payload_applies_knowledge_feedback_overlay(self) -> None:
         source = SourcePackage(

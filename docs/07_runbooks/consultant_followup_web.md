@@ -184,6 +184,7 @@ Do not ship detached internal product language such as `the worker` or `the user
 - `Know More` is the structured knowledge surface
 - `Know More` should lead with worker-generated strategic synthesis such as a competitive position snapshot
 - `Know More` should surface worker-drafted knowledge segments created from the complete source set
+- the worker should persist atomic `evidence_units` so one source can feed multiple knowledge cards and multiple sources can strengthen one card
 - when Agent.Chappie can fetch missing public-web competitor context itself, that enrichment should happen automatically and be stored in the local brain before the system asks the operator to research anything
 - auto-collected enrichment must remain visually distinct from operator-provided sources in the UI
 - each knowledge card should surface:

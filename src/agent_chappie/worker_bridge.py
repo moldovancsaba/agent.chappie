@@ -26,6 +26,7 @@ from agent_chappie.local_store import (
     initialize_local_store,
     insert_observations,
     list_draft_segments,
+    list_evidence_units,
     list_generation_memory_rows,
     list_task_feedback_rows,
     list_observations_for_source,
@@ -35,6 +36,7 @@ from agent_chappie.local_store import (
     list_recent_observations,
     list_recent_source_snapshots,
     replace_draft_segments,
+    replace_evidence_units,
     save_source_snapshot,
     save_generation_memory_rows,
     save_replacement_history,
@@ -201,12 +203,15 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     refreshed_knowledge = fetch_knowledge_rows(source_package.project_id, path=config.local_db_path)
     aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
     fact_chips = build_fact_chips(refreshed_sources, aggregated or observations, refreshed_knowledge)
+    evidence_units = build_evidence_units(source_package.project_id, refreshed_sources, aggregated or observations, fact_chips)
+    replace_evidence_units(source_package.project_id, evidence_units, path=config.local_db_path)
     knowledge_cards = build_knowledge_cards(
         refreshed_sources,
         aggregated or observations,
         refreshed_knowledge,
         fetch_knowledge_feedback_rows(source_package.project_id, path=config.local_db_path),
         fact_chips,
+        evidence_units,
     )
     draft_segments = build_draft_segments(
         source_package.project_id,
@@ -687,7 +692,9 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     knowledge_feedback_rows = fetch_knowledge_feedback_rows(project_id, path=config.local_db_path)
     monitor_rows = list_monitor_rows(path=config.local_db_path)
     fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
-    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
+    evidence_units = build_evidence_units(project_id, source_rows, observation_rows, fact_chips)
+    replace_evidence_units(project_id, evidence_units, path=config.local_db_path)
+    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips, evidence_units)
     if source_rows or observation_rows or knowledge_cards or fact_chips:
         draft_segments = build_draft_segments(
             project_id,
@@ -789,7 +796,11 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
     knowledge_rows = fetch_knowledge_rows(project_id, path=config.local_db_path)
     knowledge_feedback_rows = fetch_knowledge_feedback_rows(project_id, path=config.local_db_path)
     fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
-    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
+    evidence_units = list_evidence_units(project_id, path=config.local_db_path)
+    if not evidence_units:
+        evidence_units = build_evidence_units(project_id, source_rows, observation_rows, fact_chips)
+        replace_evidence_units(project_id, evidence_units, path=config.local_db_path)
+    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips, evidence_units)
     draft_segments = list_draft_segments(project_id, path=config.local_db_path)
     if not draft_segments:
         draft_segments = build_draft_segments(
@@ -864,12 +875,15 @@ def reprocess_source_snapshot(project_id: str, source_ref: str, config: WorkerBr
     refreshed_observations = list_recent_observations(project_id, path=config.local_db_path)
     refreshed_knowledge = fetch_knowledge_rows(project_id, path=config.local_db_path)
     fact_chips = build_fact_chips(refreshed_sources, refreshed_observations, refreshed_knowledge)
+    evidence_units = build_evidence_units(project_id, refreshed_sources, refreshed_observations, fact_chips)
+    replace_evidence_units(project_id, evidence_units, path=config.local_db_path)
     knowledge_cards = build_knowledge_cards(
         refreshed_sources,
         refreshed_observations,
         refreshed_knowledge,
         fetch_knowledge_feedback_rows(project_id, path=config.local_db_path),
         fact_chips,
+        evidence_units,
     )
     source_insights = build_source_insights(
         list_recent_source_snapshots(project_id, path=config.local_db_path),
@@ -931,11 +945,13 @@ def build_knowledge_cards(
     knowledge_rows: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     feedback_lookup = {row["knowledge_id"]: row for row in feedback_rows}
     entities = unique_entities(source_rows, observation_rows, knowledge_rows)
     cards: list[dict[str, Any]] = []
     facts_by_category = group_fact_chips(fact_chips)
+    units_by_kind = group_evidence_units(evidence_units)
 
     market_items = []
     if source_rows:
@@ -985,7 +1001,8 @@ def build_knowledge_cards(
     )
 
     pricing_facts = facts_by_category.get("pricing", [])
-    pricing_items = [fact["label"] for fact in pricing_facts]
+    pricing_units = units_by_kind.get("pricing", []) + units_by_kind.get("pricing_packaging", [])
+    pricing_items = [unit["label"] for unit in pricing_units[:5]] or [fact["label"] for fact in pricing_facts]
     cards.append(
         knowledge_card(
             "pricing_packaging",
@@ -999,14 +1016,17 @@ def build_knowledge_cards(
                 "Prepare one pricing-page adjustment if a competitor pattern keeps repeating.",
             ],
             [row for row in observation_rows if row["signal_type"] == "pricing_change"][:4],
-            flatten_fact_source_refs(pricing_facts[:5]) or source_refs_for_items(pricing_items[:5], source_rows),
+            flatten_unit_source_refs(pricing_units[:5]) or flatten_fact_source_refs(pricing_facts[:5]) or source_refs_for_items(pricing_items[:5], source_rows),
             0.71 if pricing_items else 0.24,
             feedback_lookup,
+            support_count=len(pricing_units),
+            strongest_excerpt=strongest_unit_excerpt(pricing_units),
         )
     )
 
     positioning_facts = facts_by_category.get("offer", []) + facts_by_category.get("positioning", []) + facts_by_category.get("segment", [])
-    positioning_items = [fact["label"] for fact in positioning_facts]
+    positioning_units = units_by_kind.get("offer", []) + units_by_kind.get("positioning", []) + units_by_kind.get("segment", [])
+    positioning_items = [unit["label"] for unit in positioning_units[:5]] or [fact["label"] for fact in positioning_facts]
     cards.append(
         knowledge_card(
             "offer_positioning",
@@ -1020,14 +1040,17 @@ def build_knowledge_cards(
                 "Check whether your enrollment or landing-page copy reflects the same buyer pressure.",
             ],
             [row for row in observation_rows if row["signal_type"] in {"offer", "messaging_shift"}][:4],
-            flatten_fact_source_refs(positioning_facts[:5]) or source_refs_for_items(positioning_items[:5], source_rows),
+            flatten_unit_source_refs(positioning_units[:5]) or flatten_fact_source_refs(positioning_facts[:5]) or source_refs_for_items(positioning_items[:5], source_rows),
             0.73 if positioning_items else 0.25,
             feedback_lookup,
+            support_count=len(positioning_units),
+            strongest_excerpt=strongest_unit_excerpt(positioning_units),
         )
     )
 
     proof_facts = facts_by_category.get("proof", [])
-    proof_items = [fact["label"] for fact in proof_facts]
+    proof_units = units_by_kind.get("proof", [])
+    proof_items = [unit["label"] for unit in proof_units[:5]] or [fact["label"] for fact in proof_facts]
     cards.append(
         knowledge_card(
             "proof_signals",
@@ -1041,9 +1064,11 @@ def build_knowledge_cards(
                 "Add a stronger proof source if the current evidence is still weak.",
             ],
             [row for row in observation_rows if row["signal_type"] == "proof_signal"][:4],
-            flatten_fact_source_refs(proof_facts[:5]) or source_refs_for_items(proof_items[:5], source_rows),
+            flatten_unit_source_refs(proof_units[:5]) or flatten_fact_source_refs(proof_facts[:5]) or source_refs_for_items(proof_items[:5], source_rows),
             0.69 if proof_items else 0.21,
             feedback_lookup,
+            support_count=len(proof_units),
+            strongest_excerpt=strongest_unit_excerpt(proof_units),
         )
     )
 
@@ -1117,11 +1142,16 @@ def build_draft_segments(
         )
 
     for card in knowledge_cards:
+        primary_trigger = (
+            str(card.get("strongest_excerpt") or "").strip()
+            or (str(card["items"][0]).strip() if card.get("items") else "")
+            or f"{card['insight']} {card['implication']}"
+        )
         add_segment(
             f"segment:{card['knowledge_id']}",
             card["knowledge_id"],
             card["title"],
-            normalize_legacy_product_voice(f"{card['insight']} {card['implication']}"),
+            normalize_legacy_product_voice(primary_trigger),
             card.get("source_refs", []),
             card.get("evidence_refs", []),
             min(0.99, 0.45 + float(card["confidence"])),
@@ -2238,6 +2268,8 @@ def knowledge_card(
     source_refs: list[str],
     confidence: float,
     feedback_lookup: dict[str, dict[str, Any]],
+    support_count: int = 0,
+    strongest_excerpt: str | None = None,
 ) -> dict[str, Any]:
     feedback = feedback_lookup.get(knowledge_id)
     feedback_original_payload = feedback.get("original_payload") if feedback else None
@@ -2260,6 +2292,8 @@ def knowledge_card(
         "source_refs": unique_values(source_refs),
         "evidence_refs": unique_values([row["signal_id"] for row in evidence_rows]),
         "confidence": round(confidence, 2),
+        "support_count": support_count,
+        "strongest_excerpt": strongest_excerpt,
         "annotation_status": feedback["status"] if feedback else "pending",
         "confidence_source": feedback.get("confidence_source") if feedback and feedback.get("confidence_source") else "extracted",
         "audit": {
@@ -2316,6 +2350,98 @@ def unique_entities(
         seen.add(normalized.lower())
         cleaned.append(normalized)
     return cleaned[:12]
+
+
+def build_evidence_units(
+    project_id: str,
+    source_rows: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    source_map = {row["source_ref"]: row for row in source_rows}
+
+    def add_unit(
+        *,
+        source_ref: str,
+        unit_kind: str,
+        label: str,
+        excerpt: str,
+        confidence: float,
+    ) -> None:
+        detail = extract_action_detail(label)
+        competitor = infer_segment_competitor(label, SourcePackage(
+            project_id=project_id,
+            source_kind=source_map.get(source_ref, {}).get("source_kind", "manual_text"),
+            project_summary=source_map.get(source_ref, {}).get("project_summary", "managed_on_worker"),
+            raw_text=source_map.get(source_ref, {}).get("raw_text", label),
+            source_ref=source_ref,
+            competitor=source_map.get(source_ref, {}).get("competitor"),
+            region=source_map.get(source_ref, {}).get("region"),
+        ))
+        channel = infer_primary_channel("academy" if "enrollment" in excerpt.lower() else "general", excerpt.lower())
+        segment = next((fact.replace("Buyer segment in play: ", "").replace(".", "") for fact in extract_segment_facts(excerpt)), None)
+        key = f"{source_ref}|{unit_kind}|{label}".lower()
+        if key in seen:
+            return
+        seen.add(key)
+        units.append(
+            {
+                "unit_id": f"{project_id}::{abs(hash((source_ref, unit_kind, label)))}",
+                "project_id": project_id,
+                "source_ref": source_ref,
+                "unit_kind": unit_kind,
+                "label": label,
+                "excerpt": excerpt[:320],
+                "competitor": competitor,
+                "segment": segment,
+                "channel": channel,
+                "timing": detail.get("timeframe"),
+                "confidence": round(confidence, 2),
+            }
+        )
+
+    for chip in fact_chips:
+        for source_ref in chip.get("source_refs", []) or ["unknown_source"]:
+            excerpt = source_map.get(source_ref, {}).get("raw_text", chip["label"])
+            add_unit(
+                source_ref=source_ref,
+                unit_kind=str(chip["category"]),
+                label=str(chip["label"]),
+                excerpt=str(excerpt),
+                confidence=float(chip.get("confidence", 0.6)),
+            )
+
+    for row in observation_rows:
+        add_unit(
+            source_ref=row["source_ref"],
+            unit_kind=str(row["signal_type"]),
+            label=str(row["summary"]),
+            excerpt=str(row["summary"]),
+            confidence=float(row.get("confidence", 0.7)),
+        )
+
+    return units[:400]
+
+
+def group_evidence_units(units: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for unit in units:
+        grouped.setdefault(str(unit["unit_kind"]), []).append(unit)
+    return grouped
+
+
+def flatten_unit_source_refs(units: list[dict[str, Any]]) -> list[str]:
+    return unique_values([str(unit["source_ref"]) for unit in units if unit.get("source_ref")])
+
+
+def strongest_unit_excerpt(units: list[dict[str, Any]]) -> str | None:
+    if not units:
+        return None
+    strongest = max(units, key=lambda unit: float(unit.get("confidence") or 0))
+    excerpt = str(strongest.get("excerpt") or "").strip()
+    return excerpt[:220] if excerpt else None
 
 
 def filter_clauses(clauses: list[str], tokens: tuple[str, ...]) -> list[str]:

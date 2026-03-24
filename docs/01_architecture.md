@@ -149,6 +149,12 @@ The competitive-intelligence product surface now depends on a second explicit wo
 - `Judge`: rank the candidate tasks, add best-before timing, and choose the next best action
 
 This pipeline must remain worker-authoritative.
+
+The current foundation also includes persisted atomic `evidence_units` in the local brain:
+
+- each ingested or auto-collected source is broken into smaller evidence units
+- the knowledge surface clusters those units into reusable cards
+- task generation should prefer those clustered units over broad source-level summaries
 The frontend may display draft segments, written tasks, and judged metadata, but it must not generate them.
 
 ## Layered platform boundary
