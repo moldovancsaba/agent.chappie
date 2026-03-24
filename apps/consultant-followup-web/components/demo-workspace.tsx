@@ -317,19 +317,59 @@ function buildConsequenceOfInaction(task: RecommendedTask) {
 }
 
 function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
-  const sourceLine =
-    task.task_type === "information_request"
-      ? sourceLabels.length
-        ? `Review the current intelligence from ${sourceLabels.join(", ")} and identify the one proprietary or missing input the system still cannot collect automatically.`
-        : "Review the current intelligence and identify the one proprietary or missing input the system still cannot collect automatically."
-      : sourceLabels.length
-        ? `Use the linked intelligence already collected from ${sourceLabels.join(", ")} as the basis for this move.`
-        : "Use the linked intelligence already collected by the system as the basis for this move.";
+  const lowerTitle = task.title.toLowerCase();
+  const sourceSummary = sourceLabels.length ? sourceLabels.join(", ") : "the linked source set";
+
+  if (task.task_type === "information_request") {
+    return [
+      `Review ${sourceSummary} and isolate the one missing proprietary fact we still cannot collect automatically.`,
+      "Request that specific missing input in one message, not a broad research ask.",
+      "Add the new evidence to the same workspace this week so the checklist can regenerate from it.",
+      "Check that the next regeneration replaces the exploratory task with a stronger action move.",
+    ];
+  }
+
+  if (lowerTitle.includes("pricing") || lowerTitle.includes("onboarding")) {
+    return [
+      `Pull the exact pricing, onboarding, and proof claims from ${sourceSummary}.`,
+      "Turn those claims into a 2-column comparison block and one onboarding FAQ or friction-reduction section.",
+      "Publish the update on the pricing page or comparison section before the stated best-before date.",
+      "Send the updated asset to active comparison-stage prospects and check whether objections drop.",
+    ];
+  }
+
+  if (lowerTitle.includes("homepage") || lowerTitle.includes("hero") || lowerTitle.includes("enrollment")) {
+    return [
+      `Identify the strongest competitor claim in ${sourceSummary}.`,
+      "Rewrite the specified page section so it answers that exact claim in your own positioning language.",
+      "Publish the update in the named channel this week and keep the change above the fold or in the first comparison section.",
+      "Check whether the updated page now answers the objection or offer pressure named in the task.",
+    ];
+  }
+
+  if (lowerTitle.includes("proof") || lowerTitle.includes("testimonial")) {
+    return [
+      `Pull the strongest proof patterns from ${sourceSummary}.`,
+      "Add two concrete proof blocks, testimonials, or integration claims to the page or sales asset named in the task.",
+      "Publish or ship the updated proof asset this week where hesitant buyers see it first.",
+      "Check whether trust objections drop in live conversations or comparison-stage pages.",
+    ];
+  }
+
+  if (lowerTitle.includes("owner") || lowerTitle.includes("first access") || lowerTitle.includes("assets") || lowerTitle.includes("distribution")) {
+    return [
+      `Pull the exact distress or transition evidence from ${sourceSummary}.`,
+      "Contact the named competitor or owner with one specific ask covering customers, staff, assets, or distribution.",
+      "Secure the next meeting, inventory list, or first-right-of-access this week before another operator moves.",
+      "Check whether the opportunity is now advancing on your terms instead of staying theoretical.",
+    ];
+  }
+
   return [
-    sourceLine,
-    `Execute the dominant move now: ${task.title}.`,
-    "Make the customer-facing or operator-facing change visible this week so the market can actually see the move.",
-    "Check whether the move directly reduced the threat or captured the opportunity described in the expected impact.",
+    `Use the strongest evidence from ${sourceSummary} to define the exact asset or channel change required.`,
+    `Create and publish the action described in the task title: ${task.title}.`,
+    "Make the change live in the named channel this week so buyers can actually experience the move.",
+    "Check whether the result reduced the threat or captured the opportunity described in the expected impact.",
   ];
 }
 

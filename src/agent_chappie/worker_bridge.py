@@ -1013,8 +1013,8 @@ def build_knowledge_cards(
             "Offer / Positioning",
             "Offer language, positioning claims, and tactical market signals found in the sources.",
             positioning_items[:5] or ["No clear positioning or offer observations have been extracted yet."],
-            "We can see how competitors and the market are framing buyer value right now.",
-            "If you do not answer that framing quickly, your current offer can lose urgency during live comparisons.",
+            "We can see which offer, proof, and positioning angles competitors are using to shape buyer expectations right now.",
+            "If you do not answer the strongest angle in the right channel, your offer can lose urgency during live comparisons.",
             [
                 "Draft one response angle that answers the strongest positioning claim.",
                 "Check whether your enrollment or landing-page copy reflects the same buyer pressure.",
