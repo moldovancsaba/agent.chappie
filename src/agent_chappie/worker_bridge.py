@@ -1395,6 +1395,9 @@ def segment_to_task(
             channel=comparison_channel,
             timing_window=timing_window,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         why_now = synthesize_task_why_now(
             move_bucket="pricing_or_offer_move",
@@ -1403,6 +1406,7 @@ def segment_to_task(
             competitor=competitor_name,
             audience=audience,
             channel=comparison_channel,
+            explicit_claim=explicit_claim,
         )
         expected_advantage = synthesize_task_expected_advantage(
             move_bucket="pricing_or_offer_move",
@@ -1410,6 +1414,7 @@ def segment_to_task(
             audience=audience,
             channel=comparison_channel,
             timing_window=timing_window,
+            explicit_claim=explicit_claim,
         )
         execution_steps = build_task_execution_steps(
             move_bucket="pricing_or_offer_move",
@@ -1467,6 +1472,9 @@ def segment_to_task(
             timing_window=timing_window,
             strongest_excerpt=strongest_excerpt,
             offer=offer,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         why_now = synthesize_task_why_now(
             move_bucket="messaging_or_positioning_move",
@@ -1475,6 +1483,7 @@ def segment_to_task(
             competitor=competitor_name,
             audience=audience,
             channel=channel,
+            explicit_claim=explicit_claim,
         )
         expected_advantage = synthesize_task_expected_advantage(
             move_bucket="messaging_or_positioning_move",
@@ -1482,6 +1491,7 @@ def segment_to_task(
             audience=audience,
             channel=channel,
             timing_window=timing_window,
+            explicit_claim=explicit_claim,
         )
         execution_steps = build_task_execution_steps(
             move_bucket="messaging_or_positioning_move",
@@ -1534,6 +1544,9 @@ def segment_to_task(
             channel="same workspace",
             timing_window=timing_window,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         why_now = synthesize_task_why_now(
             move_bucket="information_request",
@@ -1542,6 +1555,7 @@ def segment_to_task(
             competitor=competitor or "the current comparison set",
             audience=audience,
             channel="same workspace",
+            explicit_claim=explicit_claim,
         )
         return {
             "rank": 0,
@@ -1593,6 +1607,9 @@ def segment_to_task(
             channel=outreach_channel,
             timing_window=timing_window,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         why_now = synthesize_task_why_now(
             move_bucket="intercept_or_capture_move",
@@ -1601,6 +1618,7 @@ def segment_to_task(
             competitor=competitor_name,
             audience=audience,
             channel=outreach_channel,
+            explicit_claim=explicit_claim,
         )
         expected_advantage = synthesize_task_expected_advantage(
             move_bucket="intercept_or_capture_move",
@@ -1608,6 +1626,7 @@ def segment_to_task(
             audience=audience,
             channel=outreach_channel,
             timing_window=timing_window,
+            explicit_claim=explicit_claim,
         )
         execution_steps = build_task_execution_steps(
             move_bucket="intercept_or_capture_move",
@@ -1663,6 +1682,9 @@ def segment_to_task(
             channel=proof_channel,
             timing_window=timing_window,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         why_now = synthesize_task_why_now(
             move_bucket="proof_or_trust_move",
@@ -1671,6 +1693,7 @@ def segment_to_task(
             competitor=competitor_name,
             audience=audience,
             channel=proof_channel,
+            explicit_claim=explicit_claim,
         )
         expected_advantage = synthesize_task_expected_advantage(
             move_bucket="proof_or_trust_move",
@@ -1678,6 +1701,7 @@ def segment_to_task(
             audience=audience,
             channel=proof_channel,
             timing_window=timing_window,
+            explicit_claim=explicit_claim,
         )
         execution_steps = build_task_execution_steps(
             move_bucket="proof_or_trust_move",
@@ -1977,25 +2001,6 @@ def generate_learning_checklist(
     feedback_rows: list[dict[str, Any]],
     generation_memory_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    result_payload = generate_recommended_tasks(source_package, observations)
-    if "recommended_tasks" in result_payload:
-        try:
-            validate_job_result(
-                {
-                    "job_id": "precheck",
-                    "app_id": "worker",
-                    "project_id": source_package.project_id,
-                    "status": "complete",
-                    "completed_at": utc_now_iso(),
-                    "result_payload": result_payload,
-                }
-            )
-            return result_payload
-        except ValidationError:
-            repaired_payload = repair_recommended_tasks(source_package, observations, result_payload)
-            if repaired_payload is not None:
-                return repaired_payload
-
     segment_payload = write_tasks_from_segments(
         source_package,
         observations,
@@ -2006,21 +2011,35 @@ def generate_learning_checklist(
         feedback_rows,
         generation_memory_rows,
     )
-    if "recommended_tasks" in segment_payload:
+
+    legacy_payload = generate_recommended_tasks(source_package, observations)
+    repaired_legacy_payload: dict[str, Any] | None = None
+    if "recommended_tasks" in legacy_payload:
         try:
-            validate_job_result(
-                {
-                    "job_id": "segmentcheck",
-                    "app_id": "worker",
-                    "project_id": source_package.project_id,
-                    "status": "complete",
-                    "completed_at": utc_now_iso(),
-                    "result_payload": segment_payload,
-                }
-            )
-            return segment_payload
+            validate_result_payload(source_package.project_id, legacy_payload, run_id="precheck")
         except ValidationError:
-            pass
+            repaired_legacy_payload = repair_recommended_tasks(source_package, observations, legacy_payload)
+
+    candidate_payloads: list[tuple[str, dict[str, Any]]] = []
+    for label, payload in (
+        ("segment", segment_payload),
+        ("legacy_repaired", repaired_legacy_payload),
+        ("legacy", legacy_payload),
+    ):
+        if not payload or "recommended_tasks" not in payload:
+            continue
+        try:
+            validate_result_payload(source_package.project_id, payload, run_id=label)
+            candidate_payloads.append((label, payload))
+        except ValidationError:
+            continue
+
+    if candidate_payloads:
+        candidate_payloads.sort(
+            key=lambda item: (task_payload_specificity_score(item[1]), 1 if item[0] == "segment" else 0),
+            reverse=True,
+        )
+        return candidate_payloads[0][1]
 
     return generate_guaranteed_task_triplet(
         source_package,
@@ -2029,6 +2048,55 @@ def generate_learning_checklist(
         feedback_rows,
         generation_memory_rows,
     )
+
+
+def validate_result_payload(project_id: str, payload: dict[str, Any], *, run_id: str) -> None:
+    validate_job_result(
+        {
+            "job_id": run_id,
+            "app_id": "worker",
+            "project_id": project_id,
+            "status": "complete",
+            "completed_at": utc_now_iso(),
+            "result_payload": payload,
+        }
+    )
+
+
+def task_payload_specificity_score(payload: dict[str, Any]) -> int:
+    tasks = payload.get("recommended_tasks") or []
+    if not isinstance(tasks, list):
+        return -100
+
+    score = 0
+    for task in tasks:
+        title = str(task.get("title") or "").lower()
+        why_now = str(task.get("why_now") or "").lower()
+        expected_advantage = str(task.get("expected_advantage") or "").lower()
+        done_definition = str(task.get("done_definition") or "").lower()
+        strongest_excerpt = str(task.get("strongest_evidence_excerpt") or "").lower()
+
+        if task.get("competitor_name"):
+            score += 2
+        if task.get("target_channel"):
+            score += 2
+        if task.get("target_segment"):
+            score += 1
+        if task.get("done_definition"):
+            score += 2
+        if task.get("execution_steps"):
+            score += 2
+        if strongest_excerpt:
+            score += 2
+        if any(token in title for token in ("pricing page", "homepage", "hero section", "proof block", "comparison block", "faq")):
+            score += 3
+        if any(token in title + " " + why_now + " " + expected_advantage for token in ("free trial", "no engineering required", "onboarding", "pricing comparison", "testimonial")):
+            score += 3
+        if any(token in title + " " + why_now + " " + expected_advantage + " " + done_definition for token in ("the worker drafted", "current competitor frame", "buyer-facing response", "use the linked intelligence")):
+            score -= 6
+        if any(token == str(task.get("competitor_name") or "").strip().lower() for token in ("add", "rewrite", "publish", "launch", "request", "check", "pull")):
+            score -= 8
+    return score
 
 
 def task_priority_score(task: dict[str, Any], generation_memory_rows: list[dict[str, Any]] | None = None) -> int:
@@ -3312,23 +3380,25 @@ def synthesize_task_why_now(
     competitor: str,
     audience: str,
     channel: str,
+    explicit_claim: str | None = None,
 ) -> str:
+    audience_phrase = normalize_task_audience(audience)
+    claim_phrase = explicit_claim or strongest_excerpt.strip()
     if observations:
         primary = observations[0]
         summary = str(primary.get("summary") or strongest_excerpt).strip()
         signal_type = str(primary.get("signal_type") or "signal").replace("_", " ")
-        return f"We found a {signal_type} in your sources tied to {competitor}: {summary} This is already shaping how {audience} compare options in the {channel}."
+        return f"We found a {signal_type} in your sources tied to {competitor}: {summary} If you do not answer that specific pressure in the {channel}, {audience_phrase} can keep comparing you through {competitor}'s claim."
 
-    excerpt = strongest_excerpt.strip()
     if move_bucket == "pricing_or_offer_move":
-        return f"We found pricing or onboarding pressure in your sources tied to {competitor}: {excerpt} This is already shaping how {audience} compare offers in the {channel}."
+        return f"We found pricing or onboarding pressure tied to {competitor}: {claim_phrase} If you do not answer it in the {channel}, {audience_phrase} can adopt {competitor}'s lower-friction commercial expectation first."
     if move_bucket == "messaging_or_positioning_move":
-        return f"We found a buyer-facing claim in your sources tied to {competitor}: {excerpt} If you do not answer it in the {channel}, {audience} can default to the competitor's framing."
+        return f"We found a visible market claim tied to {competitor}: {claim_phrase} If you do not answer it in the {channel}, {audience_phrase} can default to that framing."
     if move_bucket == "intercept_or_capture_move":
-        return f"We found a closure, asset, or transition signal tied to {competitor}: {excerpt} This creates a short-lived opening that should be acted on through {channel}."
+        return f"We found a closure, asset, or transition signal tied to {competitor}: {claim_phrase} This creates a short-lived opening that should be acted on through {channel}."
     if move_bucket == "proof_or_trust_move":
-        return f"We found trust pressure in your sources tied to {competitor}: {excerpt} This is already influencing how hesitant {audience} judge credibility."
-    return f"We found a concrete signal in your sources: {excerpt} This is the strongest reason to act now."
+        return f"We found trust pressure tied to {competitor}: {claim_phrase} This is already influencing how hesitant {audience_phrase} judge credibility."
+    return f"We found a concrete signal in your sources: {claim_phrase} This is the strongest reason to act now."
 
 
 def synthesize_task_title(
@@ -3340,21 +3410,32 @@ def synthesize_task_title(
     timing_window: str,
     strongest_excerpt: str,
     offer: str | None = None,
+    explicit_asset: str | None = None,
+    explicit_section: str | None = None,
+    explicit_claim: str | None = None,
 ) -> str:
+    audience_phrase = normalize_task_audience(audience)
+    competitor_claim = explicit_claim or offer or infer_competitor_claim(strongest_excerpt) or "its strongest visible claim"
+    title_asset = infer_title_asset(
+        move_bucket=move_bucket,
+        channel=channel,
+        strongest_excerpt=strongest_excerpt,
+        explicit_asset=explicit_asset,
+        explicit_section=explicit_section,
+    )
     if move_bucket == "pricing_or_offer_move":
-        return f"Add a pricing comparison block and onboarding FAQ to the {channel} {timing_window} before {competitor} sets buyer expectations for {audience}"
+        return f"Add {title_asset} {timing_window} before {competitor}'s {competitor_claim} sets expectations for {audience_phrase}"
     if move_bucket == "messaging_or_positioning_move":
-        offer_phrase = f" to answer the {offer} claim" if offer else ""
-        return f"Rewrite the {channel} {timing_window}{offer_phrase} before comparison-stage {audience} default to {competitor}"
+        return f"Rewrite {title_asset} {timing_window} to answer {competitor}'s {competitor_claim} before {audience_phrase} default to it"
     if move_bucket == "intercept_or_capture_move":
         return f"Contact {competitor} {timing_window} and secure first access to customers, staff, assets, or distribution before the window closes"
     if move_bucket == "proof_or_trust_move":
-        return f"Add two proof blocks on the {channel} {timing_window} so hesitant {audience} do not trust {competitor} first"
+        return f"Add proof blocks to {title_asset} {timing_window} so hesitant {audience_phrase} do not trust {competitor} first"
     if move_bucket == "information_request":
         if any(token in strongest_excerpt.lower() for token in ("pricing", "onboarding", "offer", "proof")):
             return f"Request the missing proprietary pricing, offer, or buyer-proof fact {timing_window} before making the wrong response move"
         return f"Request the missing competitor or timing fact {timing_window} before making the wrong response move"
-    return f"Ship the strongest visible response in the {channel} {timing_window} before {competitor} gains more ground"
+    return f"Ship the strongest visible response in {title_asset} {timing_window} before {competitor} gains more ground"
 
 
 def synthesize_task_expected_advantage(
@@ -3364,16 +3445,63 @@ def synthesize_task_expected_advantage(
     audience: str,
     channel: str,
     timing_window: str,
+    explicit_claim: str | None = None,
 ) -> str:
+    audience_phrase = normalize_task_audience(audience)
+    claim_phrase = explicit_claim or "its strongest visible claim"
     if move_bucket == "pricing_or_offer_move":
-        return f"Increases conversion for active {audience} {timing_window} by answering {competitor}'s lower-friction commercial comparison in the {channel}."
+        return f"Increases conversion for active {audience_phrase} {timing_window} by answering {competitor}'s {claim_phrase} in the {channel}."
     if move_bucket == "messaging_or_positioning_move":
-        return f"Increases shortlist conversion for comparison-stage {audience} {timing_window} by replacing {competitor}'s current claim with a stronger response in the {channel}."
+        return f"Increases shortlist conversion for {audience_phrase} {timing_window} by replacing {competitor}'s {claim_phrase} with a stronger response in the {channel}."
     if move_bucket == "intercept_or_capture_move":
         return f"Creates near-term revenue or cost advantage {timing_window} by moving through {channel} before {competitor}'s transition window closes."
     if move_bucket == "proof_or_trust_move":
-        return f"Increases conversion and win rate for hesitant {audience} {timing_window} by strengthening trust signals in the {channel} before {competitor} hardens the comparison narrative."
+        return f"Increases conversion and win rate for hesitant {audience_phrase} {timing_window} by strengthening trust signals in the {channel} before {competitor} hardens its {claim_phrase}."
     return f"Improves conversion and execution speed {timing_window} by making a stronger move in the {channel} before {competitor} gains more ground."
+
+
+def normalize_task_audience(audience: str) -> str:
+    normalized = audience.strip()
+    replacements = {
+        "comparison-stage buyers": "buyers already comparing options",
+        "comparison-stage buyer": "a buyer already comparing options",
+        "buyers": "buyers",
+    }
+    return replacements.get(normalized, normalized)
+
+
+def infer_competitor_claim(text: str) -> str | None:
+    lowered = text.lower()
+    if "free trial" in lowered:
+        return "free trial"
+    if "no engineering required" in lowered:
+        return "no engineering required message"
+    if "onboarding" in lowered:
+        return "onboarding promise"
+    if "pricing" in lowered:
+        return "pricing comparison"
+    if "testimonial" in lowered or "proof" in lowered:
+        return "proof message"
+    return None
+
+
+def infer_title_asset(
+    *,
+    move_bucket: str,
+    channel: str,
+    strongest_excerpt: str,
+    explicit_asset: str | None = None,
+    explicit_section: str | None = None,
+) -> str:
+    asset = infer_task_asset(
+        move_bucket=move_bucket,
+        channel=channel,
+        mechanism="",
+        strongest_excerpt=strongest_excerpt,
+        explicit_asset=explicit_asset,
+        explicit_section=explicit_section,
+    )
+    return asset.replace(" on the ", " on ").replace(" in the ", " in ")
 
 
 def infer_task_asset(

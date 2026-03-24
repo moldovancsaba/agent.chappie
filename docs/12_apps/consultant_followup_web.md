@@ -158,6 +158,9 @@ The next evidence layer is now explicit:
 - task generation should prefer explicit extracted asset, section, channel, and claim details over fallback inference when those details exist in the evidence units
 - `why_now` and `expected_advantage` should now be synthesized from the selected task support bundle instead of relying on generic bucket templates
 - task titles should also be progressively synthesized from the selected support bundle so competitor, channel, and timing stay tied to the chosen evidence
+- when the winning bundle contains an explicit claim like `free trial` or `no engineering required`, the title and rationale should reuse that exact claim instead of reverting to generic audience/frame wording
+- entity cleanup should reject imperative instruction verbs as fake competitors so tasks never come back with names like `Add` or `Rewrite`
+- when both the legacy observation path and the bundle-authored segment path can produce valid tasks, the system should prefer the more specific bundle-authored result instead of replaying the older generic checklist family
 
 ## Sources and activity
 

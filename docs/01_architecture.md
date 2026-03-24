@@ -140,6 +140,8 @@ This means:
 - the public website should not depend on direct public exposure of the Mac mini
 - stored checklist results shown by the public app are derived state, not authoritative state
 - if a stored result still contains known stale generic task phrasing, the app should request a worker-side checklist regeneration from the current local brain before replaying it to the UI
+- task generation should prefer explicit claim, asset, section, and channel details from evidence units over generic frame language whenever those details exist
+- if multiple internal generation paths produce valid tasks, the architecture should prefer the path with the higher evidence-bundle specificity instead of defaulting to the older generic output family
 - the governed triad remains the worker-side decision core
 
 ## Competitive recommendation pipeline

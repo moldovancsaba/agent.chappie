@@ -20,7 +20,7 @@ from agent_chappie.local_store import (
     save_source_snapshot,
     upsert_knowledge_feedback,
 )
-from agent_chappie.observation_engine import SourcePackage, build_source_hash, extract_action_detail
+from agent_chappie.observation_engine import SourcePackage, build_source_hash, clean_entity, extract_action_detail
 from agent_chappie.worker_bridge import (
     WorkerBridgeConfig,
     build_auto_research_sources,
@@ -32,6 +32,11 @@ from agent_chappie.worker_bridge import (
 
 
 class WorkerBridgeKnowledgeTests(unittest.TestCase):
+    def test_clean_entity_rejects_imperative_verbs(self) -> None:
+        self.assertIsNone(clean_entity("Add"))
+        self.assertIsNone(clean_entity("Rewrite"))
+        self.assertIsNone(clean_entity("Publish"))
+
     def test_extract_action_detail_captures_channel_section_asset_and_claim(self) -> None:
         detail = extract_action_detail(
             "Add a pricing comparison block and onboarding FAQ to the pricing page this week before Fortitude AI's free trial sets buyer expectations."
@@ -371,6 +376,54 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue(any("pricing page" in title.lower() or "homepage" in title.lower() or "enrollment" in title.lower() for title in titles))
             self.assertFalse(any("current competitor frame" in title.lower() for title in titles))
             self.assertFalse(any("drafted a buyer-pressure segment" in task["why_now"].lower() for task in result["job_result"]["result_payload"]["recommended_tasks"]))
+
+    def test_process_job_payload_uses_explicit_claim_and_asset_in_task_text(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_explicit_claim_asset",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_explicit_claim_asset",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-24T10:00:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Analyze the uploaded market document and return the next three actions.",
+                    "artifacts": [{"type": "upload", "ref": "source_explicit_claim_asset"}],
+                },
+                "source_refs": ["source_explicit_claim_asset"],
+            },
+            "source_package": {
+                "project_id": "project_explicit_claim_asset",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "Add a pricing comparison block and onboarding FAQ to the pricing page this week before Fortitude AI's free trial sets buyer expectations. "
+                    "Rewrite the homepage hero section to answer the no engineering required claim before buyers already comparing options default to Fortitude AI."
+                ),
+                "source_ref": "source_explicit_claim_asset",
+                "file_name": "competitive-analysis.docx",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            result = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+
+            tasks = result["job_result"]["result_payload"]["recommended_tasks"]
+            combined = " ".join(
+                [
+                    task["title"] + " " + task["why_now"] + " " + task["expected_advantage"]
+                    for task in tasks
+                ]
+            ).lower()
+
+            self.assertIn("fortitude ai", combined)
+            self.assertTrue("free trial" in combined or "no engineering required" in combined)
+            self.assertTrue("pricing page" in combined or "homepage hero section" in combined)
+            self.assertNotIn("current competitor frame", combined)
+            self.assertNotIn("comparison-stage buyers", combined)
 
     def test_task_feedback_regenerates_three_tasks(self) -> None:
         payload = {

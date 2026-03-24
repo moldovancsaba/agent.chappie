@@ -216,6 +216,9 @@ Task detail should be evidence-bundle-specific:
 - prefer worker-authored execution steps when available instead of frontend-only reconstruction
 - worker-authored execution steps and done definitions should use the strongest excerpt, chosen competitor, and chosen channel so each task detail reads like a task-instance playbook
 - if the winning evidence bundle contains an explicit asset, section, or claim, the worker should reuse that exact structure in the task title, execution steps, and done definition
+- task titles, `why now`, and expected impact should also prefer explicit extracted claims and assets over generic audience/frame language when those details exist
+- entity cleanup must reject imperative verbs such as `Add`, `Rewrite`, `Launch`, or `Publish` so task instructions cannot be misread as competitor names
+- if the legacy observation engine and the bundle-authored segment writer both produce valid task sets, the worker should prefer the more specific bundle-authored set
 - execution steps must be operational, not generic filler
 - reopened job results must not replay stale generic task text if the current worker can regenerate a sharper checklist from the same project knowledge
 
