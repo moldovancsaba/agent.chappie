@@ -266,6 +266,37 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
   return normalizeWorkerWorkspacePayload(payload as Partial<WorkerWorkspacePayload> & { project_id: string });
 }
 
+export async function regenerateWorkerChecklist(input: {
+  projectId: string;
+  jobId: string;
+  appId: string;
+}): Promise<JobResult> {
+  if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
+    throw new Error("Worker regeneration is unavailable in demo mode.");
+  }
+
+  const response = await fetch(
+    `${env.agentApiBaseUrl.replace(/\/$/, "")}/projects/${encodeURIComponent(input.projectId)}/checklist`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agent-shared-secret": env.agentSharedSecret ?? "",
+      },
+      body: JSON.stringify({
+        job_id: input.jobId,
+        app_id: input.appId,
+      }),
+      cache: "no-store",
+    }
+  );
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.detail ?? "Worker checklist regeneration failed.");
+  }
+  return jobResultSchema.parse(payload.job_result);
+}
+
 async function sendWorkerManagementRequest(
   path: string,
   method: "POST" | "PATCH" | "DELETE",

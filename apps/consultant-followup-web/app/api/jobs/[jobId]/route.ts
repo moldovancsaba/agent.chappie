@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { getResult } from "@/lib/storage";
+import { getResult, normalizeStoredJobResult, resultNeedsRefresh, saveResult } from "@/lib/storage";
+import { regenerateWorkerChecklist } from "@/lib/worker-bridge";
 
 export async function GET(_: Request, context: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await context.params;
-  const result = await getResult(jobId);
+  let result = await getResult(jobId);
 
   if (!result) {
     return NextResponse.json(
@@ -14,6 +15,20 @@ export async function GET(_: Request, context: { params: Promise<{ jobId: string
       },
       { status: 404 }
     );
+  }
+
+  if (resultNeedsRefresh(result)) {
+    try {
+      const regenerated = await regenerateWorkerChecklist({
+        projectId: result.project_id,
+        jobId: result.job_id,
+        appId: result.app_id,
+      });
+      await saveResult(regenerated);
+      result = normalizeStoredJobResult(regenerated);
+    } catch {
+      result = normalizeStoredJobResult(result);
+    }
   }
 
   return NextResponse.json({

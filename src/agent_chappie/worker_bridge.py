@@ -406,6 +406,12 @@ def process_management_request(
     if resource == "task-feedback" and method == "POST" and len(parts) == 3:
         return process_task_feedback(project_id, payload, config), HTTPStatus.OK
 
+    if resource == "checklist" and method == "POST" and len(parts) == 3:
+        job_id = str(payload.get("job_id") or f"regenerated_{project_id}_{int(time.time() * 1000)}")
+        app_id = str(payload.get("app_id") or "consultant_followup_web")
+        result_document = regenerate_project_checklist(project_id, config, job_id=job_id, app_id=app_id)
+        return {"job_result": result_document, "workspace": build_workspace_payload(project_id, config)}, HTTPStatus.OK
+
     return {"error": "not_found"}, HTTPStatus.NOT_FOUND
 
 
@@ -800,6 +806,34 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
     save_task_feedback_rows(project_id, job_id, rows, path=config.local_db_path)
     save_generation_memory_rows(project_id, build_generation_memory_rows(rows), path=config.local_db_path)
 
+    result_document = regenerate_project_checklist(
+        project_id,
+        config,
+        job_id=job_id,
+        app_id="consultant_followup_web",
+        confidence=0.74,
+    )
+    declined_rows = [row for row in rows if row["feedback_type"] in {"declined", "commented"}]
+    for row, task in zip(declined_rows, result_document["result_payload"]["recommended_tasks"], strict=False):
+        save_replacement_history(
+            project_id=project_id,
+            prior_task_title=row["original_title"],
+            replacement_title=task["title"],
+            source_feedback_id=row["feedback_id"],
+            path=config.local_db_path,
+        )
+    return {"job_result": result_document, "workspace": build_workspace_payload(project_id, config)}
+
+
+def regenerate_project_checklist(
+    project_id: str,
+    config: WorkerBridgeConfig,
+    *,
+    job_id: str,
+    app_id: str,
+    confidence: float = 0.78,
+) -> dict[str, Any]:
+
     source_rows = list_recent_source_snapshots(project_id, path=config.local_db_path)
     observation_rows = list_recent_observations(project_id, path=config.local_db_path)
     knowledge_rows = fetch_knowledge_rows(project_id, path=config.local_db_path)
@@ -846,24 +880,15 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
     result_document = validate_job_result(
         {
             "job_id": job_id,
-            "app_id": "consultant_followup_web",
+            "app_id": app_id,
             "project_id": project_id,
             "status": "complete",
             "completed_at": utc_now_iso(),
             "result_payload": result_payload,
-            "decision_summary": {"route": "proceed", "confidence": 0.74},
+            "decision_summary": {"route": "proceed", "confidence": confidence},
         }
     )
-    declined_rows = [row for row in rows if row["feedback_type"] in {"declined", "commented"}]
-    for row, task in zip(declined_rows, result_document["result_payload"]["recommended_tasks"], strict=False):
-        save_replacement_history(
-            project_id=project_id,
-            prior_task_title=row["original_title"],
-            replacement_title=task["title"],
-            source_feedback_id=row["feedback_id"],
-            path=config.local_db_path,
-        )
-    return {"job_result": result_document, "workspace": build_workspace_payload(project_id, config)}
+    return result_document
 
 
 def reprocess_source_snapshot(project_id: str, source_ref: str, config: WorkerBridgeConfig) -> None:

@@ -138,6 +138,8 @@ This means:
 
 - the Mac mini remains a private worker
 - the public website should not depend on direct public exposure of the Mac mini
+- stored checklist results shown by the public app are derived state, not authoritative state
+- if a stored result still contains known stale generic task phrasing, the app should request a worker-side checklist regeneration from the current local brain before replaying it to the UI
 - the governed triad remains the worker-side decision core
 
 ## Competitive recommendation pipeline

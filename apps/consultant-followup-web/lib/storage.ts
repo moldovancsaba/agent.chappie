@@ -180,7 +180,7 @@ export async function getResult(jobId: string): Promise<JobResult | null> {
   return result ? normalizeStoredJobResult(result) : null;
 }
 
-function normalizeStoredJobResult(result: JobResult): JobResult {
+export function normalizeStoredJobResult(result: JobResult): JobResult {
   if (
     result.status !== "complete" ||
     typeof result.result_payload !== "object" ||
@@ -197,7 +197,11 @@ function normalizeStoredJobResult(result: JobResult): JobResult {
       ...result.result_payload,
       recommended_tasks: result.result_payload.recommended_tasks.map((task) => ({
         ...task,
+        title: normalizeLegacyTaskText(task.title),
         why_now: normalizeLegacyTaskText(task.why_now),
+        expected_advantage: normalizeLegacyTaskText(task.expected_advantage),
+        execution_steps: task.execution_steps?.map((step: string) => normalizeLegacyTaskText(step)),
+        done_definition: task.done_definition ? normalizeLegacyTaskText(task.done_definition) : task.done_definition,
       })),
     },
   };
@@ -207,6 +211,9 @@ function normalizeLegacyTaskText(value: string): string {
   return value
     .replaceAll("The worker drafted a buyer-pressure segment:", "We drafted a buyer-pressure segment from your source set:")
     .replaceAll("The worker drafted a pricing segment from the source set:", "We drafted a pricing segment from your source set:")
+    .replaceAll("The worker drafted an asymmetric opportunity segment from the source set:", "We drafted an asymmetric opportunity segment from your source set:")
+    .replaceAll("current competitor frame", "strongest visible competitor claim")
+    .replaceAll("current market frame", "strongest visible market claim")
     .replaceAll(
       "The source set is signaling how competitors or the market frame buyer value right now.",
       "We can see how competitors and the market are framing buyer value right now."
@@ -215,6 +222,39 @@ function normalizeLegacyTaskText(value: string): string {
       "If this positioning becomes the default comparison language, your current offer may lose urgency or clarity.",
       "If you do not answer that framing quickly, your current offer can lose urgency during live comparisons."
     );
+}
+
+export function resultNeedsRefresh(result: JobResult | null): boolean {
+  if (
+    !result ||
+    result.status !== "complete" ||
+    typeof result.result_payload !== "object" ||
+    result.result_payload === null ||
+    !("recommended_tasks" in result.result_payload) ||
+    !Array.isArray(result.result_payload.recommended_tasks)
+  ) {
+    return false;
+  }
+
+  return result.result_payload.recommended_tasks.some((task) => {
+    const combined = [
+      task.title,
+      task.why_now,
+      task.expected_advantage,
+      ...(task.execution_steps ?? []),
+      task.done_definition ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return (
+      combined.includes("the worker drafted") ||
+      combined.includes("current source set is building a market picture") ||
+      combined.includes("no immediate checklist move yet") ||
+      combined.includes("current competitor frame") ||
+      combined.includes("buyer-facing response") ||
+      combined.includes("use the linked intelligence")
+    );
+  });
 }
 
 export async function getJob(jobId: string): Promise<JobRequest | null> {

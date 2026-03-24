@@ -146,6 +146,7 @@ launchctl kickstart -k gui/$(id -u)/com.agentchappie.worker
 - keep app secrets in Vercel env settings only
 - `POST /api/jobs` is the app-side bridge entrypoint
 - `GET /api/session/[sessionId]/state` restores the latest saved project and result for the current anonymous session
+- if the restored result still contains known stale legacy task phrasing, the app now asks the worker to regenerate the checklist from the current local brain before returning that result
 - `GET /api/projects/[projectId]/workspace` reads worker-generated source and activity state
 - `POST /api/projects/[projectId]/sources` adds a managed source
 - `PATCH /api/projects/[projectId]/sources/[sourceId]` edits or pauses a managed source
@@ -216,6 +217,7 @@ Task detail should be evidence-bundle-specific:
 - worker-authored execution steps and done definitions should use the strongest excerpt, chosen competitor, and chosen channel so each task detail reads like a task-instance playbook
 - if the winning evidence bundle contains an explicit asset, section, or claim, the worker should reuse that exact structure in the task title, execution steps, and done definition
 - execution steps must be operational, not generic filler
+- reopened job results must not replay stale generic task text if the current worker can regenerate a sharper checklist from the same project knowledge
 
 If a rich source is processed but no immediate action is strong enough:
 

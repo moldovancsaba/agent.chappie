@@ -175,6 +175,7 @@ The next evidence layer is now explicit:
 
 The frontend must not invent source inventory or recurring job history.
 The frontend also restores the latest saved project and result for the current anonymous session through `GET /api/session/[sessionId]/state`.
+If a stored result still matches known stale legacy task patterns, the app must ask the worker to regenerate that checklist from the current project knowledge before returning it to the visible UI.
 
 `Sources & Jobs` is a real management surface, not a passive readout. It now supports:
 
@@ -206,6 +207,7 @@ For rich sources such as uploaded market-analysis documents:
 - weak but repairable task impacts are rewritten on the worker before final validation
 - if repair is not possible, the worker must return a blocked result such as `insufficient_output_quality`
 - the UI must not expose raw internal validation errors to the user
+- reopened historical results must not keep replaying stale worker-era generic task text when current worker knowledge can rebuild a sharper result
 
 ## Local development
 
