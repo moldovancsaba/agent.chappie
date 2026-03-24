@@ -158,6 +158,8 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
 - task detail should prefer task-specific evidence bundles with:
   - supporting source refs
   - supporting source scores
+  - supporting signal scores
+  - supporting segment scores
   - strongest evidence excerpt
   - target channel
   - target segment

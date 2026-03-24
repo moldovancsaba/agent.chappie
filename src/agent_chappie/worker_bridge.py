@@ -1305,18 +1305,20 @@ def segment_to_task(
     supporting_source_refs = [item["source_ref"] for item in supporting_source_bundle]
     if not strongest_excerpt:
         strongest_excerpt = segment_text
-    supporting_signal_refs = select_task_support_signals(
+    supporting_signal_bundle = select_task_support_signals(
         segment_text=segment_text,
         observations=observations,
         supporting_source_refs=supporting_source_refs,
         competitor=competitor,
         move_bucket=move_bucket,
     )
-    supporting_segment_ids = select_task_support_segments(
+    supporting_signal_refs = [item["signal_id"] for item in supporting_signal_bundle]
+    supporting_segment_bundle = select_task_support_segments(
         segment=segment,
         move_bucket=move_bucket,
         competitor=competitor,
     )
+    supporting_segment_ids = [item["segment_id"] for item in supporting_segment_bundle]
     bundle_observations = [
         observation
         for observation in observations
@@ -1373,6 +1375,8 @@ def segment_to_task(
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
+            "supporting_signal_scores": supporting_signal_bundle,
+            "supporting_segment_scores": supporting_segment_bundle,
             "supporting_source_refs": supporting_source_refs,
             "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
@@ -1430,6 +1434,8 @@ def segment_to_task(
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
+            "supporting_signal_scores": supporting_signal_bundle,
+            "supporting_segment_scores": supporting_segment_bundle,
             "supporting_source_refs": supporting_source_refs,
             "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
@@ -1470,6 +1476,8 @@ def segment_to_task(
             ),
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
+            "supporting_signal_scores": supporting_signal_bundle,
+            "supporting_segment_scores": supporting_segment_bundle,
             "supporting_source_refs": supporting_source_refs,
             "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
@@ -1524,6 +1532,8 @@ def segment_to_task(
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
+            "supporting_signal_scores": supporting_signal_bundle,
+            "supporting_segment_scores": supporting_segment_bundle,
             "supporting_source_refs": supporting_source_refs,
             "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
@@ -1579,6 +1589,8 @@ def segment_to_task(
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
+            "supporting_signal_scores": supporting_signal_bundle,
+            "supporting_segment_scores": supporting_segment_bundle,
             "supporting_source_refs": supporting_source_refs,
             "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
@@ -2968,7 +2980,7 @@ def select_task_support_signals(
     supporting_source_refs: list[str],
     competitor: str | None,
     move_bucket: str,
-) -> list[str]:
+) -> list[dict[str, Any]]:
     candidates = [
         observation
         for observation in observations
@@ -2990,7 +3002,11 @@ def select_task_support_signals(
         key=lambda item: item[1],
         reverse=True,
     )
-    return [signal_id for signal_id, score in scored if signal_id and score >= 0.9][:3]
+    return [
+        {"signal_id": signal_id, "relevance_score": round(float(score), 2)}
+        for signal_id, score in scored
+        if signal_id and score >= 0.9
+    ][:3]
 
 
 def select_task_support_segments(
@@ -2998,14 +3014,27 @@ def select_task_support_segments(
     segment: dict[str, Any],
     move_bucket: str,
     competitor: str | None,
-) -> list[str]:
+) -> list[dict[str, Any]]:
     segment_id = str(segment.get("segment_id") or "")
-    refs = [segment_id] if segment_id else []
+    refs = [{"segment_id": segment_id, "relevance_score": 1.8 if competitor else 1.2}] if segment_id else []
     if move_bucket == "information_request":
-        refs.extend(str(ref) for ref in segment.get("evidence_refs") or [] if str(ref).startswith("segment::"))
-    if competitor and segment_id:
-        return unique_values(refs)[:2]
-    return unique_values(refs)[:1]
+        refs.extend(
+            {
+                "segment_id": str(ref).replace("segment::", "", 1),
+                "relevance_score": 1.0,
+            }
+            for ref in segment.get("evidence_refs") or []
+            if str(ref).startswith("segment::")
+        )
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in refs:
+        segment_ref = str(item.get("segment_id") or "")
+        if not segment_ref or segment_ref in seen:
+            continue
+        seen.add(segment_ref)
+        deduped.append(item)
+    return deduped[:2] if competitor and segment_id else deduped[:1]
 
 
 def synthesize_task_why_now(

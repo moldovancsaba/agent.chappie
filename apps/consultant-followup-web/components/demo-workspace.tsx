@@ -1202,6 +1202,9 @@ export function DemoWorkspace() {
           (!!taskScopedSourceRefs.length && taskScopedSourceRefs.includes(activity.source_ref))
       ) ?? []
     : [];
+  const selectedTaskSignalScoreMap = new Map(
+    (selectedTask?.supporting_signal_scores ?? []).map((item) => [item.signal_id, item])
+  );
   const selectedTaskDraftSegments = selectedTask
     ? workspace?.draft_segments.filter(
         (segment) =>
@@ -1214,6 +1217,9 @@ export function DemoWorkspace() {
           (!taskScopedSourceRefs.length || segment.source_refs.some((ref) => taskScopedSourceRefs.includes(ref)))
       ) ?? []
     : [];
+  const selectedTaskSegmentScoreMap = new Map(
+    (selectedTask?.supporting_segment_scores ?? []).map((item) => [item.segment_id, item])
+  );
   const selectedTaskSourceRefs = Array.from(
     new Set([
       ...((selectedTask?.supporting_source_refs ?? []) as string[]),
@@ -1231,6 +1237,16 @@ export function DemoWorkspace() {
         return rightScore - leftScore;
       })
     : [];
+  const orderedTaskEvidence = [...selectedTaskEvidence].sort((left, right) => {
+    const leftScore = selectedTaskSignalScoreMap.get(left.signal_id)?.relevance_score ?? 0;
+    const rightScore = selectedTaskSignalScoreMap.get(right.signal_id)?.relevance_score ?? 0;
+    return rightScore - leftScore;
+  });
+  const orderedTaskDraftSegments = [...selectedTaskDraftSegments].sort((left, right) => {
+    const leftScore = selectedTaskSegmentScoreMap.get(left.segment_id)?.relevance_score ?? 0;
+    const rightScore = selectedTaskSegmentScoreMap.get(right.segment_id)?.relevance_score ?? 0;
+    return rightScore - leftScore;
+  });
   const selectedTaskSteps = selectedTask
     ? buildExecutionSteps(
         selectedTask,
@@ -1238,7 +1254,7 @@ export function DemoWorkspace() {
       )
     : [];
   const selectedTaskHumanEvidence = selectedTask
-    ? buildHumanEvidenceChips(selectedTask, selectedTaskEvidence, selectedTaskDraftSegments, selectedTaskSources)
+    ? buildHumanEvidenceChips(selectedTask, orderedTaskEvidence, orderedTaskDraftSegments, selectedTaskSources)
     : [];
 
   return (
@@ -1580,11 +1596,14 @@ export function DemoWorkspace() {
 
                   <div className="task-detail-list">
                     <h3>Linked signals</h3>
-                    {selectedTaskEvidence.length ? (
-                      selectedTaskEvidence.map((activity) => (
+                    {orderedTaskEvidence.length ? (
+                      orderedTaskEvidence.map((activity) => (
                         <div className="job-item" key={activity.signal_id}>
                           <strong>{humanizeSignalType(activity.signal_type)}</strong>
-                          <span>{formatTimestamp(activity.observed_at)}</span>
+                          <span>
+                            {supportStrengthLabel(selectedTaskSignalScoreMap.get(activity.signal_id)?.relevance_score)} ·{" "}
+                            {formatTimestamp(activity.observed_at)}
+                          </span>
                           <p>{activity.summary}</p>
                         </div>
                       ))
@@ -1616,11 +1635,12 @@ export function DemoWorkspace() {
 
                   <div className="task-detail-list">
                     <h3>Draft segments behind this task</h3>
-                    {selectedTaskDraftSegments.length ? (
-                      selectedTaskDraftSegments.map((segment) => (
+                    {orderedTaskDraftSegments.length ? (
+                      orderedTaskDraftSegments.map((segment) => (
                         <div className="job-item" key={segment.segment_id}>
                           <strong>{segment.title}</strong>
                           <span>
+                            {supportStrengthLabel(selectedTaskSegmentScoreMap.get(segment.segment_id)?.relevance_score)} ·{" "}
                             {humanizeFactCategory(segment.segment_kind)} · {confidenceLabel(segment.confidence)} (
                             {segment.confidence.toFixed(2)})
                           </span>
