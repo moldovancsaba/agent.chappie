@@ -27,6 +27,7 @@ from agent_chappie.worker_bridge import (
     build_workspace_payload,
     process_job_payload,
     process_task_feedback,
+    select_task_support_bundle,
 )
 
 
@@ -145,6 +146,45 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             pricing_card = next(card for card in workspace["knowledge_cards"] if card["knowledge_id"] == "pricing_packaging")
             self.assertGreaterEqual(len(set(pricing_card["source_refs"])), 2)
             self.assertTrue(pricing_card["support_count"] >= 2)
+
+    def test_task_support_bundle_filters_weaker_sources(self) -> None:
+        evidence_units = [
+            {
+                "source_ref": "source_relevant",
+                "unit_kind": "pricing",
+                "label": "Fortitude AI pricing and onboarding pressure is visible.",
+                "excerpt": "Fortitude AI pricing and onboarding pressure is visible in the source set.",
+                "competitor": "Fortitude AI",
+                "confidence": 0.82,
+            },
+            {
+                "source_ref": "source_relevant",
+                "unit_kind": "positioning",
+                "label": "Fortitude AI is shaping comparison-stage buyer expectations.",
+                "excerpt": "Fortitude AI is shaping comparison-stage buyer expectations.",
+                "competitor": "Fortitude AI",
+                "confidence": 0.77,
+            },
+            {
+                "source_ref": "source_weak",
+                "unit_kind": "proof",
+                "label": "Generic customer story with no pricing overlap.",
+                "excerpt": "Generic customer story with no pricing overlap.",
+                "competitor": "",
+                "confidence": 0.35,
+            },
+        ]
+
+        source_refs, excerpt = select_task_support_bundle(
+            segment_text="Fortitude AI pricing and onboarding pressure is visible.",
+            segment_source_refs=["source_relevant", "source_weak"],
+            evidence_units=evidence_units,
+            competitor="Fortitude AI",
+            move_bucket="pricing_or_offer_move",
+        )
+
+        self.assertEqual(source_refs, ["source_relevant"])
+        self.assertIn("Fortitude AI", excerpt or "")
 
     def test_workspace_payload_applies_knowledge_feedback_overlay(self) -> None:
         source = SourcePackage(

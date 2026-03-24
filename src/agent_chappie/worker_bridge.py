@@ -229,6 +229,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         draft_segments,
         knowledge_cards,
         fact_chips,
+        evidence_units,
         feedback_rows,
         generation_memory_rows,
     )
@@ -835,6 +836,7 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
         draft_segments,
         knowledge_cards,
         fact_chips,
+        evidence_units,
         feedback_rows,
         generation_memory_rows,
     )
@@ -1246,12 +1248,13 @@ def write_tasks_from_segments(
     draft_segments: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]] | None = None,
     generation_memory_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     candidates: list[dict[str, Any]] = []
     for segment in draft_segments:
-        task = segment_to_task(source, segment, observations, knowledge_cards, fact_chips)
+        task = segment_to_task(source, segment, observations, knowledge_cards, fact_chips, evidence_units)
         if task:
             candidates.append(task)
 
@@ -1279,11 +1282,11 @@ def segment_to_task(
     observations: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     segment_text = str(segment["segment_text"])
     lowered = segment_text.lower()
     evidence_refs = segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"]
-    supporting_source_refs = unique_values(list(segment.get("source_refs") or []))
     domain = infer_domain_from_sources(source, fact_chips)
     detail = extract_action_detail(segment_text)
     competitor = infer_segment_competitor(segment_text, source)
@@ -1291,6 +1294,16 @@ def segment_to_task(
     primary_channel = infer_primary_channel(domain, lowered)
     comparison_channel = "pricing page" if "pricing" in lowered or "onboarding" in lowered else primary_channel
     timing_window = detail.get("timeframe") or "this week"
+    move_bucket = infer_task_move_bucket(segment["segment_kind"], lowered)
+    supporting_source_refs, strongest_excerpt = select_task_support_bundle(
+        segment_text=segment_text,
+        segment_source_refs=list(segment.get("source_refs") or []),
+        evidence_units=evidence_units,
+        competitor=competitor,
+        move_bucket=move_bucket,
+    )
+    if not strongest_excerpt:
+        strongest_excerpt = segment_text
 
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
         competitor_name = competitor or "the strongest visible competitor"
@@ -1317,7 +1330,7 @@ def segment_to_task(
             "done_definition": f"The {comparison_channel} contains a live pricing comparison block and onboarding FAQ that explicitly answers {competitor_name}'s lower-friction commercial claim.",
             "execution_steps": execution_steps,
             "supporting_source_refs": supporting_source_refs,
-            "strongest_evidence_excerpt": segment_text,
+            "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
         competitor_name = competitor or "the current market leader"
@@ -1347,7 +1360,7 @@ def segment_to_task(
             "done_definition": f"The {channel} now answers {competitor_name}'s strongest offer or positioning claim in the first comparison section.",
             "execution_steps": execution_steps,
             "supporting_source_refs": supporting_source_refs,
-            "strongest_evidence_excerpt": segment_text,
+            "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
         return {
@@ -1368,7 +1381,7 @@ def segment_to_task(
                 mechanism="Request one missing proprietary fact in a single message and add it back to this workspace.",
             ),
             "supporting_source_refs": supporting_source_refs,
-            "strongest_evidence_excerpt": segment_text,
+            "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
         competitor_name = competitor or "the exposed competitor"
@@ -1395,7 +1408,7 @@ def segment_to_task(
             "done_definition": f"You have a confirmed meeting, offer, or first-right-of-access with {competitor_name} tied to the exposed asset or transition window.",
             "execution_steps": execution_steps,
             "supporting_source_refs": supporting_source_refs,
-            "strongest_evidence_excerpt": segment_text,
+            "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["importance"] >= 0.7:
         competitor_name = competitor or "the current market leader"
@@ -1423,7 +1436,7 @@ def segment_to_task(
             "done_definition": f"The {proof_channel} contains at least two concrete proof blocks that directly answer the trust pressure in the market.",
             "execution_steps": execution_steps,
             "supporting_source_refs": supporting_source_refs,
-            "strongest_evidence_excerpt": segment_text,
+            "strongest_evidence_excerpt": strongest_excerpt,
         }
     return None
 
@@ -1676,6 +1689,7 @@ def generate_learning_checklist(
     draft_segments: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]],
     generation_memory_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1704,6 +1718,7 @@ def generate_learning_checklist(
         draft_segments,
         knowledge_cards,
         fact_chips,
+        evidence_units,
         feedback_rows,
         generation_memory_rows,
     )
@@ -2679,6 +2694,91 @@ def strongest_offer_hint(text: str) -> str | None:
     if "integration" in lowered:
         return "integration"
     return None
+
+
+def infer_task_move_bucket(segment_kind: str, lowered_text: str) -> str:
+    if segment_kind in {"pricing", "pricing_packaging"} or any(token in lowered_text for token in ("price", "pricing", "package", "bundle", "onboarding")):
+        return "pricing_or_offer_move"
+    if segment_kind in {"offer", "offer_positioning", "positioning"} or any(token in lowered_text for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
+        return "messaging_or_positioning_move"
+    if segment_kind in {"opportunity", "closure", "asset_sale"} or any(token in lowered_text for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
+        return "intercept_or_capture_move"
+    if segment_kind in {"open_questions", "timing"} or any(token in lowered_text for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
+        return "information_request"
+    return "proof_or_trust_move" if any(token in lowered_text for token in ("proof", "testimonial", "integration", "trust")) else "messaging_or_positioning_move"
+
+
+def score_task_supporting_source(
+    *,
+    source_ref: str,
+    segment_text: str,
+    evidence_units: list[dict[str, Any]],
+    competitor: str | None,
+    move_bucket: str,
+) -> tuple[float, str | None]:
+    relevant_units = [unit for unit in evidence_units if unit.get("source_ref") == source_ref]
+    if not relevant_units:
+        return 0.0, None
+
+    keywords = {
+        token
+        for token in re.findall(r"[a-z0-9]+", segment_text.lower())
+        if len(token) >= 4 and token not in {"this", "week", "your", "from", "with", "that", "they", "into", "current", "source", "sources"}
+    }
+    bucket_kinds = {
+        "pricing_or_offer_move": {"pricing", "pricing_change", "offer"},
+        "messaging_or_positioning_move": {"offer", "positioning", "messaging_shift", "segment"},
+        "intercept_or_capture_move": {"opportunity", "closure", "asset_sale", "opening"},
+        "proof_or_trust_move": {"proof", "proof_signal"},
+        "information_request": {"timing", "segment", "market"},
+    }.get(move_bucket, {"market"})
+
+    best_excerpt: str | None = None
+    best_score = 0.0
+    aggregate = 0.0
+    competitor_lc = (competitor or "").lower()
+    for unit in relevant_units:
+        text = f"{unit.get('label') or ''} {unit.get('excerpt') or ''}".lower()
+        score = float(unit.get("confidence") or 0)
+        if competitor_lc and competitor_lc in text:
+            score += 1.5
+        if str(unit.get("unit_kind") or "") in bucket_kinds:
+            score += 1.2
+        overlap = sum(1 for token in keywords if token in text)
+        score += min(2.0, overlap * 0.25)
+        aggregate += score
+        if score > best_score:
+            best_score = score
+            best_excerpt = str(unit.get("excerpt") or unit.get("label") or "").strip()[:220] or None
+
+    return aggregate / max(1, len(relevant_units)), best_excerpt
+
+
+def select_task_support_bundle(
+    *,
+    segment_text: str,
+    segment_source_refs: list[str],
+    evidence_units: list[dict[str, Any]],
+    competitor: str | None,
+    move_bucket: str,
+) -> tuple[list[str], str | None]:
+    scored: list[tuple[str, float, str | None]] = []
+    for source_ref in unique_values(segment_source_refs):
+        score, excerpt = score_task_supporting_source(
+            source_ref=source_ref,
+            segment_text=segment_text,
+            evidence_units=evidence_units,
+            competitor=competitor,
+            move_bucket=move_bucket,
+        )
+        if score > 0:
+            scored.append((source_ref, score, excerpt))
+
+    scored.sort(key=lambda item: item[1], reverse=True)
+    filtered = [item for item in scored if item[1] >= 0.85]
+    chosen = filtered[:3] if filtered else scored[:2]
+    strongest_excerpt = chosen[0][2] if chosen else None
+    return [item[0] for item in chosen], strongest_excerpt
 
 
 def build_task_execution_steps(

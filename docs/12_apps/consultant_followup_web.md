@@ -143,6 +143,7 @@ The next evidence layer is now explicit:
 - task detail should prefer that metadata over title-only heuristics so the operator sees narrower, cleaner evidence and clearer execution guidance
 - task detail should surface human-readable evidence chips, not raw internal evidence ids
 - task detail should narrow linked evidence to task-scoped supporting sources before falling back to broader workspace evidence
+- supporting sources should now be explicitly ranked per task so weak or off-theme sources can be excluded instead of merely displayed
 
 ## Sources and activity
 
