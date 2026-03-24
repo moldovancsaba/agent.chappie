@@ -1386,7 +1386,10 @@ export function DemoWorkspace() {
                   <h2>Exactly three actions. No dashboard clutter.</h2>
                   <p className="section-subcopy">The checklist stays focused on the next moves that matter most right now.</p>
                 </div>
-                <span className="status-pill">{currentStatus}</span>
+                <div className="section-head-badges">
+                  <span className="status-pill">{currentStatus}</span>
+                  <span className="section-count-badge">{tasks.length} tasks live</span>
+                </div>
               </div>
 
               {submissionError ? (
@@ -1764,6 +1767,7 @@ export function DemoWorkspace() {
                   <h2>Structured knowledge from the source set</h2>
                   <p className="section-subcopy">Know More is the knowledge surface. It stays useful even when the checklist is blocked.</p>
                 </div>
+                <span className="section-count-badge">{filteredKnowledgeCards.length} cards</span>
               </div>
               {focusedSourceRef ? (
                 <div className="notice success">
@@ -2103,6 +2107,7 @@ export function DemoWorkspace() {
                   <h2>Monitor your market and capture signals automatically.</h2>
                   <p className="section-subcopy">Add one source first. We will watch it, synthesize what changed, and surface actions when a strong move emerges.</p>
                 </div>
+                <span className="section-count-badge">{workspace?.source_cards.length ?? 0} sources</span>
               </div>
 
               <div className="monitoring-actions">

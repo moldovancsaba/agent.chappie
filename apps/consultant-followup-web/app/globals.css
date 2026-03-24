@@ -353,6 +353,11 @@ textarea {
   min-width: 0;
 }
 
+.secondary-column .section-card {
+  position: sticky;
+  top: 20px;
+}
+
 .section-card {
   padding: 24px 26px;
 }
@@ -405,6 +410,26 @@ textarea {
   color: var(--ok);
   font-size: 0.9rem;
   font-weight: 600;
+}
+
+.section-head-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.section-count-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
 }
 
 .task-card-list {
@@ -1057,6 +1082,10 @@ textarea {
   }
 
   .workspace-sidebar {
+    position: static;
+  }
+
+  .secondary-column .section-card {
     position: static;
   }
 
