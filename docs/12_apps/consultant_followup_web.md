@@ -228,6 +228,12 @@ If a stored result still matches known stale legacy task patterns, the app must 
 - task-card feedback must be automatic:
   - clicking the task action is the save action
   - text-based actions should persist on blur without a second explicit submit request
+- the next most important unfinished product behavior is still the learning loop:
+  - rejected tasks should be replaced immediately
+  - `Delete and teach` should influence later task generation more strongly
+  - comments should drive regeneration, not just be stored
+  - edited tasks should become preferred future patterns
+  - the visible checklist should remain at exactly 3 tasks after replacement
 - visible last run, last result summary, and current status for sources
 - visible trigger type, schedule, last three runs, last action summary, and expected impact summary for jobs
 - knowledge cards must support:

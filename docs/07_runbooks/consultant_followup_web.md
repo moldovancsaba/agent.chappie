@@ -241,6 +241,21 @@ Use `We` for the service voice and `You` for the operator in all user-facing cop
 Do not ship detached internal product language such as `the worker` or `the user` on visible screens.
 Task feedback must save automatically from the action button or text-field blur. Do not require a second `Submit decisions` step after the operator already clicked the task action.
 
+## Highest-priority unresolved behavior
+
+The most important unfinished behavior is the task-side learning loop.
+
+In plain English:
+
+- if You reject a task, We should replace it immediately
+- if You delete a task and explain why, We should remember that reason and stop repeating the same kind of weak task as often
+- if You comment on a task, the regenerated replacement should change because of that comment
+- if You edit a task, that edit should become a preferred pattern for similar future tasks
+- after replacement, the checklist should still stay at exactly 3 tasks
+
+Do not treat minor UI polish as more important than this.
+The system is already usable enough to expose this as the next real product bottleneck.
+
 ## Knowledge surface behavior
 
 - `Checklist` is action-only

@@ -258,6 +258,75 @@ Proof requirements:
 
 ## Phase 6 - execution observability enhancements
 
+## Phase 7 - Real task learning loop
+
+Status:
+
+- partially implemented
+- not yet accepted as complete
+
+What is already true:
+
+- task cards now support live operator actions such as:
+  - `Done`
+  - `Adjust`
+  - `Delete`
+  - `Delete and teach`
+  - `Hold for later`
+  - `Remove source and rebuild`
+- task-card feedback now saves automatically from the action itself or from text-field blur
+- feedback is persisted locally in the Mac mini brain
+- the checklist regenerates after feedback instead of waiting for a second manual submit step
+
+What is still missing:
+
+- the system does not yet behave like a strong immediate learning loop in all cases
+- bad task cards are not yet replaced sharply enough after every decline/delete/comment
+- comment text is not yet shaping future task wording and ranking strongly enough
+- hold/delete states are stored, but their effect on future task quality is still weaker than the product goal
+
+Plain-English objective:
+
+When You say a task is bad, the system should immediately understand that signal, replace the task, keep the checklist at exactly 3, and stop making the same kind of mistake as often in future runs.
+
+Required behavior:
+
+- `decline_and_replace`
+  - if You reject a task, We should generate a replacement immediately
+  - the checklist should stay at exactly 3 tasks
+  - the replacement should not be a trivial restatement of the rejected task
+
+- `delete_and_teach`
+  - if You delete a task and explain why, We should remove it from the live set and store that explanation as local learning
+  - future similar tasks should be penalized or rewritten
+
+- `comment_driven_regeneration`
+  - if You comment that a task is vague, overlapping, weak, badly timed, or pointed at the wrong channel, that comment should influence the regenerated replacement
+  - comments should matter even when You do not fully rewrite the task yourself
+
+- `edit_as_preference_learning`
+  - if You adjust a task title or wording, We should treat that as a preferred pattern
+  - future similar tasks should move toward the edited form
+
+- `always_three_after_feedback`
+  - after decline, delete, hold, or comment-driven replacement, the visible checklist should still contain exactly 3 tasks unless the source itself was explicitly removed and the project must be rebuilt from weaker evidence
+
+Acceptance criteria:
+
+- one rejected task is replaced immediately
+- one deleted-and-taught task changes later task generation
+- one comment changes the regenerated output in a visible way
+- one edited task creates a detectable preference pattern
+- the checklist remains at 3 tasks after replacement
+- learning stays local to the Mac mini brain
+
+Proof requirements:
+
+- updated worker tests
+- one worked before/after example per feedback type
+- exact local persistence paths and schema references
+- explicit handoff documenting what still remains after the pass
+
 Status:
 
 - planned, not implemented
