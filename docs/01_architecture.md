@@ -156,6 +156,7 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
 - those units may now carry explicit channel, section, asset, and claim structure
 - clause-derived units with strong action structure should be allowed to seed draft segments directly
 - the knowledge surface clusters those units into reusable cards
+- the visible card layer should prefer action-aware unit clusters over broad unit labels when it can do so truthfully
 - task generation should prefer those clustered units over broad source-level summaries
 - task detail should prefer task-specific evidence bundles with:
   - supporting source refs

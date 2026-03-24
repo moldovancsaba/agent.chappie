@@ -188,6 +188,7 @@ Do not ship detached internal product language such as `the worker` or `the user
 - those evidence units should preserve explicit channel, section, asset, and claim details when the source contains them
 - high-signal source clauses with explicit action structure should become evidence units too, not just fact-chip or observation derivatives
 - draft segments should now include unit-cluster-derived segments before broader card-level summaries
+- key knowledge cards such as pricing, offer/positioning, and proof should prefer action-aware unit clusters for their visible items
 - the worker should rebuild `market_summary`, `competitors_detected`, `pricing_packaging`, `offer_positioning`, `proof_signals`, and `open_questions` from clustered evidence units instead of broad source blur
 - when Agent.Chappie can fetch missing public-web competitor context itself, that enrichment should happen automatically and be stored in the local brain before the system asks the operator to research anything
 - auto-collected enrichment must remain visually distinct from operator-provided sources in the UI

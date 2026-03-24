@@ -67,6 +67,32 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue(any("pricing comparison block" in title for title in segment_titles))
             self.assertTrue(any("hero section" in title or "homepage comparison section" in title for title in segment_titles))
 
+    def test_knowledge_cards_prefer_action_aware_unit_items(self) -> None:
+        source = SourcePackage(
+            project_id="project_action_cards",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text=(
+                "Add a pricing comparison block and onboarding FAQ to the pricing page this week before Fortitude AI's free trial sets buyer expectations. "
+                "Rewrite the homepage hero section to answer the no engineering required claim before comparison-stage buyers default to Fortitude AI."
+            ),
+            source_ref="source_action_cards",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            save_source_snapshot(source.__dict__, build_source_hash(source), db_path)
+
+            workspace = build_workspace_payload(
+                "project_action_cards",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+
+            pricing_card = next(card for card in workspace["knowledge_cards"] if card["knowledge_id"] == "pricing_packaging")
+            positioning_card = next(card for card in workspace["knowledge_cards"] if card["knowledge_id"] == "offer_positioning")
+            self.assertTrue(any("pricing comparison block" in item.lower() for item in pricing_card["items"]))
+            self.assertTrue(any("hero section" in item.lower() or "homepage comparison section" in item.lower() for item in positioning_card["items"]))
+
     def test_auto_research_rejects_irrelevant_public_results(self) -> None:
         source = SourcePackage(
             project_id="project_auto_research",

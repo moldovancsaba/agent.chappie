@@ -1024,7 +1024,10 @@ def build_knowledge_cards(
 
     pricing_facts = facts_by_category.get("pricing", [])
     pricing_units = units_by_kind.get("pricing", []) + units_by_kind.get("pricing_packaging", [])
-    pricing_items = [unit["label"] for unit in pricing_units[:5]] or [fact["label"] for fact in pricing_facts]
+    pricing_items = action_aware_card_items(
+        pricing_units,
+        [unit["label"] for unit in pricing_units[:5]] or [fact["label"] for fact in pricing_facts],
+    )
     cards.append(
         knowledge_card(
             "pricing_packaging",
@@ -1048,7 +1051,10 @@ def build_knowledge_cards(
 
     positioning_facts = facts_by_category.get("offer", []) + facts_by_category.get("positioning", []) + facts_by_category.get("segment", [])
     positioning_units = units_by_kind.get("offer", []) + units_by_kind.get("positioning", []) + units_by_kind.get("segment", [])
-    positioning_items = [unit["label"] for unit in positioning_units[:5]] or [fact["label"] for fact in positioning_facts]
+    positioning_items = action_aware_card_items(
+        positioning_units,
+        [unit["label"] for unit in positioning_units[:5]] or [fact["label"] for fact in positioning_facts],
+    )
     cards.append(
         knowledge_card(
             "offer_positioning",
@@ -1072,7 +1078,10 @@ def build_knowledge_cards(
 
     proof_facts = facts_by_category.get("proof", [])
     proof_units = units_by_kind.get("proof", [])
-    proof_items = [unit["label"] for unit in proof_units[:5]] or [fact["label"] for fact in proof_facts]
+    proof_items = action_aware_card_items(
+        proof_units,
+        [unit["label"] for unit in proof_units[:5]] or [fact["label"] for fact in proof_facts],
+    )
     cards.append(
         knowledge_card(
             "proof_signals",
@@ -2909,6 +2918,49 @@ def unit_cluster_title(unit: dict[str, Any]) -> str:
     if channel:
         return f"{channel.title()} move"
     return humanize_fact_category(str(unit.get("unit_kind") or "evidence"))
+
+
+def cluster_units_by_action_shape(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    clusters: dict[str, list[dict[str, Any]]] = {}
+    for unit in units:
+        key = "|".join(
+            [
+                str(unit.get("unit_kind") or ""),
+                str(unit.get("asset") or ""),
+                str(unit.get("section") or ""),
+                str(unit.get("channel") or ""),
+                str(unit.get("claim") or ""),
+            ]
+        ).lower()
+        if not key.replace("|", "").strip():
+            continue
+        clusters.setdefault(key, []).append(unit)
+
+    clustered: list[dict[str, Any]] = []
+    for cluster_units in clusters.values():
+        cluster_units.sort(key=lambda unit: float(unit.get("confidence") or 0), reverse=True)
+        strongest = dict(cluster_units[0])
+        strongest["cluster_size"] = len(cluster_units)
+        strongest["label"] = unit_cluster_title(strongest)
+        clustered.append(strongest)
+    clustered.sort(key=lambda unit: (float(unit.get("confidence") or 0), int(unit.get("cluster_size") or 0)), reverse=True)
+    return clustered
+
+
+def action_aware_card_items(units: list[dict[str, Any]], fallback_labels: list[str], limit: int = 5) -> list[str]:
+    action_units = cluster_units_by_action_shape(units)
+    if action_units:
+        items: list[str] = []
+        for unit in action_units[:limit]:
+            excerpt = str(unit.get("excerpt") or "").strip()
+            label = str(unit.get("label") or "").strip()
+            if excerpt and excerpt.lower() != label.lower():
+                items.append(f"{label}: {excerpt}")
+            elif label:
+                items.append(label)
+        if items:
+            return items
+    return fallback_labels[:limit]
 
 
 def build_unit_cluster_segments(
