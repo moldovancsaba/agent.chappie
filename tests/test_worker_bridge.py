@@ -144,6 +144,9 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("best_before", top_task)
             self.assertIn("is_next_best_action", top_task)
             self.assertIn("confidence_class", top_task)
+            task_types = [task["task_type"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
+            self.assertLessEqual(task_types.count("information_request"), 1)
+            self.assertGreaterEqual(sum(task_type != "information_request" for task_type in task_types), 2)
 
     def test_task_feedback_regenerates_three_tasks(self) -> None:
         payload = {

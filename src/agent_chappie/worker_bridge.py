@@ -939,8 +939,12 @@ def write_tasks_from_segments(
         if task:
             candidates.append(task)
 
+    has_actionable_candidates = any(
+        task.get("task_type") in {"direct_competitive_move", "tactical_response", "capture_move", "competitive_response", "general_business_value"}
+        for task in candidates
+    )
     if len(candidates) < 3:
-        candidates.extend(build_missing_information_tasks(source, draft_segments, fact_chips))
+        candidates.extend(build_missing_information_tasks(source, draft_segments, fact_chips, has_actionable_candidates))
 
     judged = judge_tasks(candidates[:12], source, feedback_rows or [])
     if not judged:
@@ -968,11 +972,11 @@ def segment_to_task(
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
         return {
             "rank": 0,
-            "title": "Pull the live pricing, package, and onboarding terms this week and publish one comparison response before buyers lock in a competitor frame",
+            "title": "Publish a pricing and onboarding comparison this week before buyers lock in the current competitor frame",
             "why_now": f"The worker drafted a pricing segment from the source set: {segment_text}",
-            "expected_advantage": "Improves pricing-page conversion and reduces blind offer changes this week by confirming the real commercial comparison buyers will make.",
+            "expected_advantage": "Improves conversion for active comparison-stage buyers this week by reducing price and onboarding friction versus the market frame already shaping decisions.",
             "evidence_refs": evidence_refs,
-            "task_type": "information_request",
+            "task_type": "direct_competitive_move",
         }
     if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
         channel = "enrollment page" if domain == "academy" else "homepage comparison section"
@@ -982,7 +986,7 @@ def segment_to_task(
             "why_now": f"The worker drafted a buyer-pressure segment: {segment_text}",
             "expected_advantage": "Improves conversion for comparison-stage buyers this week by answering the exact low-friction or trust claim competitors are using against you.",
             "evidence_refs": evidence_refs,
-            "task_type": "competitive_response",
+            "task_type": "tactical_response",
         }
     if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
         return {
@@ -1018,6 +1022,7 @@ def build_missing_information_tasks(
     source: SourcePackage,
     draft_segments: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
+    has_actionable_candidates: bool,
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     strongest = draft_segments[:3]
@@ -1048,6 +1053,17 @@ def build_missing_information_tasks(
                     "task_type": "general_business_value",
                 }
             )
+        elif segment["segment_kind"] in {"pricing", "pricing_packaging"}:
+            candidates.append(
+                {
+                    "rank": 0,
+                    "title": "Ship one simpler pricing or onboarding entry move this week before comparison-stage buyers decide your offer is harder to adopt",
+                    "why_now": f"The drafter found commercial friction in the market picture: {segment['segment_text']}",
+                    "expected_advantage": f"Improves conversion for active {audience} this week by lowering adoption friction before buyers choose a lower-friction competitor path.",
+                    "evidence_refs": evidence_refs,
+                    "task_type": "direct_competitive_move",
+                }
+            )
         elif segment["segment_kind"] == "source_clause":
             candidates.append(
                 {
@@ -1060,6 +1076,8 @@ def build_missing_information_tasks(
                 }
             )
 
+    info_request_count = sum(1 for candidate in candidates if candidate.get("task_type") == "information_request")
+
     if not candidates:
         candidates.append(
             {
@@ -1067,6 +1085,17 @@ def build_missing_information_tasks(
                 "title": "Request one sharper source this week that exposes a competitor move, buyer objection, or timing window the worker can act on",
                 "why_now": "The drafter created knowledge segments, but the writer still lacks one decisive competitor or timing signal to turn that market picture into a dominant move.",
                 "expected_advantage": "Improves win rate and conversion next week by filling the evidence gap that is currently preventing a stronger competitive response.",
+                "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
+                "task_type": "information_request",
+            }
+        )
+    elif not has_actionable_candidates and info_request_count == 0:
+        candidates.append(
+            {
+                "rank": 0,
+                "title": "Request one sharper source this week that exposes the missing competitor move or buyer objection behind this market pattern",
+                "why_now": "The worker can see market pressure, but one decisive source is still missing before it can recommend a stronger intercept or capture move.",
+                "expected_advantage": "Improves task quality this week by adding the exact missing evidence needed to convert market context into a stronger business move.",
                 "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
                 "task_type": "information_request",
             }
@@ -1112,9 +1141,21 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
             },
         )
 
-    judged.sort(key=lambda task: task_priority_score(task), reverse=True)
+    info_request_limit = 1 if any(
+        task.get("task_type") in {"direct_competitive_move", "tactical_response", "capture_move", "competitive_response", "general_business_value"}
+        for task in judged
+    ) else 3
+    filtered: list[dict[str, Any]] = []
+    info_request_seen = 0
+    for task in sorted(judged, key=lambda task: task_priority_score(task), reverse=True):
+        if task.get("task_type") == "information_request":
+            if info_request_seen >= info_request_limit:
+                continue
+            info_request_seen += 1
+        filtered.append(task)
+
     now = datetime.now(UTC)
-    for index, task in enumerate(judged[:3], start=1):
+    for index, task in enumerate(filtered[:3], start=1):
         task["rank"] = index
         task["is_next_best_action"] = index == 1
         task["priority_label"] = "critical" if index == 1 else "high" if index == 2 else "normal"
@@ -1127,7 +1168,7 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
         )
         best_before_days = 2 if index == 1 else 4 if index == 2 else 6
         task["best_before"] = (now + timedelta(days=best_before_days)).date().isoformat()
-    return judged[:3]
+    return filtered[:3]
 
 
 def generate_guaranteed_task_triplet(
@@ -1231,14 +1272,21 @@ def task_priority_score(task: dict[str, Any]) -> int:
     title = task["title"].lower()
     why = task["why_now"].lower()
     score = 0
+    task_type = task.get("task_type")
+    if task_type == "capture_move":
+        score += 6
+    elif task_type == "direct_competitive_move":
+        score += 5
+    elif task_type in {"tactical_response", "competitive_response"}:
+        score += 4
+    elif task_type == "general_business_value":
+        score += 3
+    elif task_type == "information_request":
+        score += 1
     if "this week" in title or "this week" in why:
         score += 3
     if any(token in title or token in why for token in ("before", "closure", "capture", "pricing", "trial", "offer")):
         score += 3
-    if task.get("task_type") == "capture_move":
-        score += 3
-    if task.get("task_type") == "information_request":
-        score += 1
     return score
 
 
