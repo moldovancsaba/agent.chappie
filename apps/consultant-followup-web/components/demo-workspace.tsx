@@ -395,6 +395,22 @@ function inferSourceLabel(sourceKind: SourceFormState["sourceKind"], contentText
   return "Source note";
 }
 
+function fallbackSourceLabel(sourceRef: string) {
+  if (!sourceRef) {
+    return "No linked source";
+  }
+  if (sourceRef.startsWith("feedback::")) {
+    return "Operator feedback";
+  }
+  if (sourceRef.startsWith("source_job_")) {
+    return "Uploaded source";
+  }
+  if (sourceRef.startsWith("source_")) {
+    return "Source";
+  }
+  return titleCaseWords(sourceRef.replaceAll("_", " "));
+}
+
 function normalizeWorkspaceSnapshot(payload: Partial<WorkspaceSnapshot> & { project_id: string }) {
   return {
     project_id: payload.project_id,
@@ -966,6 +982,26 @@ export function DemoWorkspace() {
   const blockedResult =
     jobResult && jobResult.status === "blocked" && !isCompleteResultWithTasks(jobResult) ? jobResult : null;
   const tasks = completeResult?.result_payload.recommended_tasks ?? [];
+  const sourceLabelByRef = new Map<string, string>();
+  for (const source of workspace?.source_cards ?? []) {
+    sourceLabelByRef.set(source.source_ref, source.label);
+  }
+  for (const source of workspace?.recent_sources ?? []) {
+    if (!sourceLabelByRef.has(source.source_ref)) {
+      sourceLabelByRef.set(source.source_ref, `${sourceKindLabel(source.source_kind)} source`);
+    }
+  }
+  for (const job of workspace?.monitor_jobs ?? []) {
+    if (job.last_source_ref && !sourceLabelByRef.has(job.last_source_ref)) {
+      sourceLabelByRef.set(job.last_source_ref, fallbackSourceLabel(job.last_source_ref));
+    }
+  }
+  const humanSourceLabel = (sourceRef: string | null | undefined) => {
+    if (!sourceRef) {
+      return "No linked source";
+    }
+    return sourceLabelByRef.get(sourceRef) ?? fallbackSourceLabel(sourceRef);
+  };
   const confidence = completeResult?.decision_summary?.confidence;
   const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
   const topKnowledge = workspace?.knowledge_summary[0];
@@ -1398,7 +1434,7 @@ export function DemoWorkspace() {
               {focusedSourceRef ? (
                 <div className="notice success">
                   <p>
-                    Filtering knowledge to source <strong>{focusedSourceRef}</strong>.
+                    Filtering knowledge to source <strong>{humanSourceLabel(focusedSourceRef)}</strong>.
                   </p>
                   <button className="button-secondary" type="button" onClick={() => setFocusedSourceRef(null)}>
                     Show all knowledge
@@ -1546,7 +1582,7 @@ export function DemoWorkspace() {
                             type="button"
                             onClick={() => setFocusedSourceRef(sourceRef)}
                           >
-                            {sourceRef}
+                            {humanSourceLabel(sourceRef)}
                           </button>
                         ))}
                       </div>
@@ -2032,7 +2068,7 @@ export function DemoWorkspace() {
                         <article className="job-item" key={job.job_name}>
                           <strong>{job.job_name}</strong>
                           <span>Status: {job.status}</span>
-                          <p>Last run: {formatTimestamp(job.last_run_at)} · last source: {job.last_source_ref ?? "none"}</p>
+                          <p>Last run: {formatTimestamp(job.last_run_at)} · last source: {humanSourceLabel(job.last_source_ref)}</p>
                         </article>
                       ))
                     )}
@@ -2082,7 +2118,7 @@ export function DemoWorkspace() {
                       <div className="job-item" key={job.job_name}>
                         <strong>{job.job_name}</strong>
                         <span>Status: {job.status}</span>
-                        <p>Last run: {formatTimestamp(job.last_run_at)} · last source: {job.last_source_ref ?? "none"}</p>
+                        <p>Last run: {formatTimestamp(job.last_run_at)} · last source: {humanSourceLabel(job.last_source_ref)}</p>
                       </div>
                     ))
                   ) : (
