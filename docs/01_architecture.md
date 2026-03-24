@@ -154,6 +154,7 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
 
 - each ingested or auto-collected source is broken into smaller evidence units
 - those units may now carry explicit channel, section, asset, and claim structure
+- clause-derived units with strong action structure should be allowed to seed draft segments directly
 - the knowledge surface clusters those units into reusable cards
 - task generation should prefer those clustered units over broad source-level summaries
 - task detail should prefer task-specific evidence bundles with:

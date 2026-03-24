@@ -186,6 +186,8 @@ Do not ship detached internal product language such as `the worker` or `the user
 - `Know More` should surface worker-drafted knowledge segments created from the complete source set
 - the worker should persist atomic `evidence_units` so one source can feed multiple knowledge cards and multiple sources can strengthen one card
 - those evidence units should preserve explicit channel, section, asset, and claim details when the source contains them
+- high-signal source clauses with explicit action structure should become evidence units too, not just fact-chip or observation derivatives
+- draft segments should now include unit-cluster-derived segments before broader card-level summaries
 - the worker should rebuild `market_summary`, `competitors_detected`, `pricing_packaging`, `offer_positioning`, `proof_signals`, and `open_questions` from clustered evidence units instead of broad source blur
 - when Agent.Chappie can fetch missing public-web competitor context itself, that enrichment should happen automatically and be stored in the local brain before the system asks the operator to research anything
 - auto-collected enrichment must remain visually distinct from operator-provided sources in the UI

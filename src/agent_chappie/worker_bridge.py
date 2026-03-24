@@ -219,6 +219,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         aggregated or observations,
         knowledge_cards,
         fact_chips,
+        evidence_units,
     )
     replace_draft_segments(source_package.project_id, draft_segments, path=config.local_db_path)
     feedback_rows = list_task_feedback_rows(source_package.project_id, path=config.local_db_path)
@@ -709,6 +710,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             observation_rows,
             knowledge_cards,
             fact_chips,
+            evidence_units,
         )
         replace_draft_segments(project_id, draft_segments, path=config.local_db_path)
     else:
@@ -816,6 +818,7 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
             observation_rows,
             knowledge_cards,
             fact_chips,
+            evidence_units,
         )
         replace_draft_segments(project_id, draft_segments, path=config.local_db_path)
 
@@ -1133,6 +1136,7 @@ def build_draft_segments(
     observation_rows: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     segments: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1163,6 +1167,18 @@ def build_draft_segments(
                 "importance": round(float(importance), 2),
                 "confidence": round(float(confidence), 2),
             }
+        )
+
+    for cluster_segment in build_unit_cluster_segments(project_id=project_id, evidence_units=evidence_units)[:16]:
+        add_segment(
+            cluster_segment["segment_id"],
+            cluster_segment["segment_kind"],
+            cluster_segment["title"],
+            cluster_segment["segment_text"],
+            cluster_segment["source_refs"],
+            cluster_segment["evidence_refs"],
+            cluster_segment["importance"],
+            cluster_segment["confidence"],
         )
 
     for card in knowledge_cards:
@@ -2829,6 +2845,22 @@ def build_evidence_units(
             confidence=float(row.get("confidence", 0.7)),
         )
 
+    for row in source_rows:
+        for clause in extract_clauses(str(row.get("raw_text") or "")):
+            normalized_clause = clause.strip()
+            if len(normalized_clause) < 32 or is_technical_residue(normalized_clause):
+                continue
+            detail = extract_action_detail(normalized_clause)
+            if not any(detail.get(key) for key in ("channel", "section", "asset", "claim", "offer", "timeframe")):
+                continue
+            add_unit(
+                source_ref=row["source_ref"],
+                unit_kind="source_clause",
+                label=normalize_fact_label(normalized_clause) or normalized_clause,
+                excerpt=normalized_clause,
+                confidence=0.58,
+            )
+
     return units[:400]
 
 
@@ -2861,6 +2893,66 @@ def unique_units_by_label(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         result.append(unit)
     return result
+
+
+def unit_cluster_title(unit: dict[str, Any]) -> str:
+    asset = str(unit.get("asset") or "").strip()
+    section = str(unit.get("section") or "").strip()
+    channel = str(unit.get("channel") or "").strip()
+    claim = str(unit.get("claim") or "").strip()
+    if asset and channel:
+        return f"{asset.title()} on {channel.title()}"
+    if section and channel:
+        return f"{section.title()} on {channel.title()}"
+    if claim:
+        return f"{claim.title()} pressure"
+    if channel:
+        return f"{channel.title()} move"
+    return humanize_fact_category(str(unit.get("unit_kind") or "evidence"))
+
+
+def build_unit_cluster_segments(
+    *,
+    project_id: str,
+    evidence_units: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    clusters: dict[str, list[dict[str, Any]]] = {}
+    for unit in evidence_units:
+        cluster_key = "|".join(
+            [
+                str(unit.get("unit_kind") or ""),
+                str(unit.get("asset") or ""),
+                str(unit.get("section") or ""),
+                str(unit.get("channel") or ""),
+                str(unit.get("claim") or ""),
+            ]
+        ).lower()
+        if not cluster_key.replace("|", "").strip():
+            continue
+        clusters.setdefault(cluster_key, []).append(unit)
+
+    segments: list[dict[str, Any]] = []
+    for cluster_units in clusters.values():
+        cluster_units.sort(key=lambda unit: float(unit.get("confidence") or 0), reverse=True)
+        strongest = cluster_units[0]
+        source_refs = flatten_unit_source_refs(cluster_units)
+        segment_text = str(strongest.get("excerpt") or strongest.get("label") or "").strip()
+        if not segment_text:
+            continue
+        unit_id = str(strongest.get("unit_id") or "")
+        segments.append(
+            {
+                "segment_id": f"{project_id}::unit-cluster::{abs(hash((unit_id, strongest.get('asset'), strongest.get('claim'), strongest.get('channel'))))}",
+                "segment_kind": str(strongest.get("unit_kind") or "evidence_cluster"),
+                "title": unit_cluster_title(strongest),
+                "segment_text": segment_text,
+                "source_refs": source_refs,
+                "evidence_refs": [f"unit::{str(unit.get('unit_id') or '')}" for unit in cluster_units if unit.get("unit_id")],
+                "importance": round(min(0.97, 0.45 + max(float(unit.get("confidence") or 0) for unit in cluster_units)), 2),
+                "confidence": round(float(strongest.get("confidence") or 0), 2),
+            }
+        )
+    return segments
 
 
 def market_summary_insight(market_units: list[dict[str, Any]], source_rows: list[dict[str, Any]]) -> str:

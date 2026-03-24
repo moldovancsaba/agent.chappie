@@ -121,6 +121,7 @@ The next evidence layer is now explicit:
 - `Know More` should be rebuilt from those units instead of flattening each source into one broad summary
 - key knowledge cards should expose `support_count` and `strongest_excerpt` so the operator can see why the card exists
 - evidence units should now persist extracted `channel`, `section`, `asset`, and `claim` details when the source makes them visible
+- clause-derived evidence units with explicit action structure should also seed draft segments directly, so one source can produce multiple sharper reusable segments
 
 ## Ingestion behavior
 

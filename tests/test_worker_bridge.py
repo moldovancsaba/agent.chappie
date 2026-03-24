@@ -42,6 +42,31 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
         self.assertEqual(detail["asset"], "pricing comparison block")
         self.assertEqual(detail["claim"], "free trial")
 
+    def test_workspace_builds_asset_aware_draft_segments_from_one_source(self) -> None:
+        source = SourcePackage(
+            project_id="project_asset_segments",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text=(
+                "Add a pricing comparison block and onboarding FAQ to the pricing page this week before Fortitude AI's free trial sets buyer expectations. "
+                "Rewrite the homepage hero section to answer the no engineering required claim before comparison-stage buyers default to Fortitude AI."
+            ),
+            source_ref="source_asset_segments",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            save_source_snapshot(source.__dict__, build_source_hash(source), db_path)
+
+            workspace = build_workspace_payload(
+                "project_asset_segments",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+
+            segment_titles = [segment["title"].lower() for segment in workspace["draft_segments"]]
+            self.assertTrue(any("pricing comparison block" in title for title in segment_titles))
+            self.assertTrue(any("hero section" in title or "homepage comparison section" in title for title in segment_titles))
+
     def test_auto_research_rejects_irrelevant_public_results(self) -> None:
         source = SourcePackage(
             project_id="project_auto_research",
