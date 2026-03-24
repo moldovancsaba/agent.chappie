@@ -48,6 +48,7 @@ The adoption is style-level, not product-level. The current app keeps Agent.Chap
 - Plus Jakarta Sans / Inter typography stack
 - tighter SaaS-style cards, borders, and shadows
 - command-center framing without reintroducing dashboard clutter
+- checklist meta should use compact neutral status chips; do not let priority/confidence/NBA expand into oversized promotional pills or full-width banners
 
 This visual direction must not weaken the product rules:
 

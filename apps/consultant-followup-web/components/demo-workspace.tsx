@@ -1512,8 +1512,8 @@ export function DemoWorkspace() {
                             <div className="task-meta">Priority: {priorityLabel(task.priority_label)}</div>
                             <div className="task-meta">Best before: {task.best_before ?? "This week"}</div>
                             <div className="task-meta">Confidence: {confidenceLabel(confidence)}{confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}</div>
+                            {task.is_next_best_action ? <div className="task-meta nba">Next best action</div> : null}
                           </div>
-                          {task.is_next_best_action ? <div className="task-meta nba">Next best action</div> : null}
                           <div className="task-block impact">
                             <span>Expected impact</span>
                             <p>{task.expected_advantage}</p>

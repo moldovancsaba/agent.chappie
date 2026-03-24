@@ -478,17 +478,29 @@ textarea {
 .task-meta-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
 }
 
 .task-meta {
-  color: var(--accent-strong);
-  font-size: 0.92rem;
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  color: var(--ink);
+  font-size: 0.88rem;
   font-weight: 600;
   padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(124, 58, 237, 0.08);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.task-meta.nba {
+  color: var(--warm);
+  border-color: rgba(37, 99, 235, 0.18);
+  background: rgba(37, 99, 235, 0.08);
+  font-weight: 700;
 }
 
 .task-block {
