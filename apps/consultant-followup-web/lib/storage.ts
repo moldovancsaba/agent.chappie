@@ -166,7 +166,8 @@ export async function saveResult(result: JobResult) {
 
 export async function getResult(jobId: string): Promise<JobResult | null> {
   if (!canUseNeon()) {
-    return memoryState().results.get(jobId) ?? null;
+    const result = memoryState().results.get(jobId) ?? null;
+    return result ? normalizeStoredJobResult(result) : null;
   }
   const sql = sqlClient();
   const rows = (await sql`
@@ -175,7 +176,45 @@ export async function getResult(jobId: string): Promise<JobResult | null> {
     where job_id = ${jobId}
     limit 1
   `) as Array<{ payload: JobResult }>;
-  return rows[0]?.payload ?? null;
+  const result = rows[0]?.payload ?? null;
+  return result ? normalizeStoredJobResult(result) : null;
+}
+
+function normalizeStoredJobResult(result: JobResult): JobResult {
+  if (
+    result.status !== "complete" ||
+    typeof result.result_payload !== "object" ||
+    result.result_payload === null ||
+    !("recommended_tasks" in result.result_payload) ||
+    !Array.isArray(result.result_payload.recommended_tasks)
+  ) {
+    return result;
+  }
+
+  return {
+    ...result,
+    result_payload: {
+      ...result.result_payload,
+      recommended_tasks: result.result_payload.recommended_tasks.map((task) => ({
+        ...task,
+        why_now: normalizeLegacyTaskText(task.why_now),
+      })),
+    },
+  };
+}
+
+function normalizeLegacyTaskText(value: string): string {
+  return value
+    .replaceAll("The worker drafted a buyer-pressure segment:", "We drafted a buyer-pressure segment from your source set:")
+    .replaceAll("The worker drafted a pricing segment from the source set:", "We drafted a pricing segment from your source set:")
+    .replaceAll(
+      "The source set is signaling how competitors or the market frame buyer value right now.",
+      "We can see how competitors and the market are framing buyer value right now."
+    )
+    .replaceAll(
+      "If this positioning becomes the default comparison language, your current offer may lose urgency or clarity.",
+      "If you do not answer that framing quickly, your current offer can lose urgency during live comparisons."
+    );
 }
 
 export async function getJob(jobId: string): Promise<JobRequest | null> {

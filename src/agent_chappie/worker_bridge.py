@@ -688,9 +688,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     monitor_rows = list_monitor_rows(path=config.local_db_path)
     fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
     knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
-    draft_segments = list_draft_segments(project_id, path=config.local_db_path)
-    draft_segments = [normalize_legacy_product_voice_in_segment(segment) for segment in draft_segments]
-    if not draft_segments and (source_rows or observation_rows or knowledge_cards or fact_chips):
+    if source_rows or observation_rows or knowledge_cards or fact_chips:
         draft_segments = build_draft_segments(
             project_id,
             source_rows,
@@ -699,6 +697,9 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             fact_chips,
         )
         replace_draft_segments(project_id, draft_segments, path=config.local_db_path)
+    else:
+        draft_segments = list_draft_segments(project_id, path=config.local_db_path)
+        draft_segments = [normalize_legacy_product_voice_in_segment(segment) for segment in draft_segments]
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
     competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows)
 
@@ -1012,8 +1013,8 @@ def build_knowledge_cards(
             "Offer / Positioning",
             "Offer language, positioning claims, and tactical market signals found in the sources.",
             positioning_items[:5] or ["No clear positioning or offer observations have been extracted yet."],
-            "The source set is signaling how competitors or the market frame buyer value right now.",
-            "If this positioning becomes the default comparison language, your current offer may lose urgency or clarity.",
+            "We can see how competitors and the market are framing buyer value right now.",
+            "If you do not answer that framing quickly, your current offer can lose urgency during live comparisons.",
             [
                 "Draft one response angle that answers the strongest positioning claim.",
                 "Check whether your enrollment or landing-page copy reflects the same buyer pressure.",
