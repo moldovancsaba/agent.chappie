@@ -1295,13 +1295,14 @@ def segment_to_task(
     comparison_channel = "pricing page" if "pricing" in lowered or "onboarding" in lowered else primary_channel
     timing_window = detail.get("timeframe") or "this week"
     move_bucket = infer_task_move_bucket(segment["segment_kind"], lowered)
-    supporting_source_refs, strongest_excerpt = select_task_support_bundle(
+    supporting_source_bundle, strongest_excerpt = select_task_support_bundle(
         segment_text=segment_text,
         segment_source_refs=list(segment.get("source_refs") or []),
         evidence_units=evidence_units,
         competitor=competitor,
         move_bucket=move_bucket,
     )
+    supporting_source_refs = [item["source_ref"] for item in supporting_source_bundle]
     if not strongest_excerpt:
         strongest_excerpt = segment_text
     supporting_signal_refs = select_task_support_signals(
@@ -1373,6 +1374,7 @@ def segment_to_task(
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
+            "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
@@ -1429,6 +1431,7 @@ def segment_to_task(
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
+            "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
@@ -1468,6 +1471,7 @@ def segment_to_task(
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
+            "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
@@ -1521,6 +1525,7 @@ def segment_to_task(
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
+            "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["importance"] >= 0.7:
@@ -1575,6 +1580,7 @@ def segment_to_task(
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
+            "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     return None
@@ -2900,7 +2906,7 @@ def select_task_support_bundle(
     evidence_units: list[dict[str, Any]],
     competitor: str | None,
     move_bucket: str,
-) -> tuple[list[str], str | None]:
+) -> tuple[list[dict[str, Any]], str | None]:
     scored: list[tuple[str, float, str | None]] = []
     for source_ref in unique_values(segment_source_refs):
         score, excerpt = score_task_supporting_source(
@@ -2917,7 +2923,14 @@ def select_task_support_bundle(
     filtered = [item for item in scored if item[1] >= 0.85]
     chosen = filtered[:3] if filtered else scored[:2]
     strongest_excerpt = chosen[0][2] if chosen else None
-    return [item[0] for item in chosen], strongest_excerpt
+    return [
+        {
+            "source_ref": item[0],
+            "relevance_score": round(float(item[1]), 2),
+            "strongest_excerpt": item[2],
+        }
+        for item in chosen
+    ], strongest_excerpt
 
 
 def score_task_supporting_signal(

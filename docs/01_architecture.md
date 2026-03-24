@@ -157,6 +157,7 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
 - task generation should prefer those clustered units over broad source-level summaries
 - task detail should prefer task-specific evidence bundles with:
   - supporting source refs
+  - supporting source scores
   - strongest evidence excerpt
   - target channel
   - target segment

@@ -204,6 +204,7 @@ Task detail should be evidence-bundle-specific:
 
 - use task-level supporting source refs when available instead of broad workspace source sets
 - score task-supporting sources explicitly and exclude weak or off-theme sources before task detail renders
+- persist and return per-task `supporting_source_scores` so the UI can surface the strongest support source first
 - show strongest evidence excerpt when available
 - show target channel, target segment, and done definition when the writer/judge provide them
 - prefer worker-authored execution steps when available instead of frontend-only reconstruction

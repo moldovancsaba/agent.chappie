@@ -303,6 +303,19 @@ function priorityLabel(value: RecommendedTask["priority_label"] | undefined) {
   return "Normal";
 }
 
+function supportStrengthLabel(score: number | undefined) {
+  if (score === undefined) {
+    return "Supporting evidence";
+  }
+  if (score >= 2.6) {
+    return "Primary evidence";
+  }
+  if (score >= 1.5) {
+    return "Strong support";
+  }
+  return "Secondary support";
+}
+
 function buildConsequenceOfInaction(task: RecommendedTask) {
   const impact = task.expected_advantage.replace(/\.$/, "");
   const title = task.title.toLowerCase();
@@ -1208,8 +1221,15 @@ export function DemoWorkspace() {
       ...selectedTaskDraftSegments.flatMap((segment) => segment.source_refs),
     ])
   );
+  const selectedTaskSourceScoreMap = new Map(
+    (selectedTask?.supporting_source_scores ?? []).map((item) => [item.source_ref, item])
+  );
   const selectedTaskSources = selectedTask
-    ? workspace?.source_cards.filter((source) => selectedTaskSourceRefs.includes(source.source_ref)) ?? []
+    ? (workspace?.source_cards.filter((source) => selectedTaskSourceRefs.includes(source.source_ref)) ?? []).sort((left, right) => {
+        const leftScore = selectedTaskSourceScoreMap.get(left.source_ref)?.relevance_score ?? 0;
+        const rightScore = selectedTaskSourceScoreMap.get(right.source_ref)?.relevance_score ?? 0;
+        return rightScore - leftScore;
+      })
     : [];
   const selectedTaskSteps = selectedTask
     ? buildExecutionSteps(
@@ -1580,8 +1600,12 @@ export function DemoWorkspace() {
                         <div className="job-item" key={source.source_ref}>
                           <strong>{source.label}</strong>
                           <span>
+                            {supportStrengthLabel(selectedTaskSourceScoreMap.get(source.source_ref)?.relevance_score)} ·{" "}
                             {sourceKindLabel(source.source_kind)} · {formatTimestamp(source.created_at)}
                           </span>
+                          {selectedTaskSourceScoreMap.get(source.source_ref)?.strongest_excerpt ? (
+                            <p>{selectedTaskSourceScoreMap.get(source.source_ref)?.strongest_excerpt}</p>
+                          ) : null}
                           <p>{source.processing_summary}</p>
                         </div>
                       ))

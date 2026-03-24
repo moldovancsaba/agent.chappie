@@ -175,7 +175,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             },
         ]
 
-        source_refs, excerpt = select_task_support_bundle(
+        source_bundle, excerpt = select_task_support_bundle(
             segment_text="Fortitude AI pricing and onboarding pressure is visible.",
             segment_source_refs=["source_relevant", "source_weak"],
             evidence_units=evidence_units,
@@ -183,7 +183,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             move_bucket="pricing_or_offer_move",
         )
 
-        self.assertEqual(source_refs, ["source_relevant"])
+        self.assertEqual([item["source_ref"] for item in source_bundle], ["source_relevant"])
+        self.assertGreaterEqual(source_bundle[0]["relevance_score"], 1.0)
         self.assertIn("Fortitude AI", excerpt or "")
 
     def test_workspace_payload_applies_knowledge_feedback_overlay(self) -> None:
@@ -281,6 +282,9 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("supporting_signal_refs", top_task)
             self.assertIn("supporting_segment_ids", top_task)
             self.assertIn("supporting_source_refs", top_task)
+            self.assertIn("supporting_source_scores", top_task)
+            self.assertTrue(top_task["supporting_source_scores"])
+            self.assertIn("relevance_score", top_task["supporting_source_scores"][0])
             self.assertIn("Fortitude", top_task["why_now"])
             self.assertTrue(any(token in top_task["why_now"].lower() for token in ("pricing", "offer", "proof", "signal")))
             self.assertIn("Fortitude", top_task["title"])

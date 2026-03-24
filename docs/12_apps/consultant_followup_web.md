@@ -141,11 +141,13 @@ The next evidence layer is now explicit:
   - `supporting_signal_refs`
   - `supporting_segment_ids`
   - `supporting_source_refs`
+  - `supporting_source_scores`
   - `strongest_evidence_excerpt`
 - task detail should prefer that metadata over title-only heuristics so the operator sees narrower, cleaner evidence and clearer execution guidance
 - task detail should surface human-readable evidence chips, not raw internal evidence ids
 - task detail should narrow linked evidence to task-scoped supporting sources before falling back to broader workspace evidence
 - supporting sources should now be explicitly ranked per task so weak or off-theme sources can be excluded instead of merely displayed
+- task detail should show the worker-selected support order and support strength, not just an unordered linked-source list
 - `why_now` and `expected_advantage` should now be synthesized from the selected task support bundle instead of relying on generic bucket templates
 - task titles should also be progressively synthesized from the selected support bundle so competitor, channel, and timing stay tied to the chosen evidence
 
