@@ -152,6 +152,34 @@ export type WorkerWorkspacePayload = {
   }>;
 };
 
+export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspacePayload> & { project_id: string }): WorkerWorkspacePayload {
+  return {
+    project_id: payload.project_id,
+    recent_sources: payload.recent_sources ?? [],
+    recent_activity: payload.recent_activity ?? [],
+    market_summary: payload.market_summary ?? {
+      pricing_changes: 0,
+      closure_signals: 0,
+      offer_signals: 0,
+    },
+    fact_chips: payload.fact_chips ?? [],
+    draft_segments: payload.draft_segments ?? [],
+    competitive_snapshot: payload.competitive_snapshot ?? {
+      pricing_position: "Still forming",
+      acquisition_strategy_comparison: "Still forming",
+      active_threats: [],
+      immediate_opportunities: [],
+      reference_competitor: "Comparison set still forming",
+    },
+    knowledge_summary: payload.knowledge_summary ?? [],
+    monitor_jobs: payload.monitor_jobs ?? [],
+    source_cards: payload.source_cards ?? [],
+    knowledge_cards: payload.knowledge_cards ?? [],
+    managed_sources: payload.managed_sources ?? [],
+    managed_jobs: payload.managed_jobs ?? [],
+  };
+}
+
 export async function runWorkerJob(input: {
   jobRequest: JobRequest;
   contextNotes: string;
@@ -214,31 +242,9 @@ export async function runWorkerJob(input: {
 
 export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWorkspacePayload> {
   if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
-    return {
+    return normalizeWorkerWorkspacePayload({
       project_id: projectId,
-      recent_sources: [],
-      recent_activity: [],
-      market_summary: {
-        pricing_changes: 0,
-        closure_signals: 0,
-        offer_signals: 0,
-      },
-      fact_chips: [],
-      draft_segments: [],
-      competitive_snapshot: {
-        pricing_position: "Still forming",
-        acquisition_strategy_comparison: "Still forming",
-        active_threats: [],
-        immediate_opportunities: [],
-        reference_competitor: "Comparison set still forming",
-      },
-      knowledge_summary: [],
-      monitor_jobs: [],
-      source_cards: [],
-      knowledge_cards: [],
-      managed_sources: [],
-      managed_jobs: [],
-    };
+    });
   }
 
   const response = await fetch(
@@ -255,7 +261,7 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
   if (!response.ok) {
     throw new Error(payload.detail ?? "Worker bridge failed to return workspace data.");
   }
-  return payload as WorkerWorkspacePayload;
+  return normalizeWorkerWorkspacePayload(payload as Partial<WorkerWorkspacePayload> & { project_id: string });
 }
 
 async function sendWorkerManagementRequest(

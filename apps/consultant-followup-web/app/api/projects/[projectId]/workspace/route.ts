@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { fetchWorkerWorkspace } from "@/lib/worker-bridge";
+import { fetchWorkerWorkspace, normalizeWorkerWorkspacePayload } from "@/lib/worker-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +8,7 @@ export async function GET(_: Request, context: { params: Promise<{ projectId: st
   try {
     const { projectId } = await context.params;
     const workspace = await fetchWorkerWorkspace(projectId);
-    return NextResponse.json(workspace);
+    return NextResponse.json(normalizeWorkerWorkspacePayload(workspace));
   } catch (error) {
     return NextResponse.json(
       {

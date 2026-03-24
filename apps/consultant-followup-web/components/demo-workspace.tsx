@@ -375,6 +375,34 @@ function inferSourceLabel(sourceKind: SourceFormState["sourceKind"], contentText
   return "Source note";
 }
 
+function normalizeWorkspaceSnapshot(payload: Partial<WorkspaceSnapshot> & { project_id: string }) {
+  return {
+    project_id: payload.project_id,
+    fact_chips: payload.fact_chips ?? [],
+    draft_segments: payload.draft_segments ?? [],
+    source_cards: payload.source_cards ?? [],
+    knowledge_cards: payload.knowledge_cards ?? [],
+    recent_sources: payload.recent_sources ?? [],
+    recent_activity: payload.recent_activity ?? [],
+    market_summary: payload.market_summary ?? {
+      pricing_changes: 0,
+      closure_signals: 0,
+      offer_signals: 0,
+    },
+    competitive_snapshot: payload.competitive_snapshot ?? {
+      pricing_position: "Still forming",
+      acquisition_strategy_comparison: "Still forming",
+      active_threats: [],
+      immediate_opportunities: [],
+      reference_competitor: "Comparison set still forming",
+    },
+    knowledge_summary: payload.knowledge_summary ?? [],
+    monitor_jobs: payload.monitor_jobs ?? [],
+    managed_sources: payload.managed_sources ?? [],
+    managed_jobs: payload.managed_jobs ?? [],
+  };
+}
+
 export function DemoWorkspace() {
   const [activeView, setActiveView] = useState<AppView>("checklist");
   const [inputMode, setInputMode] = useState<InputMode>("text");
@@ -484,7 +512,7 @@ export function DemoWorkspace() {
           throw new Error(body.detail ?? "The workspace could not be loaded.");
         }
         if (!cancelled) {
-          setWorkspace(body);
+          setWorkspace(normalizeWorkspaceSnapshot(body));
         }
       } catch (error) {
         if (!cancelled) {
@@ -507,8 +535,9 @@ export function DemoWorkspace() {
     if (!response.ok) {
       throw new Error(body.detail ?? "The workspace could not be loaded.");
     }
-    setWorkspace(body);
-    return body as WorkspaceSnapshot;
+    const normalized = normalizeWorkspaceSnapshot(body);
+    setWorkspace(normalized);
+    return normalized as WorkspaceSnapshot;
   }
 
   async function submitContext(notes: string) {
