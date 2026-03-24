@@ -319,12 +319,13 @@ function buildConsequenceOfInaction(task: RecommendedTask) {
 }
 
 function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
-  const lowerTitle = task.title.toLowerCase();
   const sourceSummary = sourceLabels.length ? sourceLabels.join(", ") : "the linked source set";
   const targetChannel = task.target_channel ?? "named channel";
   const targetSegment = task.target_segment ?? "buyers";
   const competitor = task.competitor_name ?? "the strongest competitor";
   const mechanism = task.mechanism ?? "the exact change described in the task";
+  const lowerTitle = task.title.toLowerCase();
+  const bucket = task.move_bucket ?? "";
 
   if (task.task_type === "information_request") {
     return [
@@ -335,37 +336,38 @@ function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
     ];
   }
 
-  if (lowerTitle.includes("pricing") || lowerTitle.includes("onboarding")) {
+  if (bucket === "pricing_or_offer_move" || lowerTitle.includes("pricing") || lowerTitle.includes("onboarding")) {
     return [
       `Pull the exact pricing, onboarding, and proof claims from ${sourceSummary}, especially anything tied to ${competitor}.`,
-      `Turn those claims into the exact asset described by the task and place it on the ${targetChannel}.`,
+      `Turn those claims into the exact asset described by the task using this mechanism: ${mechanism}.`,
+      `Place that asset on the ${targetChannel}.`,
       `Publish the ${targetChannel} update before the best-before date so active ${targetSegment} see the lower-friction comparison immediately.`,
       "Send the updated asset to live prospects or active deals and check whether pricing or onboarding objections drop.",
     ];
   }
 
-  if (lowerTitle.includes("homepage") || lowerTitle.includes("hero") || lowerTitle.includes("enrollment")) {
+  if (bucket === "messaging_or_positioning_move" || lowerTitle.includes("homepage") || lowerTitle.includes("hero") || lowerTitle.includes("enrollment")) {
     return [
       `Identify the strongest competitor claim in ${sourceSummary}, especially the angle ${competitor} is using against ${targetSegment}.`,
-      `Rewrite the ${targetChannel} so it answers that exact claim in your own positioning language.`,
+      `Rewrite the ${targetChannel} using this mechanism: ${mechanism}.`,
       `Publish the update in the ${targetChannel} this week and keep the change in the first comparison section buyers will see.`,
       "Check whether the updated page now answers the objection or offer pressure named in the task.",
     ];
   }
 
-  if (lowerTitle.includes("proof") || lowerTitle.includes("testimonial")) {
+  if (bucket === "proof_or_trust_move" || lowerTitle.includes("proof") || lowerTitle.includes("testimonial")) {
     return [
-      `Pull the strongest proof patterns from ${sourceSummary}.`,
-      "Add two concrete proof blocks, testimonials, or integration claims to the page or sales asset named in the task.",
+      `Pull the strongest proof patterns from ${sourceSummary}, especially anything that makes ${competitor} more trustworthy to ${targetSegment}.`,
+      `Add the proof assets described by the task using this mechanism: ${mechanism}.`,
       "Publish or ship the updated proof asset this week where hesitant buyers see it first.",
       "Check whether trust objections drop in live conversations or comparison-stage pages.",
     ];
   }
 
-  if (lowerTitle.includes("owner") || lowerTitle.includes("first access") || lowerTitle.includes("assets") || lowerTitle.includes("distribution")) {
+  if (bucket === "intercept_or_capture_move" || lowerTitle.includes("owner") || lowerTitle.includes("first access") || lowerTitle.includes("assets") || lowerTitle.includes("distribution")) {
     return [
       `Pull the exact distress or transition evidence from ${sourceSummary}.`,
-      "Contact the named competitor or owner with one specific ask covering customers, staff, assets, or distribution.",
+      `Contact ${competitor} with one specific ask using this mechanism: ${mechanism}.`,
       "Secure the next meeting, inventory list, or first-right-of-access this week before another operator moves.",
       "Check whether the opportunity is now advancing on your terms instead of staying theoretical.",
     ];
@@ -377,6 +379,40 @@ function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
     `Publish the change in the ${targetChannel} this week so ${targetSegment} can actually experience the move.`,
     "Check whether the result reduced the threat or captured the opportunity described in the expected impact.",
   ];
+}
+
+function buildHumanEvidenceChips(
+  task: RecommendedTask,
+  evidence: WorkspaceSnapshot["recent_activity"],
+  segments: WorkspaceSnapshot["draft_segments"],
+  sources: SourceCard[]
+) {
+  const chips: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (value: string) => {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    chips.push(normalized);
+  };
+
+  if (task.strongest_evidence_excerpt) {
+    push(task.strongest_evidence_excerpt);
+  }
+  for (const activity of evidence) {
+    push(activity.summary);
+  }
+  for (const segment of segments) {
+    push(segment.segment_text);
+  }
+  for (const source of sources) {
+    push(source.label);
+  }
+
+  return chips.slice(0, 6);
 }
 
 function isAutoCollectedSourceKind(value: string) {
@@ -1141,15 +1177,23 @@ export function DemoWorkspace() {
   const filteredKnowledgeCards = focusedSourceRef
     ? (workspace?.knowledge_cards ?? []).filter((card) => card.source_refs.includes(focusedSourceRef))
     : (workspace?.knowledge_cards ?? []);
+  const taskScopedSourceRefs = selectedTask?.supporting_source_refs ?? [];
   const selectedTaskEvidence = selectedTask
-    ? workspace?.recent_activity.filter((activity) => selectedTask.evidence_refs.includes(activity.signal_id)) ?? []
+    ? workspace?.recent_activity.filter(
+        (activity) =>
+          selectedTask.evidence_refs.includes(activity.signal_id) ||
+          (!!taskScopedSourceRefs.length && taskScopedSourceRefs.includes(activity.source_ref))
+      ) ?? []
     : [];
   const selectedTaskDraftSegments = selectedTask
     ? workspace?.draft_segments.filter(
         (segment) =>
-          selectedTask.evidence_refs.includes(`segment::${segment.segment_id}`) ||
-          selectedTask.evidence_refs.includes(segment.segment_id) ||
-          segment.evidence_refs.some((ref) => selectedTask.evidence_refs.includes(ref))
+          (
+            selectedTask.evidence_refs.includes(`segment::${segment.segment_id}`) ||
+            selectedTask.evidence_refs.includes(segment.segment_id) ||
+            segment.evidence_refs.some((ref) => selectedTask.evidence_refs.includes(ref))
+          ) &&
+          (!taskScopedSourceRefs.length || segment.source_refs.some((ref) => taskScopedSourceRefs.includes(ref)))
       ) ?? []
     : [];
   const selectedTaskSourceRefs = Array.from(
@@ -1167,6 +1211,9 @@ export function DemoWorkspace() {
         selectedTask,
         selectedTaskSources.map((source) => source.label)
       )
+    : [];
+  const selectedTaskHumanEvidence = selectedTask
+    ? buildHumanEvidenceChips(selectedTask, selectedTaskEvidence, selectedTaskDraftSegments, selectedTaskSources)
     : [];
 
   return (
@@ -1498,9 +1545,9 @@ export function DemoWorkspace() {
                   <div className="task-evidence">
                     <span>Evidence</span>
                     <div className="evidence-chip-list">
-                      {selectedTask.evidence_refs.map((ref) => (
-                        <span className="evidence-chip" key={ref}>
-                          {ref}
+                      {selectedTaskHumanEvidence.map((item, index) => (
+                        <span className="evidence-chip" key={`${selectedTask.rank}-evidence-${index}`}>
+                          {item}
                         </span>
                       ))}
                     </div>

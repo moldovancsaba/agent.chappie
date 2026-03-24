@@ -140,6 +140,8 @@ The next evidence layer is now explicit:
   - `supporting_source_refs`
   - `strongest_evidence_excerpt`
 - task detail should prefer that metadata over title-only heuristics so the operator sees narrower, cleaner evidence and clearer execution guidance
+- task detail should surface human-readable evidence chips, not raw internal evidence ids
+- task detail should narrow linked evidence to task-scoped supporting sources before falling back to broader workspace evidence
 
 ## Sources and activity
 
