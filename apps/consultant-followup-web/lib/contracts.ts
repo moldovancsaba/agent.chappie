@@ -162,7 +162,7 @@ export const taskFeedbackItemSchema = z.object({
   rank: z.number().int().min(1).max(3),
   original_title: z.string().min(1),
   original_expected_advantage: z.string().min(1),
-  feedback_type: z.enum(["done", "edited", "declined", "commented"]),
+  feedback_type: z.enum(["done", "edited", "declined", "commented", "deleted_silent", "deleted_with_annotation", "held_for_later"]),
   adjusted_text: z.string().optional(),
   feedback_comment: z.string().optional(),
 });
@@ -172,6 +172,9 @@ export const feedbackPayloadSchema = z.object({
   edited: z.array(z.string()),
   declined: z.array(z.string()),
   commented: z.array(z.string()),
+  deleted_silent: z.array(z.string()),
+  deleted_with_annotation: z.array(z.string()),
+  held_for_later: z.array(z.string()),
 });
 
 export const feedbackSchema = z.object({
@@ -181,7 +184,7 @@ export const feedbackSchema = z.object({
   project_id: z.string().min(1),
   feedback_type: z.literal("task_response"),
   submitted_at: z.string().datetime({ offset: true }),
-  user_action: z.enum(["done", "edited", "declined", "commented"]),
+  user_action: z.enum(["done", "edited", "declined", "commented", "deleted_silent", "deleted_with_annotation", "held_for_later"]),
   feedback_payload: feedbackPayloadSchema,
   task_feedback_items: z.array(taskFeedbackItemSchema).optional(),
   actor_id: z.string().min(1).optional(),

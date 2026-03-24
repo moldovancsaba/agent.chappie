@@ -826,7 +826,11 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
         app_id="consultant_followup_web",
         confidence=0.74,
     )
-    declined_rows = [row for row in rows if row["feedback_type"] in {"declined", "commented"}]
+    declined_rows = [
+        row
+        for row in rows
+        if row["feedback_type"] in {"declined", "commented", "deleted_silent", "deleted_with_annotation", "held_for_later"}
+    ]
     for row, task in zip(declined_rows, result_document["result_payload"]["recommended_tasks"], strict=False):
         save_replacement_history(
             project_id=project_id,
@@ -2089,7 +2093,7 @@ def judge_tasks(
     declined_keys = {
         normalize_task_key(str(row["original_title"]))
         for row in feedback_rows
-        if row.get("feedback_type") in {"declined", "commented"}
+        if row.get("feedback_type") in {"declined", "commented", "deleted_silent", "deleted_with_annotation", "held_for_later"}
     }
     seen: set[str] = set()
     judged: list[dict[str, Any]] = []
@@ -2414,13 +2418,13 @@ def build_generation_memory_rows(feedback_rows: list[dict[str, Any]]) -> list[di
         comment = str(row.get("feedback_comment") or "").strip().lower()
         adjusted_text = str(row.get("adjusted_text") or "").strip()
 
-        if feedback_type in {"declined", "commented"} and normalized_title:
+        if feedback_type in {"declined", "commented", "deleted_with_annotation", "held_for_later"} and normalized_title:
             rows.append(
                 {
                     "memory_kind": "avoid_title",
                     "pattern_key": normalized_title,
                     "signal_value": original_title,
-                    "weight": 3.0 if feedback_type == "declined" else 2.0,
+                    "weight": 3.0 if feedback_type in {"declined", "deleted_with_annotation"} else 2.0 if feedback_type == "commented" else 1.0,
                     "source_feedback_id": feedback_id,
                 }
             )

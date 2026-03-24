@@ -183,6 +183,10 @@ class ContractValidationTests(unittest.TestCase):
                 "done": ["Send recap email to the client"],
                 "edited": ["Draft the revised milestone plan with updated target dates"],
                 "declined": ["Confirm ownership for the open action items"],
+                "commented": [],
+                "deleted_silent": [],
+                "deleted_with_annotation": [],
+                "held_for_later": [],
             },
             "actor_id": "consultant_001",
             "linked_result_status": "complete",
@@ -203,6 +207,10 @@ class ContractValidationTests(unittest.TestCase):
                 "accepted": ["Send recap email to the client"],
                 "edited": [],
                 "declined": [],
+                "commented": [],
+                "deleted_silent": [],
+                "deleted_with_annotation": [],
+                "held_for_later": [],
             },
         }
         with self.assertRaises(ValidationError) as context:

@@ -7,7 +7,7 @@ import { generateId } from "@/lib/ids";
 
 type AppView = "checklist" | "know-more" | "sources-jobs";
 type InputMode = "url" | "text" | "file";
-type DecisionStatus = "done" | "edited" | "declined" | "commented";
+type DecisionStatus = "done" | "edited" | "declined" | "commented" | "deleted_silent" | "deleted_with_annotation" | "held_for_later";
 type TaskDecision = {
   status: DecisionStatus | null;
   adjustedText: string;
@@ -484,12 +484,26 @@ function buildFeedbackPayload(tasks: RecommendedTask[], decisions: Record<number
         current.edited.push(decision.adjustedText.trim() || task.title);
       } else if (decision.status === "commented") {
         current.commented.push(task.title);
+      } else if (decision.status === "deleted_silent") {
+        current.deleted_silent.push(task.title);
+      } else if (decision.status === "deleted_with_annotation") {
+        current.deleted_with_annotation.push(task.title);
+      } else if (decision.status === "held_for_later") {
+        current.held_for_later.push(task.title);
       } else {
         current.declined.push(task.title);
       }
       return current;
     },
-    { done: [] as string[], edited: [] as string[], declined: [] as string[], commented: [] as string[] }
+    {
+      done: [] as string[],
+      edited: [] as string[],
+      declined: [] as string[],
+      commented: [] as string[],
+      deleted_silent: [] as string[],
+      deleted_with_annotation: [] as string[],
+      held_for_later: [] as string[],
+    }
   );
 }
 
@@ -515,6 +529,10 @@ function buildTaskFeedbackItems(tasks: RecommendedTask[], decisions: Record<numb
 
 function allTasksDecided(tasks: RecommendedTask[], decisions: Record<number, TaskDecision>) {
   return tasks.every((task) => Boolean(decisions[task.rank]?.status));
+}
+
+function findTaskSourceRef(task: RecommendedTask) {
+  return task.supporting_source_refs?.find((sourceRef) => sourceRef && !sourceRef.startsWith("feedback::")) ?? null;
 }
 
 function inferSourceLabel(sourceKind: SourceFormState["sourceKind"], contentText: string) {
@@ -821,11 +839,17 @@ export function DemoWorkspace() {
     const fallbackAction: DecisionStatus =
       feedbackPayload.done.length > 0
         ? "done"
-        : feedbackPayload.declined.length > 0
-          ? "declined"
-          : feedbackPayload.edited.length > 0
-            ? "edited"
-            : "commented";
+        : feedbackPayload.deleted_with_annotation.length > 0
+          ? "deleted_with_annotation"
+          : feedbackPayload.deleted_silent.length > 0
+            ? "deleted_silent"
+            : feedbackPayload.held_for_later.length > 0
+              ? "held_for_later"
+              : feedbackPayload.declined.length > 0
+                ? "declined"
+                : feedbackPayload.edited.length > 0
+                  ? "edited"
+                  : "commented";
 
     setIsSavingFeedback(true);
     setFeedbackStatus("");
@@ -1473,11 +1497,25 @@ export function DemoWorkspace() {
                               ✎ Adjust
                             </button>
                             <button
-                              className={`decision-button reject ${decision?.status === "declined" ? "selected" : ""}`}
+                              className={`decision-button reject ${decision?.status === "deleted_silent" ? "selected" : ""}`}
                               type="button"
-                              onClick={() => setDecision(task.rank, "declined", task.title)}
+                              onClick={() => setDecision(task.rank, "deleted_silent", task.title)}
                             >
-                              ✕ Reject
+                              Delete
+                            </button>
+                            <button
+                              className={`decision-button reject ${decision?.status === "deleted_with_annotation" ? "selected" : ""}`}
+                              type="button"
+                              onClick={() => setDecision(task.rank, "deleted_with_annotation", task.title)}
+                            >
+                              Delete and teach
+                            </button>
+                            <button
+                              className={`decision-button adjust ${decision?.status === "held_for_later" ? "selected" : ""}`}
+                              type="button"
+                              onClick={() => setDecision(task.rank, "held_for_later", task.title)}
+                            >
+                              Hold for later
                             </button>
                             <button
                               className={`decision-button adjust ${decision?.status === "commented" ? "selected" : ""}`}
@@ -1486,6 +1524,20 @@ export function DemoWorkspace() {
                             >
                               Comment
                             </button>
+                            {findTaskSourceRef(task) ? (
+                              <button
+                                className="decision-button reject"
+                                type="button"
+                                onClick={() => {
+                                  const sourceRef = findTaskSourceRef(task);
+                                  if (sourceRef) {
+                                    void deleteIngestedSource(sourceRef);
+                                  }
+                                }}
+                              >
+                                Remove source and rebuild
+                              </button>
+                            ) : null}
                           </div>
 
                           {decision?.status === "edited" ? (
@@ -1498,14 +1550,18 @@ export function DemoWorkspace() {
                               />
                             </div>
                           ) : null}
-                          {decision?.status === "edited" || decision?.status === "declined" || decision?.status === "commented" ? (
+                          {decision?.status === "edited" ||
+                          decision?.status === "declined" ||
+                          decision?.status === "commented" ||
+                          decision?.status === "deleted_with_annotation" ||
+                          decision?.status === "held_for_later" ? (
                             <div className="adjust-shell">
                               <label htmlFor={`comment-${task.rank}`}>Why?</label>
                               <textarea
                                 id={`comment-${task.rank}`}
                                 value={decision.commentText}
                                 onChange={(event) => setCommentText(task.rank, event.target.value)}
-                                placeholder="Tell us why this was weak, wrong, overlapping, or how you would improve it."
+                                placeholder="Tell us what was wrong, what We should avoid, or why this should wait."
                               />
                             </div>
                           ) : null}
@@ -1769,12 +1825,15 @@ export function DemoWorkspace() {
 
               <div className="feedback-panel">
                 <h3>Help improve the next recommendation</h3>
-                <p>Mark each card as Done, Adjust, or Reject so Agent.Chappie learns what was actually useful.</p>
+                <p>Use Done, Adjust, Delete, Delete and teach, or Hold for later so We can keep the live checklist clean and learn the right lessons.</p>
                 <div className="feedback-totals">
                   <span>{buildFeedbackPayload(tasks, taskDecisions).done.length} done</span>
                   <span>{buildFeedbackPayload(tasks, taskDecisions).edited.length} adjusted</span>
                   <span>{buildFeedbackPayload(tasks, taskDecisions).declined.length} rejected</span>
                   <span>{buildFeedbackPayload(tasks, taskDecisions).commented.length} commented</span>
+                  <span>{buildFeedbackPayload(tasks, taskDecisions).deleted_silent.length} deleted</span>
+                  <span>{buildFeedbackPayload(tasks, taskDecisions).deleted_with_annotation.length} taught deletes</span>
+                  <span>{buildFeedbackPayload(tasks, taskDecisions).held_for_later.length} held</span>
                 </div>
                 <button className="button-primary wide" disabled={!canSubmitFeedback || isSavingFeedback} onClick={handleSaveFeedback} type="button">
                   {isSavingFeedback ? "Saving decisions..." : "Submit decisions"}

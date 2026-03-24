@@ -60,7 +60,13 @@ The main checklist view must:
 
 - show cards, not tables
 - show exactly 3 visible task cards
-- expose decision actions as `Done`, `Adjust`, and `Reject`
+- expose decision actions as:
+  - `Done`
+  - `Adjust`
+  - `Delete`
+  - `Delete and teach`
+  - `Hold for later`
+  - `Remove source and rebuild` when the task is still tied to a live source
 - include a confidence indicator for the current ranked output
 - replace abstract empty states with guided input options and real ingestion status
 - open task detail per card instead of using `Know More` as the generic task-explanation panel
@@ -214,6 +220,10 @@ If a stored result still matches known stale legacy task patterns, the app must 
   - `Delete and teach`
   - `Hold for later`
   - `Remove source and rebuild`
+- task-card feedback must now accept the same delete and hold states, not only `done / edited / declined / commented`
+- silent task delete must regenerate without storing a negative teaching signal
+- `Delete and teach` must regenerate and persist what We should avoid
+- `Hold for later` must regenerate while keeping the task out of the current live set
 - visible last run, last result summary, and current status for sources
 - visible trigger type, schedule, last three runs, last action summary, and expected impact summary for jobs
 - knowledge cards must support:

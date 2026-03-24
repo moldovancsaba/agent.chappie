@@ -213,6 +213,11 @@ The app now treats `Sources & Jobs` as a management surface:
   - `Delete and teach`
   - `Hold for later`
   - `Remove source and rebuild`
+- live checklist task cards now expose the same delete model:
+  - `Delete` removes the task from the live set without teaching
+  - `Delete and teach` removes the task and stores what We should avoid
+  - `Hold for later` removes the task from the live set and treats it as not timely now
+  - `Remove source and rebuild` removes the linked source evidence and rebuilds from what remains
 - source cards expose current status, last run, and last extracted summary
 - ingested source cards expose:
   - key takeaway

@@ -3,7 +3,7 @@ from __future__ import annotations
 JOB_PRIORITY_CLASS = {"critical", "normal", "low"}
 JOB_CLASS = {"heavy", "light"}
 JOB_RESULT_STATUS = {"complete", "failed", "blocked"}
-FEEDBACK_ACTION = {"done", "edited", "declined"}
+FEEDBACK_ACTION = {"done", "edited", "declined", "commented", "deleted_silent", "deleted_with_annotation", "held_for_later"}
 FEEDBACK_TYPE = {"task_response"}
 CONTEXT_TYPE = {"meeting_notes", "call_summary", "working_document"}
 ARTIFACT_TYPE = {"upload"}
@@ -112,4 +112,8 @@ FEEDBACK_PAYLOAD_SCHEMA = {
     "done": list,
     "edited": list,
     "declined": list,
+    "commented": list,
+    "deleted_silent": list,
+    "deleted_with_annotation": list,
+    "held_for_later": list,
 }

@@ -763,6 +763,71 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             memory_rows = list_generation_memory_rows("project_feedback_edit", path=db_path)
             self.assertTrue(any(row["memory_kind"] == "prefer_channel" for row in memory_rows))
 
+    def test_deleted_and_held_tasks_regenerate_without_repeating_same_title(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_feedback_delete_hold",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_feedback_delete_hold",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-23T15:40:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Analyze the uploaded market document and return actions.",
+                    "artifacts": [{"type": "upload", "ref": "source_feedback_delete_hold"}],
+                },
+                "source_refs": ["source_feedback_delete_hold"],
+            },
+            "source_package": {
+                "project_id": "project_feedback_delete_hold",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "Competitive Analysis with Fortitude AI Focus. The document compares packaging, pricing bundles, "
+                    "trial offers, customer testimonials, integration claims, and onboarding friction."
+                ),
+                "source_ref": "source_feedback_delete_hold",
+                "file_name": "feedback-analysis.docx",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            first = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+            first_tasks = first["job_result"]["result_payload"]["recommended_tasks"]
+            response = process_task_feedback(
+                "project_feedback_delete_hold",
+                {
+                    "job_id": "job_feedback_delete_hold",
+                    "task_feedback_items": [
+                        {
+                            "feedback_id": "task_feedback_delete_hold_1",
+                            "rank": 1,
+                            "original_title": first_tasks[0]["title"],
+                            "original_expected_advantage": first_tasks[0]["expected_advantage"],
+                            "feedback_type": "deleted_with_annotation",
+                            "feedback_comment": "Avoid this phrase in the live checklist.",
+                        },
+                        {
+                            "feedback_id": "task_feedback_delete_hold_2",
+                            "rank": 2,
+                            "original_title": first_tasks[1]["title"],
+                            "original_expected_advantage": first_tasks[1]["expected_advantage"],
+                            "feedback_type": "held_for_later",
+                            "feedback_comment": "Useful later, not this week.",
+                        },
+                    ],
+                },
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+            regenerated_titles = [task["title"] for task in response["job_result"]["result_payload"]["recommended_tasks"]]
+            self.assertNotIn(first_tasks[0]["title"], regenerated_titles)
+            self.assertNotIn(first_tasks[1]["title"], regenerated_titles)
+            memory_rows = list_generation_memory_rows("project_feedback_delete_hold", path=db_path)
+            self.assertTrue(any(row["memory_kind"] == "avoid_title" for row in memory_rows))
+
     def test_process_job_payload_can_reuse_same_segment_templates_across_projects(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
