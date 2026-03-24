@@ -634,10 +634,34 @@ textarea {
   border-color: rgba(19, 113, 148, 0.22);
 }
 
+.intel-card.mixed-origin,
+.source-asset.mixed-origin {
+  background: rgba(235, 230, 255, 0.62);
+  border-color: rgba(103, 74, 177, 0.22);
+}
+
+.intel-card.user-provided,
+.source-asset.user-provided {
+  background: var(--surface-strong);
+  border-color: rgba(42, 36, 24, 0.08);
+}
+
 .evidence-chip.auto-collected {
   background: rgba(219, 244, 255, 0.8);
   border-color: rgba(19, 113, 148, 0.22);
   color: #155f7f;
+}
+
+.evidence-chip.mixed-origin {
+  background: rgba(235, 230, 255, 0.78);
+  border-color: rgba(103, 74, 177, 0.22);
+  color: #5f479f;
+}
+
+.evidence-chip.user-provided {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(42, 36, 24, 0.12);
+  color: var(--ink);
 }
 
 .intel-card ul {

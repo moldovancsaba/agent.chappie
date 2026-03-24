@@ -336,6 +336,31 @@ function isAutoCollectedSourceKind(value: string) {
   return value === "auto_research_url";
 }
 
+function classifyOriginFromSourceRefs(sourceRefs: string[], autoCollectedSourceRefs: Set<string>) {
+  const refs = sourceRefs.filter(Boolean);
+  if (!refs.length) {
+    return "user-provided";
+  }
+  const autoCount = refs.filter((sourceRef) => autoCollectedSourceRefs.has(sourceRef)).length;
+  if (autoCount === 0) {
+    return "user-provided";
+  }
+  if (autoCount === refs.length) {
+    return "auto-collected";
+  }
+  return "mixed-origin";
+}
+
+function originLabel(origin: string) {
+  if (origin === "auto-collected") {
+    return "We researched";
+  }
+  if (origin === "mixed-origin") {
+    return "Mixed";
+  }
+  return "You provided";
+}
+
 function buildDefaultDecisions(tasks: RecommendedTask[]) {
   return tasks.reduce<Record<number, TaskDecision>>((current, task) => {
     current[task.rank] = {
@@ -1510,7 +1535,7 @@ export function DemoWorkspace() {
                   <div className="evidence-chip-list">
                     {workspace.fact_chips.map((chip) => (
                       <button
-                        className={`evidence-chip ${chip.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? "auto-collected" : ""}`}
+                        className={`evidence-chip ${classifyOriginFromSourceRefs(chip.source_refs, autoCollectedSourceRefs)}`}
                         key={chip.fact_id}
                         type="button"
                         onClick={() => setFocusedSourceRef(chip.source_refs[0] ?? null)}
@@ -1535,7 +1560,7 @@ export function DemoWorkspace() {
                   <div className="intel-columns">
                     {workspace.draft_segments.slice(0, 8).map((segment) => (
                       <article
-                        className={`intel-card mini ${segment.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? "auto-collected" : ""}`}
+                        className={`intel-card mini ${classifyOriginFromSourceRefs(segment.source_refs, autoCollectedSourceRefs)}`}
                         key={segment.segment_id}
                       >
                         <div className="operator-head">
@@ -1545,6 +1570,7 @@ export function DemoWorkspace() {
                             {segment.confidence.toFixed(2)})
                           </span>
                         </div>
+                        <p className="surface-summary">{originLabel(classifyOriginFromSourceRefs(segment.source_refs, autoCollectedSourceRefs))}</p>
                         <p>{segment.segment_text}</p>
                         <div className="summary-stack">
                           <div className="summary-row">
@@ -1566,7 +1592,7 @@ export function DemoWorkspace() {
                 {filteredKnowledgeCards.length ? (
                   filteredKnowledgeCards.map((card) => (
                     <article
-                      className={`intel-card ${card.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? "auto-collected" : ""}`}
+                      className={`intel-card ${classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs)}`}
                       key={card.knowledge_id}
                     >
                       <div className="operator-head">
@@ -1575,9 +1601,13 @@ export function DemoWorkspace() {
                           {confidenceLabel(card.confidence)} ({card.confidence.toFixed(2)}) · {card.annotation_status} · {confidenceSourceLabel(card.confidence_source)}
                         </span>
                       </div>
-                      {card.source_refs.some((sourceRef) => autoCollectedSourceRefs.has(sourceRef)) ? (
-                        <p className="surface-summary">Auto-collected by Agent.Chappie from public web research and merged into the local brain.</p>
-                      ) : null}
+                      <p className="surface-summary">
+                        {classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs) === "auto-collected"
+                          ? "We researched this from public web sources and merged it into the local brain."
+                          : classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs) === "mixed-origin"
+                            ? "This card combines your source with our public web research."
+                            : "This card comes directly from the sources you provided."}
+                      </p>
                       <p>{card.summary}</p>
                       <div className="task-block">
                         <span>Insight</span>
@@ -1936,7 +1966,7 @@ export function DemoWorkspace() {
                 {workspace?.source_cards.length ? (
                   workspace.source_cards.map((source) => (
                     <article
-                      className={`source-asset ${focusedSourceRef === source.source_ref ? "current" : ""} ${isAutoCollectedSourceKind(source.source_kind) ? "auto-collected" : ""}`}
+                      className={`source-asset ${focusedSourceRef === source.source_ref ? "current" : ""} ${isAutoCollectedSourceKind(source.source_kind) ? "auto-collected" : "user-provided"}`}
                       key={source.source_ref}
                     >
                       <div className="operator-head">
@@ -1946,7 +1976,9 @@ export function DemoWorkspace() {
                             {sourceKindLabel(source.source_kind)} · Last update {formatTimestamp(source.created_at)}
                           </span>
                         </div>
-                        <span className="asset-badge">{source.signal_count} signals</span>
+                        <span className="asset-badge">
+                          {originLabel(isAutoCollectedSourceKind(source.source_kind) ? "auto-collected" : "user-provided")} · {source.signal_count} signals
+                        </span>
                       </div>
                       <div className="task-block">
                         <span>Key change</span>
