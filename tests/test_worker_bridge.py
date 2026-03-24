@@ -366,6 +366,44 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertEqual(market_card["annotation_status"], "edited")
             self.assertEqual(market_card["confidence_source"], "extracted")
 
+    def test_workspace_hides_deleted_knowledge_and_parks_held_knowledge(self) -> None:
+        source = SourcePackage(
+            project_id="project_knowledge_delete_modes",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text="Fortitude AI uses pricing bundles, customer testimonials, and SEO positioning claims.",
+            source_ref="source_delete_modes",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            save_source_snapshot(source.__dict__, build_source_hash(source), db_path)
+            upsert_knowledge_feedback(
+                project_id="project_knowledge_delete_modes",
+                knowledge_id="market_summary",
+                status="deleted_silent",
+                original_payload={"title": "Market Summary", "summary": "Delete me"},
+                path=db_path,
+            )
+            upsert_knowledge_feedback(
+                project_id="project_knowledge_delete_modes",
+                knowledge_id="proof_signals",
+                status="held_for_later",
+                original_payload={"title": "Proof Signals", "summary": "Park this card."},
+                path=db_path,
+            )
+
+            workspace = build_workspace_payload(
+                "project_knowledge_delete_modes",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+
+            knowledge_ids = [card["knowledge_id"] for card in workspace["knowledge_cards"]]
+            self.assertNotIn("market_summary", knowledge_ids)
+            self.assertNotIn("proof_signals", knowledge_ids)
+            held_segments = [segment for segment in workspace["draft_segments"] if segment["segment_kind"] == "held_knowledge"]
+            self.assertTrue(any(segment["title"] == "Proof Signals" for segment in held_segments))
+
     def test_process_job_payload_writes_tasks_from_draft_segments_for_rich_source(self) -> None:
         payload = {
             "job_request": {

@@ -619,6 +619,7 @@ export function DemoWorkspace() {
   const [ingestedSourceLabel, setIngestedSourceLabel] = useState("");
   const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
   const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
+  const [knowledgeDeleteReason, setKnowledgeDeleteReason] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1031,7 +1032,7 @@ export function DemoWorkspace() {
   async function updateKnowledgeCard(
     knowledgeId: string,
     payload: {
-      status: "confirmed" | "dismissed" | "edited";
+      status: "confirmed" | "dismissed" | "edited" | "held" | "held_for_later" | "deleted_with_annotation";
       confidence_source?: string;
       original_payload?: Record<string, unknown>;
       corrected_title?: string;
@@ -1058,6 +1059,35 @@ export function DemoWorkspace() {
     setEditingKnowledgeId(null);
     setKnowledgeDraft({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
     setManagementStatus({ tone: "success", message: "Knowledge updated." });
+  }
+
+  async function deleteKnowledgeCard(
+    knowledgeId: string,
+    payload: {
+      status: "deleted_silent" | "deleted_with_annotation";
+      original_payload?: Record<string, unknown>;
+      reason?: string;
+    }
+  ) {
+    if (!projectId) {
+      return;
+    }
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setManagementStatus({ tone: "error", message: body.detail ?? "The knowledge card could not be deleted." });
+      return;
+    }
+    setWorkspace(body);
+    setKnowledgeDeleteReason((current) => ({ ...current, [knowledgeId]: "" }));
+    setManagementStatus({
+      tone: "success",
+      message: payload.status === "deleted_with_annotation" ? "Knowledge card deleted and recorded as guidance for future generations." : "Knowledge card deleted.",
+    });
   }
 
   async function updateIngestedSource(sourceRef: string, payload: Record<string, unknown>) {
@@ -2060,20 +2090,64 @@ export function DemoWorkspace() {
                             Edit
                           </button>
                           <button
-                            className="decision-button reject"
+                            className="decision-button"
                             type="button"
                             onClick={() =>
                               void updateKnowledgeCard(card.knowledge_id, {
-                                status: "dismissed",
+                                status: "held_for_later",
                                 confidence_source: "user_modified",
                                 original_payload: card.audit.original_value,
                               })
                             }
                           >
-                            Dismiss
+                            Hold for later
+                          </button>
+                          <button
+                            className="decision-button reject"
+                            type="button"
+                            onClick={() =>
+                              void deleteKnowledgeCard(card.knowledge_id, {
+                                status: "deleted_silent",
+                                original_payload: card.audit.original_value,
+                              })
+                            }
+                          >
+                            Delete
+                          </button>
+                          <button
+                            className="decision-button reject"
+                            type="button"
+                            onClick={() =>
+                              void deleteKnowledgeCard(card.knowledge_id, {
+                                status: "deleted_with_annotation",
+                                original_payload: card.audit.original_value,
+                                reason:
+                                  knowledgeDeleteReason[card.knowledge_id]?.trim() ||
+                                  "Avoid this card pattern in future generations.",
+                              })
+                            }
+                          >
+                            Delete and teach
                           </button>
                         </div>
                       )}
+
+                      {editingKnowledgeId !== card.knowledge_id ? (
+                        <div className="adjust-shell">
+                          <label htmlFor={`knowledge-delete-reason-${card.knowledge_id}`}>What should we avoid?</label>
+                          <textarea
+                            id={`knowledge-delete-reason-${card.knowledge_id}`}
+                            value={knowledgeDeleteReason[card.knowledge_id] ?? ""}
+                            onChange={(event) =>
+                              setKnowledgeDeleteReason((current) => ({
+                                ...current,
+                                [card.knowledge_id]: event.target.value,
+                              }))
+                            }
+                            placeholder="Optional for Delete. Use this if you want Delete and teach to record what we should avoid."
+                          />
+                        </div>
+                      ) : null}
 
                       {card.audit.timestamp ? (
                         <div className="task-block">
@@ -2276,6 +2350,51 @@ export function DemoWorkspace() {
               ) : null}
 
               <div className="sources-workspace">
+                {workspace?.managed_sources.length ? (
+                  <div className="monitoring-secondary">
+                    <div className="section-head compact">
+                      <div>
+                        <span className="section-kicker">Monitoring</span>
+                        <h3>Source rules</h3>
+                      </div>
+                    </div>
+                    <div className="secondary-assets">
+                      {workspace.managed_sources.map((source) => (
+                        <article className="job-item" key={source.source_id}>
+                          <strong>{source.label}</strong>
+                          <span>
+                            {titleCaseWords(source.source_kind)} · {source.status}
+                          </span>
+                          <p>{source.content_text}</p>
+                          <div className="task-actions compact-actions">
+                            <button
+                              className="decision-button adjust"
+                              type="button"
+                              onClick={() => {
+                                setEditingSourceId(source.source_id);
+                                setShowSourceComposer(true);
+                                setSourceForm({
+                                  label: source.label,
+                                  sourceKind: source.source_kind as SourceFormState["sourceKind"],
+                                  contentText: source.content_text,
+                                });
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button className="decision-button" type="button" onClick={() => void updateSource(source.source_id, { status: source.status === "active" ? "paused" : "active" })}>
+                              {source.status === "active" ? "Pause" : "Resume"}
+                            </button>
+                            <button className="decision-button reject" type="button" onClick={() => void deleteSource(source.source_id)}>
+                              Delete rule
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 {workspace?.source_cards.length ? (
                   workspace.source_cards.map((source) => (
                     <article
@@ -2379,7 +2498,7 @@ export function DemoWorkspace() {
                           </button>
                         )}
                         <button className="decision-button reject" type="button" onClick={() => void deleteIngestedSource(source.source_ref)}>
-                          Delete
+                          Remove source and rebuild
                         </button>
                       </div>
                     </article>

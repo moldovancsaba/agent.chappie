@@ -403,6 +403,17 @@ def process_management_request(
             path=config.local_db_path,
         )
         return build_workspace_payload(project_id, config), HTTPStatus.OK
+    if resource == "knowledge" and method == "DELETE" and len(parts) == 4:
+        upsert_knowledge_feedback(
+            project_id=project_id,
+            knowledge_id=parts[3],
+            status=str(payload.get("status", "deleted_silent")),
+            confidence_source=str(payload.get("confidence_source", "user_modified")),
+            original_payload=payload.get("original_payload"),
+            corrected_implication=payload.get("reason"),
+            path=config.local_db_path,
+        )
+        return build_workspace_payload(project_id, config), HTTPStatus.OK
 
     if resource == "task-feedback" and method == "POST" and len(parts) == 3:
         return process_task_feedback(project_id, payload, config), HTTPStatus.OK
@@ -723,6 +734,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     else:
         draft_segments = list_draft_segments(project_id, path=config.local_db_path)
         draft_segments = [normalize_legacy_product_voice_in_segment(segment) for segment in draft_segments]
+    draft_segments = append_held_knowledge_segments(draft_segments, knowledge_feedback_rows)
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards, evidence_units)
     competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows, evidence_units)
 
@@ -1177,7 +1189,52 @@ def build_knowledge_cards(
         )
     )
 
-    return cards
+    hidden_statuses = {"deleted", "deleted_silent", "deleted_with_annotation", "dismissed", "held", "held_for_later"}
+    return [
+        card
+        for card in cards
+        if feedback_lookup.get(card["knowledge_id"], {}).get("status") not in hidden_statuses
+    ]
+
+
+def append_held_knowledge_segments(
+    draft_segments: list[dict[str, Any]],
+    feedback_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    held_statuses = {"held", "held_for_later"}
+    held_segments: list[dict[str, Any]] = []
+    existing_ids = {str(segment.get("segment_id") or "") for segment in draft_segments}
+    for row in feedback_rows:
+        if str(row.get("status") or "") not in held_statuses:
+            continue
+        knowledge_id = str(row.get("knowledge_id") or "").strip()
+        if not knowledge_id:
+            continue
+        segment_id = f"held::{knowledge_id}"
+        if segment_id in existing_ids:
+            continue
+        original_payload = row.get("original_payload") if isinstance(row.get("original_payload"), dict) else {}
+        held_segments.append(
+            {
+                "segment_id": segment_id,
+                "segment_kind": "held_knowledge",
+                "title": str(row.get("corrected_title") or original_payload.get("title") or "Held knowledge card"),
+                "segment_text": str(
+                    row.get("corrected_summary")
+                    or original_payload.get("summary")
+                    or row.get("corrected_implication")
+                    or original_payload.get("implication")
+                    or "We parked this knowledge card so it does not drive the live surface right now."
+                ),
+                "source_refs": [],
+                "evidence_refs": [f"knowledge::{knowledge_id}"],
+                "importance": 0.41,
+                "confidence": 0.66,
+                "updated_at": row.get("updated_at"),
+            }
+        )
+        existing_ids.add(segment_id)
+    return draft_segments + held_segments
 
 
 def build_draft_segments(

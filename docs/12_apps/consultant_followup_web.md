@@ -209,8 +209,17 @@ If a stored result still matches known stale legacy task patterns, the app must 
 
 - add, edit, pause, resume, and delete for sources
 - add, edit, pause, resume, and delete for jobs
+- 4 explicit removal modes across the intelligence surface:
+  - `Delete`
+  - `Delete and teach`
+  - `Hold for later`
+  - `Remove source and rebuild`
 - visible last run, last result summary, and current status for sources
 - visible trigger type, schedule, last three runs, last action summary, and expected impact summary for jobs
+- knowledge cards must support:
+  - silent delete with no teaching signal
+  - delete with annotation so We store what to avoid
+  - hold-for-later so the card leaves the live surface and returns to draft/parking state
 
 The app remains thin: these CRUD operations proxy to the Mac mini worker and read back worker-managed state.
 

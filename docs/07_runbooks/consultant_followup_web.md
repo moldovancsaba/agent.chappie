@@ -208,6 +208,11 @@ The app now treats `Sources & Jobs` as a management surface:
 
 - sources can be added, edited, paused, resumed, and deleted
 - jobs can be added, edited, paused, resumed, and deleted
+- the delete model now has 4 explicit operator paths:
+  - `Delete`
+  - `Delete and teach`
+  - `Hold for later`
+  - `Remove source and rebuild`
 - source cards expose current status, last run, and last extracted summary
 - ingested source cards expose:
   - key takeaway
@@ -216,6 +221,10 @@ The app now treats `Sources & Jobs` as a management surface:
   - confidence
   - source-level actions such as reprocess, edit metadata, and delete
 - job cards expose trigger type, schedule, last three runs, last action summary, and expected impact summary
+- knowledge cards now support:
+  - silent delete without teaching
+  - delete with annotation so We record what to avoid
+  - hold for later so the card leaves the live surface and returns to draft/parking state
 
 The app must never invent this state locally. All CRUD actions proxy to the worker and re-render from worker responses.
 Use `We` for the service voice and `You` for the operator in all user-facing copy.
