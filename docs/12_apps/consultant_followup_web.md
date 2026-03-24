@@ -33,6 +33,27 @@ The app now uses three sections only:
 - `Sources & Jobs` as the operator-side ingestion and recurring-job surface
 - a guided first-run input module that teaches the user exactly what to submit without sample business data
 
+## UI direction
+
+The live shell now follows the UI/UX direction of the reference repo:
+
+- `moldovancsaba/remix-of-gtm-ai-navigator`
+
+The adoption is style-level, not product-level. The current app keeps Agent.Chappie's product structure and behavior, but uses the reference's stronger command-center presentation:
+
+- cool neutral workspace background instead of the older warm parchment theme
+- persistent dark left rail for navigation and status
+- Plus Jakarta Sans / Inter typography stack
+- tighter SaaS-style cards, borders, and shadows
+- command-center framing without reintroducing dashboard clutter
+
+This visual direction must not weaken the product rules:
+
+- exactly 3 ranked task cards
+- `Know More` remains a knowledge surface, not a second checklist
+- `Sources & Jobs` remains a monitoring workspace, not a raw admin panel
+- user-facing voice remains `We` to `You`
+
 The main checklist view must:
 
 - show cards, not tables

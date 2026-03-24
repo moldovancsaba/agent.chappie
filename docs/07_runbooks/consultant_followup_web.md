@@ -33,6 +33,23 @@ DATABASE_URL=postgres://user:password@host/database?sslmode=require
 
 The frontend now submits only raw source material.
 
+## UI reference
+
+The current shell/theme direction intentionally follows the reference repo:
+
+- `moldovancsaba/remix-of-gtm-ai-navigator`
+
+Adoption rules:
+
+- match the reference's darker left rail, cooler command-center palette, and tighter SaaS card styling
+- preserve Agent.Chappie's product structure and product rules
+- do not import dashboard clutter, fake analytics, or generic admin framing
+- keep the current views:
+  - `Checklist`
+  - `Know More`
+  - `Sources & Jobs`
+- keep user-facing language as `We` to `You`
+
 ## Developer correction policy
 
 For this app, patching around symptoms is forbidden.

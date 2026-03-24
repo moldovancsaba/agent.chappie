@@ -1256,52 +1256,94 @@ export function DemoWorkspace() {
   const selectedTaskHumanEvidence = selectedTask
     ? buildHumanEvidenceChips(selectedTask, orderedTaskEvidence, orderedTaskDraftSegments, selectedTaskSources)
     : [];
+  const navigationItems: Array<{ view: AppView; label: string; description: string }> = [
+    { view: "checklist", label: "Checklist", description: "Your next three moves" },
+    { view: "know-more", label: "Know More", description: "What we learned and why" },
+    { view: "sources-jobs", label: "Sources & Jobs", description: "What we monitor for you" },
+  ];
 
   return (
     <section className="decision-shell">
-      <header className="decision-header panel">
-        <div className="decision-header-copy">
-          <div className="eyebrow">Competitive action engine</div>
-          <h1>We analyze your competitive environment and recommend your next 3 moves.</h1>
-          <p>
-            Drop one source. Agent.Chappie extracts signals, builds market intelligence, and surfaces actions you can
-            execute this week when a strong advantage appears.
-          </p>
-          <p className="system-status-line">{systemStatusLine}</p>
+      <aside className="workspace-sidebar">
+        <div className="sidebar-brand">
+          <div className="sidebar-logo">AC</div>
+          <div>
+            <strong>Agent.Chappie</strong>
+            <span>Operator intelligence workspace</span>
+          </div>
         </div>
+
+        <div className="sidebar-panel">
+          <span className="sidebar-label">Live system</span>
+          <strong>{currentStatus}</strong>
+          <p>{systemStatusLine}</p>
+        </div>
+
+        <nav className="surface-nav sidebar-nav" aria-label="Primary product sections">
+          {navigationItems.map((item) => (
+            <button
+              key={item.view}
+              className={`surface-tab sidebar-tab ${activeView === item.view ? "active" : ""}`}
+              onClick={() => setActiveView(item.view)}
+              type="button"
+            >
+              <span>{item.label}</span>
+              <small>{item.description}</small>
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-metrics">
+          <div className="status-stack">
+            <span className="status-label">Project</span>
+            <strong>{projectLabel}</strong>
+          </div>
+          <div className="status-stack">
+            <span className="status-label">Confidence</span>
+            <strong>
+              {confidenceLabel(confidence)}
+              {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
+            </strong>
+          </div>
+          <div className="status-stack">
+            <span className="status-label">Evidence</span>
+            <strong>
+              {workspace?.source_cards.length ?? 0} sources · {workspace?.recent_activity.length ?? 0} signals
+            </strong>
+          </div>
+        </div>
+      </aside>
+
+      <div className="workspace-main">
+        <header className="decision-header panel">
+          <div className="decision-header-copy">
+            <div className="eyebrow">Competitive action engine</div>
+            <h1>We analyze your competitive environment and recommend your next 3 moves.</h1>
+            <p>
+              Drop one source. Agent.Chappie extracts signals, builds market intelligence, and surfaces actions you can
+              execute this week when a strong advantage appears.
+            </p>
+          </div>
 
           <div className="project-status">
             <div className="status-stack">
-              <span className="status-label">Project</span>
+              <span className="status-label">Workspace</span>
               <strong>{projectLabel}</strong>
             </div>
             <div className="status-stack">
-              <span className="status-label">Status</span>
-              <strong>{currentStatus}</strong>
+              <span className="status-label">Operating mode</span>
+              <strong>{activeView === "checklist" ? "Decision mode" : activeView === "know-more" ? "Intelligence mode" : "Monitoring mode"}</strong>
             </div>
             <div className="status-stack">
-              <span className="status-label">Confidence</span>
+              <span className="status-label">Next best action</span>
               <strong>
-                {confidenceLabel(confidence)}
-                {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
+                {tasks.find((task) => task.is_next_best_action)?.title ?? "Waiting for the next strong move"}
               </strong>
             </div>
           </div>
-      </header>
+        </header>
 
-      <nav className="surface-nav" aria-label="Primary product sections">
-        <button className={`surface-tab ${activeView === "checklist" ? "active" : ""}`} onClick={() => setActiveView("checklist")} type="button">
-          Your Checklist
-        </button>
-        <button className={`surface-tab ${activeView === "know-more" ? "active" : ""}`} onClick={() => setActiveView("know-more")} type="button">
-          Know More
-        </button>
-        <button className={`surface-tab ${activeView === "sources-jobs" ? "active" : ""}`} onClick={() => setActiveView("sources-jobs")} type="button">
-          Sources &amp; Jobs
-        </button>
-      </nav>
-
-      {activeView === "checklist" ? (
+        {activeView === "checklist" ? (
         <section className="content-grid">
           <div className="primary-column">
             <section className="panel section-card">
@@ -1677,9 +1719,9 @@ export function DemoWorkspace() {
             </section>
           </aside>
         </section>
-      ) : null}
+        ) : null}
 
-      {activeView === "know-more" ? (
+        {activeView === "know-more" ? (
         <section className="content-grid single">
           <div className="primary-column">
             <section className="panel section-card intelligence-layout">
@@ -2016,9 +2058,9 @@ export function DemoWorkspace() {
             </section>
           </div>
         </section>
-      ) : null}
+        ) : null}
 
-      {activeView === "sources-jobs" ? (
+        {activeView === "sources-jobs" ? (
         <section className="content-grid">
           <div className="primary-column">
             <section className="panel section-card">
@@ -2429,7 +2471,8 @@ export function DemoWorkspace() {
             </section>
           </aside>
         </section>
-      ) : null}
+        ) : null}
+      </div>
     </section>
   );
 }
