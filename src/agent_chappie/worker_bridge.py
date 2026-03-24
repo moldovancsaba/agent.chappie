@@ -1325,6 +1325,14 @@ def segment_to_task(
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
         competitor_name = competitor or "the strongest visible competitor"
         mechanism = "Add a side-by-side pricing comparison and onboarding FAQ that lowers perceived adoption friction."
+        title = synthesize_task_title(
+            move_bucket="pricing_or_offer_move",
+            competitor=competitor_name,
+            audience=audience,
+            channel=comparison_channel,
+            timing_window=timing_window,
+            strongest_excerpt=strongest_excerpt,
+        )
         why_now = synthesize_task_why_now(
             move_bucket="pricing_or_offer_move",
             strongest_excerpt=strongest_excerpt,
@@ -1350,7 +1358,7 @@ def segment_to_task(
         )
         return {
             "rank": 0,
-            "title": f"Add a pricing comparison block and onboarding FAQ to the {comparison_channel} {timing_window} before {competitor_name} sets buyer expectations for {audience}",
+            "title": title,
             "why_now": why_now,
             "expected_advantage": expected_advantage,
             "evidence_refs": evidence_refs,
@@ -1371,8 +1379,16 @@ def segment_to_task(
         competitor_name = competitor or "the current market leader"
         offer = detail.get("offer") or strongest_offer_hint(segment_text)
         channel = primary_channel
-        offer_phrase = f" to answer the {offer} claim" if offer else ""
         mechanism = "Replace the exposed claim in the live page copy with a direct response to the strongest competitor angle."
+        title = synthesize_task_title(
+            move_bucket="messaging_or_positioning_move",
+            competitor=competitor_name,
+            audience=audience,
+            channel=channel,
+            timing_window=timing_window,
+            strongest_excerpt=strongest_excerpt,
+            offer=offer,
+        )
         why_now = synthesize_task_why_now(
             move_bucket="messaging_or_positioning_move",
             strongest_excerpt=strongest_excerpt,
@@ -1398,7 +1414,7 @@ def segment_to_task(
         )
         return {
             "rank": 0,
-            "title": f"Rewrite the {channel} {timing_window}{offer_phrase} before comparison-stage {audience} default to {competitor_name}",
+            "title": title,
             "why_now": why_now,
             "expected_advantage": expected_advantage,
             "evidence_refs": evidence_refs,
@@ -1416,6 +1432,14 @@ def segment_to_task(
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
+        title = synthesize_task_title(
+            move_bucket="information_request",
+            competitor=competitor or "the current comparison set",
+            audience=audience,
+            channel="same workspace",
+            timing_window=timing_window,
+            strongest_excerpt=strongest_excerpt,
+        )
         why_now = synthesize_task_why_now(
             move_bucket="information_request",
             strongest_excerpt=strongest_excerpt,
@@ -1426,7 +1450,7 @@ def segment_to_task(
         )
         return {
             "rank": 0,
-            "title": "Request the missing competitor, pricing, or buyer-proof source this week before making the wrong response move",
+            "title": title,
             "why_now": why_now,
             "expected_advantage": "Improves conversion and win rate this week by resolving the missing competitor, pricing, or buyer-pressure fact that is limiting the next best action.",
             "evidence_refs": evidence_refs,
@@ -1449,6 +1473,14 @@ def segment_to_task(
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
         competitor_name = competitor or "the exposed competitor"
         mechanism = "Secure direct access before another operator captures the transition window."
+        title = synthesize_task_title(
+            move_bucket="intercept_or_capture_move",
+            competitor=competitor_name,
+            audience=audience,
+            channel="direct outreach",
+            timing_window=timing_window,
+            strongest_excerpt=strongest_excerpt,
+        )
         why_now = synthesize_task_why_now(
             move_bucket="intercept_or_capture_move",
             strongest_excerpt=strongest_excerpt,
@@ -1474,7 +1506,7 @@ def segment_to_task(
         )
         return {
             "rank": 0,
-            "title": f"Contact {competitor_name} {timing_window} and secure first access to customers, staff, assets, or distribution before the window closes",
+            "title": title,
             "why_now": why_now,
             "expected_advantage": expected_advantage,
             "evidence_refs": evidence_refs,
@@ -1495,6 +1527,14 @@ def segment_to_task(
         competitor_name = competitor or "the current market leader"
         proof_channel = infer_proof_channel(domain, lowered)
         mechanism = "Add concrete proof blocks where hesitant buyers compare trust signals."
+        title = synthesize_task_title(
+            move_bucket="proof_or_trust_move",
+            competitor=competitor_name,
+            audience=audience,
+            channel=proof_channel,
+            timing_window=timing_window,
+            strongest_excerpt=strongest_excerpt,
+        )
         why_now = synthesize_task_why_now(
             move_bucket="proof_or_trust_move",
             strongest_excerpt=strongest_excerpt,
@@ -1520,7 +1560,7 @@ def segment_to_task(
         )
         return {
             "rank": 0,
-            "title": f"Add two proof blocks on the {proof_channel} this week so hesitant {audience} do not trust {competitor_name} first",
+            "title": title,
             "why_now": why_now,
             "expected_advantage": expected_advantage,
             "evidence_refs": evidence_refs,
@@ -2980,6 +3020,32 @@ def synthesize_task_why_now(
     if move_bucket == "proof_or_trust_move":
         return f"We found trust pressure in your sources tied to {competitor}: {excerpt} This is already influencing how hesitant {audience} judge credibility."
     return f"We found a concrete signal in your sources: {excerpt} This is the strongest reason to act now."
+
+
+def synthesize_task_title(
+    *,
+    move_bucket: str,
+    competitor: str,
+    audience: str,
+    channel: str,
+    timing_window: str,
+    strongest_excerpt: str,
+    offer: str | None = None,
+) -> str:
+    if move_bucket == "pricing_or_offer_move":
+        return f"Add a pricing comparison block and onboarding FAQ to the {channel} {timing_window} before {competitor} sets buyer expectations for {audience}"
+    if move_bucket == "messaging_or_positioning_move":
+        offer_phrase = f" to answer the {offer} claim" if offer else ""
+        return f"Rewrite the {channel} {timing_window}{offer_phrase} before comparison-stage {audience} default to {competitor}"
+    if move_bucket == "intercept_or_capture_move":
+        return f"Contact {competitor} {timing_window} and secure first access to customers, staff, assets, or distribution before the window closes"
+    if move_bucket == "proof_or_trust_move":
+        return f"Add two proof blocks on the {channel} {timing_window} so hesitant {audience} do not trust {competitor} first"
+    if move_bucket == "information_request":
+        if any(token in strongest_excerpt.lower() for token in ("pricing", "onboarding", "offer", "proof")):
+            return f"Request the missing proprietary pricing, offer, or buyer-proof fact {timing_window} before making the wrong response move"
+        return f"Request the missing competitor or timing fact {timing_window} before making the wrong response move"
+    return f"Ship the strongest visible response in the {channel} {timing_window} before {competitor} gains more ground"
 
 
 def synthesize_task_expected_advantage(

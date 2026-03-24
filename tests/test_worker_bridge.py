@@ -283,6 +283,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("supporting_source_refs", top_task)
             self.assertIn("Fortitude", top_task["why_now"])
             self.assertTrue(any(token in top_task["why_now"].lower() for token in ("pricing", "offer", "proof", "signal")))
+            self.assertIn("Fortitude", top_task["title"])
+            self.assertTrue(any(token in top_task["title"].lower() for token in ("pricing page", "homepage", "comparison", "proof", "contact")))
             task_types = [task["task_type"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
             self.assertLessEqual(task_types.count("information_request"), 1)
             self.assertGreaterEqual(sum(task_type != "information_request" for task_type in task_types), 2)
