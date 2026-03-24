@@ -153,6 +153,7 @@ This pipeline must remain worker-authoritative.
 The current foundation also includes persisted atomic `evidence_units` in the local brain:
 
 - each ingested or auto-collected source is broken into smaller evidence units
+- those units may now carry explicit channel, section, asset, and claim structure
 - the knowledge surface clusters those units into reusable cards
 - task generation should prefer those clustered units over broad source-level summaries
 - task detail should prefer task-specific evidence bundles with:
@@ -166,6 +167,7 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
   - mechanism
   - done definition
 - execution steps and done definition should be synthesized from that same winning bundle, not from generic move-bucket templates alone
+- explicit extracted structure from evidence units should outrank fallback inference whenever available
 - supporting sources should be explicitly scored per task so weaker sources can be excluded before task detail renders
 - one source may produce multiple knowledge cards
 - multiple sources may strengthen one knowledge card

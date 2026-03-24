@@ -185,6 +185,7 @@ Do not ship detached internal product language such as `the worker` or `the user
 - `Know More` should lead with worker-generated strategic synthesis such as a competitive position snapshot
 - `Know More` should surface worker-drafted knowledge segments created from the complete source set
 - the worker should persist atomic `evidence_units` so one source can feed multiple knowledge cards and multiple sources can strengthen one card
+- those evidence units should preserve explicit channel, section, asset, and claim details when the source contains them
 - the worker should rebuild `market_summary`, `competitors_detected`, `pricing_packaging`, `offer_positioning`, `proof_signals`, and `open_questions` from clustered evidence units instead of broad source blur
 - when Agent.Chappie can fetch missing public-web competitor context itself, that enrichment should happen automatically and be stored in the local brain before the system asks the operator to research anything
 - auto-collected enrichment must remain visually distinct from operator-provided sources in the UI
@@ -210,6 +211,7 @@ Task detail should be evidence-bundle-specific:
 - show target channel, target segment, and done definition when the writer/judge provide them
 - prefer worker-authored execution steps when available instead of frontend-only reconstruction
 - worker-authored execution steps and done definitions should use the strongest excerpt, chosen competitor, and chosen channel so each task detail reads like a task-instance playbook
+- if the winning evidence bundle contains an explicit asset, section, or claim, the worker should reuse that exact structure in the task title, execution steps, and done definition
 - execution steps must be operational, not generic filler
 
 If a rich source is processed but no immediate action is strong enough:

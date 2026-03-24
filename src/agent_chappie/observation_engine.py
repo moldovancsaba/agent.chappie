@@ -984,11 +984,58 @@ def extract_action_detail(signal_phrase: str) -> dict[str, str | None]:
     percent_match = re.search(r"\b(\d{1,2}(?:\.\d+)?\s?%)\b", signal_phrase)
     offer_match = re.search(r"\b(free[-\s]trial|trial offer|discount campaign|discount|voucher|scholarship)\b", signal_phrase, re.IGNORECASE)
     timeframe_match = re.search(r"\b(this week|this month|before the next intake|before next intake|before enrollment closes)\b", signal_phrase, re.IGNORECASE)
+    lowered = signal_phrase.lower()
+    channel = None
+    if any(token in lowered for token in ("pricing page", "pricing", "package", "packages")):
+        channel = "pricing page"
+    elif any(token in lowered for token in ("homepage", "landing page")):
+        channel = "homepage comparison section"
+    elif any(token in lowered for token in ("enrollment", "enrolment")):
+        channel = "enrollment path"
+    elif any(token in lowered for token in ("sales call", "sales script", "follow-up email", "follow up email")):
+        channel = "sales script"
+
+    section = None
+    if "hero" in lowered:
+        section = "hero section"
+    elif "faq" in lowered or "onboarding faq" in lowered:
+        section = "onboarding FAQ"
+    elif "comparison" in lowered or "versus" in lowered:
+        section = "comparison section"
+    elif "testimonial" in lowered or "proof" in lowered:
+        section = "proof section"
+    elif "pricing block" in lowered or "pricing table" in lowered:
+        section = "pricing block"
+
+    asset = None
+    if any(token in lowered for token in ("pricing comparison", "comparison block", "pricing table")):
+        asset = "pricing comparison block"
+    elif "onboarding faq" in lowered or ("faq" in lowered and "onboarding" in lowered):
+        asset = "onboarding FAQ"
+    elif "hero" in lowered:
+        asset = "hero section copy"
+    elif any(token in lowered for token in ("testimonial", "proof block", "proof strip")):
+        asset = "proof block"
+    elif "sales script" in lowered:
+        asset = "sales script update"
+
+    claim = None
+    claim_match = re.search(
+        r"\b(free[-\s]trial|trial offer|discount campaign|discount|voucher|scholarship|no engineering required|integration claims?|customer testimonials?|proof claims?|onboarding friction|pricing pressure)\b",
+        signal_phrase,
+        re.IGNORECASE,
+    )
+    if claim_match:
+        claim = claim_match.group(1).lower().replace("-", " ")
     return {
         "tier": tier_match.group(1).upper().replace(" ", "") if tier_match else None,
         "percent": percent_match.group(1).replace(" ", "") if percent_match else None,
         "offer": offer_match.group(1).lower().replace("-", " ") if offer_match else None,
         "timeframe": timeframe_match.group(1).lower() if timeframe_match else None,
+        "channel": channel,
+        "section": section,
+        "asset": asset,
+        "claim": claim,
     }
 
 

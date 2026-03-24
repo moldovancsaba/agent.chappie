@@ -187,6 +187,9 @@ def initialize_local_store(path: str | None = None) -> str:
               competitor text,
               segment text,
               channel text,
+              section text,
+              asset text,
+              claim text,
               timing text,
               confidence real not null,
               created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -207,6 +210,9 @@ def initialize_local_store(path: str | None = None) -> str:
         _ensure_column(connection, "knowledge_feedback", "original_payload_json", "text")
         _ensure_column(connection, "knowledge_feedback", "corrected_implication", "text")
         _ensure_column(connection, "knowledge_feedback", "corrected_potential_moves_json", "text")
+        _ensure_column(connection, "evidence_units", "section", "text")
+        _ensure_column(connection, "evidence_units", "asset", "text")
+        _ensure_column(connection, "evidence_units", "claim", "text")
     finally:
         connection.close()
     return db_path
@@ -693,10 +699,13 @@ def replace_evidence_units(project_id: str, units: list[dict[str, Any]], path: s
                   competitor,
                   segment,
                   channel,
+                  section,
+                  asset,
+                  claim,
                   timing,
                   confidence
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     unit["unit_id"],
@@ -708,6 +717,9 @@ def replace_evidence_units(project_id: str, units: list[dict[str, Any]], path: s
                     unit.get("competitor"),
                     unit.get("segment"),
                     unit.get("channel"),
+                    unit.get("section"),
+                    unit.get("asset"),
+                    unit.get("claim"),
                     unit.get("timing"),
                     float(unit["confidence"]),
                 ),
@@ -728,6 +740,9 @@ def list_evidence_units(project_id: str, limit: int = 400, path: str | None = No
               competitor,
               segment,
               channel,
+              section,
+              asset,
+              claim,
               timing,
               confidence,
               created_at

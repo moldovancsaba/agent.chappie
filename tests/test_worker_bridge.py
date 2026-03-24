@@ -20,7 +20,7 @@ from agent_chappie.local_store import (
     save_source_snapshot,
     upsert_knowledge_feedback,
 )
-from agent_chappie.observation_engine import SourcePackage, build_source_hash
+from agent_chappie.observation_engine import SourcePackage, build_source_hash, extract_action_detail
 from agent_chappie.worker_bridge import (
     WorkerBridgeConfig,
     build_auto_research_sources,
@@ -32,6 +32,16 @@ from agent_chappie.worker_bridge import (
 
 
 class WorkerBridgeKnowledgeTests(unittest.TestCase):
+    def test_extract_action_detail_captures_channel_section_asset_and_claim(self) -> None:
+        detail = extract_action_detail(
+            "Add a pricing comparison block and onboarding FAQ to the pricing page this week before Fortitude AI's free trial sets buyer expectations."
+        )
+
+        self.assertEqual(detail["channel"], "pricing page")
+        self.assertEqual(detail["section"], "onboarding FAQ")
+        self.assertEqual(detail["asset"], "pricing comparison block")
+        self.assertEqual(detail["claim"], "free trial")
+
     def test_auto_research_rejects_irrelevant_public_results(self) -> None:
         source = SourcePackage(
             project_id="project_auto_research",
@@ -116,6 +126,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertGreaterEqual(len(card_refs), 3)
             evidence_units = list_evidence_units("project_knowledge", path=db_path)
             self.assertTrue(evidence_units)
+            self.assertTrue(any(unit.get("channel") for unit in evidence_units))
 
     def test_multiple_sources_can_strengthen_one_knowledge_card(self) -> None:
         source_a = SourcePackage(
@@ -282,6 +293,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue(any("Fortitude" in step for step in top_task["execution_steps"]))
             self.assertTrue(any("pricing comparison block" in step.lower() or "homepage comparison section" in step.lower() for step in top_task["execution_steps"]))
             self.assertTrue(any(token in top_task["done_definition"].lower() for token in ("pricing comparison block", "homepage comparison section", "proof block")))
+            self.assertTrue(any(token in top_task["execution_steps"][0].lower() for token in ("claim", "free trial", "onboarding", "pricing")))
             self.assertIn("supporting_signal_refs", top_task)
             self.assertIn("supporting_segment_ids", top_task)
             self.assertIn("supporting_signal_scores", top_task)

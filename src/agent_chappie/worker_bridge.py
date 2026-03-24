@@ -1319,6 +1319,15 @@ def segment_to_task(
         competitor=competitor,
     )
     supporting_segment_ids = [item["segment_id"] for item in supporting_segment_bundle]
+    strongest_unit = strongest_supporting_unit(
+        supporting_source_refs=supporting_source_refs,
+        evidence_units=evidence_units,
+        strongest_excerpt=strongest_excerpt,
+    )
+    explicit_asset = str((strongest_unit or {}).get("asset") or detail.get("asset") or "").strip() or None
+    explicit_section = str((strongest_unit or {}).get("section") or detail.get("section") or "").strip() or None
+    explicit_claim = str((strongest_unit or {}).get("claim") or detail.get("claim") or "").strip() or None
+    explicit_channel = str((strongest_unit or {}).get("channel") or detail.get("channel") or "").strip() or None
     bundle_observations = [
         observation
         for observation in observations
@@ -1327,6 +1336,7 @@ def segment_to_task(
 
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
         competitor_name = competitor or "the strongest visible competitor"
+        comparison_channel = explicit_channel or comparison_channel
         mechanism = "Add a side-by-side pricing comparison and onboarding FAQ that lowers perceived adoption friction."
         title = synthesize_task_title(
             move_bucket="pricing_or_offer_move",
@@ -1359,6 +1369,9 @@ def segment_to_task(
             competitor=competitor_name,
             mechanism=mechanism,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         return {
             "rank": 0,
@@ -1379,6 +1392,8 @@ def segment_to_task(
                 audience=audience,
                 mechanism=mechanism,
                 strongest_excerpt=strongest_excerpt,
+                explicit_asset=explicit_asset,
+                explicit_section=explicit_section,
             ),
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
@@ -1392,7 +1407,7 @@ def segment_to_task(
     if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
         competitor_name = competitor or "the current market leader"
         offer = detail.get("offer") or strongest_offer_hint(segment_text)
-        channel = primary_channel
+        channel = explicit_channel or primary_channel
         mechanism = "Replace the exposed claim in the live page copy with a direct response to the strongest competitor angle."
         title = synthesize_task_title(
             move_bucket="messaging_or_positioning_move",
@@ -1426,6 +1441,9 @@ def segment_to_task(
             competitor=competitor_name,
             mechanism=mechanism,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         return {
             "rank": 0,
@@ -1446,6 +1464,8 @@ def segment_to_task(
                 audience=audience,
                 mechanism=mechanism,
                 strongest_excerpt=strongest_excerpt,
+                explicit_asset=explicit_asset,
+                explicit_section=explicit_section,
             ),
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
@@ -1490,6 +1510,9 @@ def segment_to_task(
                 competitor=competitor or "the current comparison set",
                 mechanism="Request one missing proprietary fact in a single message and add it back to this workspace.",
                 strongest_excerpt=strongest_excerpt,
+                explicit_asset=explicit_asset,
+                explicit_section=explicit_section,
+                explicit_claim=explicit_claim,
             ),
             "done_definition": synthesize_done_definition(
                 move_bucket="information_request",
@@ -1498,6 +1521,8 @@ def segment_to_task(
                 audience=audience,
                 mechanism="Request one missing proprietary fact in a single message and add it back to this workspace.",
                 strongest_excerpt=strongest_excerpt,
+                explicit_asset=explicit_asset,
+                explicit_section=explicit_section,
             ),
             "supporting_signal_refs": supporting_signal_refs,
             "supporting_segment_ids": supporting_segment_ids,
@@ -1509,12 +1534,13 @@ def segment_to_task(
         }
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
         competitor_name = competitor or "the exposed competitor"
+        outreach_channel = explicit_channel or "direct outreach"
         mechanism = "Secure direct access before another operator captures the transition window."
         title = synthesize_task_title(
             move_bucket="intercept_or_capture_move",
             competitor=competitor_name,
             audience=audience,
-            channel="direct outreach",
+            channel=outreach_channel,
             timing_window=timing_window,
             strongest_excerpt=strongest_excerpt,
         )
@@ -1524,23 +1550,26 @@ def segment_to_task(
             observations=bundle_observations,
             competitor=competitor_name,
             audience=audience,
-            channel="direct outreach",
+            channel=outreach_channel,
         )
         expected_advantage = synthesize_task_expected_advantage(
             move_bucket="intercept_or_capture_move",
             competitor=competitor_name,
             audience=audience,
-            channel="direct outreach",
+            channel=outreach_channel,
             timing_window=timing_window,
         )
         execution_steps = build_task_execution_steps(
             move_bucket="intercept_or_capture_move",
             source_refs=supporting_source_refs,
-            channel="direct outreach",
+            channel=outreach_channel,
             audience=audience,
             competitor=competitor_name,
             mechanism=mechanism,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         return {
             "rank": 0,
@@ -1551,16 +1580,18 @@ def segment_to_task(
             "task_type": "capture_move",
             "move_bucket": "intercept_or_capture_move",
             "competitor_name": competitor_name,
-            "target_channel": "direct outreach",
+            "target_channel": outreach_channel,
             "target_segment": audience,
             "mechanism": mechanism,
             "done_definition": synthesize_done_definition(
                 move_bucket="intercept_or_capture_move",
                 competitor=competitor_name,
-                channel="direct outreach",
+                channel=outreach_channel,
                 audience=audience,
                 mechanism=mechanism,
                 strongest_excerpt=strongest_excerpt,
+                explicit_asset=explicit_asset,
+                explicit_section=explicit_section,
             ),
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
@@ -1573,7 +1604,7 @@ def segment_to_task(
         }
     if segment["importance"] >= 0.7:
         competitor_name = competitor or "the current market leader"
-        proof_channel = infer_proof_channel(domain, lowered)
+        proof_channel = explicit_channel or infer_proof_channel(domain, lowered)
         mechanism = "Add concrete proof blocks where hesitant buyers compare trust signals."
         title = synthesize_task_title(
             move_bucket="proof_or_trust_move",
@@ -1606,6 +1637,9 @@ def segment_to_task(
             competitor=competitor_name,
             mechanism=mechanism,
             strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
         )
         return {
             "rank": 0,
@@ -1626,6 +1660,8 @@ def segment_to_task(
                 audience=audience,
                 mechanism=mechanism,
                 strongest_excerpt=strongest_excerpt,
+                explicit_asset=explicit_asset,
+                explicit_section=explicit_section,
             ),
             "execution_steps": execution_steps,
             "supporting_signal_refs": supporting_signal_refs,
@@ -2178,6 +2214,24 @@ def infer_proof_channel(domain: str, lowered_text: str) -> str:
     if "sales" in lowered_text:
         return "sales script and follow-up email"
     return "enrollment page and comparison section" if domain == "academy" else "homepage and comparison section"
+
+
+def strongest_supporting_unit(
+    *,
+    supporting_source_refs: list[str],
+    evidence_units: list[dict[str, Any]],
+    strongest_excerpt: str,
+) -> dict[str, Any] | None:
+    normalized_excerpt = strongest_excerpt.strip().lower()
+    candidates = [
+        unit
+        for unit in evidence_units
+        if unit.get("source_ref") in supporting_source_refs or (normalized_excerpt and normalized_excerpt in str(unit.get("excerpt") or "").lower())
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda unit: float(unit.get("confidence") or 0), reverse=True)
+    return candidates[0]
 
 
 def infer_domain_from_sources(source: SourcePackage, fact_chips: list[dict[str, Any]]) -> str:
@@ -2746,7 +2800,10 @@ def build_evidence_units(
                 "excerpt": excerpt[:320],
                 "competitor": competitor,
                 "segment": segment,
-                "channel": channel,
+                "channel": detail.get("channel") or channel,
+                "section": detail.get("section"),
+                "asset": detail.get("asset"),
+                "claim": detail.get("claim"),
                 "timing": detail.get("timeframe"),
                 "confidence": round(confidence, 2),
             }
@@ -3156,7 +3213,13 @@ def infer_task_asset(
     channel: str,
     mechanism: str,
     strongest_excerpt: str,
+    explicit_asset: str | None = None,
+    explicit_section: str | None = None,
 ) -> str:
+    if explicit_asset:
+        if explicit_section and explicit_section.lower() not in explicit_asset.lower():
+            return f"{explicit_asset} in the {explicit_section} on the {channel}"
+        return f"{explicit_asset} on the {channel}"
     excerpt = strongest_excerpt.lower()
     if move_bucket == "pricing_or_offer_move":
         if "faq" in excerpt or "onboarding" in excerpt:
@@ -3186,6 +3249,9 @@ def build_task_execution_steps(
     competitor: str,
     mechanism: str,
     strongest_excerpt: str,
+    explicit_asset: str | None = None,
+    explicit_section: str | None = None,
+    explicit_claim: str | None = None,
 ) -> list[str]:
     source_summary = ", ".join(source_refs[:3]) if source_refs else "the linked source set"
     asset = infer_task_asset(
@@ -3193,44 +3259,47 @@ def build_task_execution_steps(
         channel=channel,
         mechanism=mechanism,
         strongest_excerpt=strongest_excerpt,
+        explicit_asset=explicit_asset,
+        explicit_section=explicit_section,
     )
+    claim_phrase = explicit_claim or strongest_excerpt
     if move_bucket == "pricing_or_offer_move":
         return [
-            f"Pull the exact pricing, onboarding, and proof claims from {source_summary}, especially the claim behind this excerpt: {strongest_excerpt}",
+            f"Pull the exact pricing, onboarding, and proof claims from {source_summary}, especially the claim behind this excerpt: {claim_phrase}",
             f"Turn those claims into a live {asset} using this mechanism: {mechanism}.",
             f"Publish the updated {asset} this week so active {audience} see it in the {channel}.",
             f"Send the updated {asset} into live comparisons and check whether {competitor}-style pricing or onboarding objections drop.",
         ]
     if move_bucket == "messaging_or_positioning_move":
         return [
-            f"Pull the strongest live claim from {source_summary}, especially the angle {competitor} is using against {audience}: {strongest_excerpt}",
+            f"Pull the strongest live claim from {source_summary}, especially the angle {competitor} is using against {audience}: {claim_phrase}",
             f"Rewrite the {asset} using this mechanism: {mechanism}.",
             f"Publish the updated {asset} this week in the first comparison section buyers will see.",
             f"Check whether the updated {asset} now answers the objection or offer pressure tied to {competitor}.",
         ]
     if move_bucket == "proof_or_trust_move":
         return [
-            f"Pull the strongest trust and proof patterns from {source_summary}, especially what makes {competitor} more credible to {audience}: {strongest_excerpt}",
+            f"Pull the strongest trust and proof patterns from {source_summary}, especially what makes {competitor} more credible to {audience}: {claim_phrase}",
             f"Add the planned {asset} using this mechanism: {mechanism}.",
             f"Publish the {asset} this week where hesitant buyers see it first on the {channel}.",
             f"Check whether trust objections drop when {audience} compare you against {competitor}.",
         ]
     if move_bucket == "intercept_or_capture_move":
         return [
-            f"Pull the exact transition, closure, or asset evidence from {source_summary}, anchored to this excerpt: {strongest_excerpt}",
+            f"Pull the exact transition, closure, or asset evidence from {source_summary}, anchored to this excerpt: {claim_phrase}",
             f"Contact {competitor} using this mechanism: {mechanism}.",
             "Secure the next meeting, inventory list, or first-right-of-access this week before another operator moves.",
             f"Check whether the opportunity with {competitor} is now advancing on your terms instead of staying theoretical.",
         ]
     if move_bucket == "information_request":
         return [
-            f"Review {source_summary} and isolate the one missing proprietary fact we still cannot collect automatically from this evidence: {strongest_excerpt}",
+            f"Review {source_summary} and isolate the one missing proprietary fact we still cannot collect automatically from this evidence: {claim_phrase}",
             "Request that specific missing input in one message, not a broad research ask.",
             "Add the new evidence back into this same workspace this week so the checklist can regenerate from it.",
             "Check that the next regeneration replaces the exploratory task with a stronger action move.",
         ]
     return [
-        f"Use the strongest evidence from {source_summary}, especially {strongest_excerpt}, to define the exact asset or channel change required against {competitor}.",
+        f"Use the strongest evidence from {source_summary}, especially {claim_phrase}, to define the exact asset or channel change required against {competitor}.",
         f"Create the exact {asset} using this mechanism: {mechanism}.",
         f"Publish the change in the {channel} this week so {audience} can actually experience the move.",
         f"Check whether the result reduced the threat from {competitor} or captured the opportunity described in the expected impact.",
@@ -3245,12 +3314,16 @@ def synthesize_done_definition(
     audience: str,
     mechanism: str,
     strongest_excerpt: str,
+    explicit_asset: str | None = None,
+    explicit_section: str | None = None,
 ) -> str:
     asset = infer_task_asset(
         move_bucket=move_bucket,
         channel=channel,
         mechanism=mechanism,
         strongest_excerpt=strongest_excerpt,
+        explicit_asset=explicit_asset,
+        explicit_section=explicit_section,
     )
     if move_bucket == "pricing_or_offer_move":
         return f"The live {asset} explicitly answers {competitor}'s pricing or onboarding claim and is visible to active {audience}."

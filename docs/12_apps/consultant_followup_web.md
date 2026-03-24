@@ -120,6 +120,7 @@ The next evidence layer is now explicit:
 - many sources may strengthen the same knowledge card
 - `Know More` should be rebuilt from those units instead of flattening each source into one broad summary
 - key knowledge cards should expose `support_count` and `strongest_excerpt` so the operator can see why the card exists
+- evidence units should now persist extracted `channel`, `section`, `asset`, and `claim` details when the source makes them visible
 
 ## Ingestion behavior
 
@@ -152,6 +153,7 @@ The next evidence layer is now explicit:
 - task detail should show the worker-selected support order and support strength, not just an unordered linked-source list
 - this support ordering should apply to linked signals and draft segments too, not only linked sources
 - `execution_steps` and `done_definition` should be authored from the winning support bundle when possible so the playbook stays task-instance-specific, not just move-bucket-specific
+- task generation should prefer explicit extracted asset, section, channel, and claim details over fallback inference when those details exist in the evidence units
 - `why_now` and `expected_advantage` should now be synthesized from the selected task support bundle instead of relying on generic bucket templates
 - task titles should also be progressively synthesized from the selected support bundle so competitor, channel, and timing stay tied to the chosen evidence
 
