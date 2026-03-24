@@ -100,6 +100,59 @@ textarea {
   gap: 20px;
 }
 
+.workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 22px;
+}
+
+.workspace-toolbar-copy strong {
+  display: block;
+  margin-top: 2px;
+  font-family: "Plus Jakarta Sans", var(--font-display), sans-serif;
+  font-size: 1.15rem;
+  line-height: 1.1;
+}
+
+.workspace-toolbar-copy p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.workspace-toolbar-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.toolbar-chip {
+  min-width: 116px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.toolbar-chip span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.toolbar-chip strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+
 .sidebar-brand {
   display: flex;
   align-items: center;
@@ -367,6 +420,17 @@ textarea {
   border-radius: 22px;
   background: var(--surface-strong);
   border: 1px solid var(--line);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+}
+
+.checklist-card:hover,
+.intel-card:hover,
+.operator-card:hover,
+.source-asset:hover,
+.job-item:hover,
+.library-item:hover {
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
 }
 
 .task-rank {
@@ -744,6 +808,7 @@ textarea {
   border-radius: 20px;
   background: var(--surface-strong);
   border: 1px solid var(--line);
+  transition: box-shadow 140ms ease, transform 140ms ease;
 }
 
 .intel-card.auto-collected,
@@ -916,6 +981,7 @@ textarea {
   border-radius: 22px;
   background: var(--surface-strong);
   border: 1px solid var(--line);
+  transition: box-shadow 140ms ease, transform 140ms ease, border-color 140ms ease;
 }
 
 .source-asset.current {
@@ -992,6 +1058,15 @@ textarea {
 
   .workspace-sidebar {
     position: static;
+  }
+
+  .workspace-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .workspace-toolbar-metrics {
+    justify-content: stretch;
   }
 
   .decision-header,

@@ -1261,6 +1261,13 @@ export function DemoWorkspace() {
     { view: "know-more", label: "Know More", description: "What we learned and why" },
     { view: "sources-jobs", label: "Sources & Jobs", description: "What we monitor for you" },
   ];
+  const activeNavigationItem = navigationItems.find((item) => item.view === activeView) ?? navigationItems[0];
+  const topbarSummary =
+    activeView === "checklist"
+      ? `${tasks.length} ranked moves`
+      : activeView === "know-more"
+        ? `${filteredKnowledgeCards.length} intelligence cards`
+        : `${workspace?.source_cards.length ?? 0} monitored sources`;
 
   return (
     <section className="decision-shell">
@@ -1342,6 +1349,32 @@ export function DemoWorkspace() {
             </div>
           </div>
         </header>
+
+        <section className="workspace-toolbar panel" aria-label="Workspace context">
+          <div className="workspace-toolbar-copy">
+            <span className="section-kicker">Workspace view</span>
+            <strong>{activeNavigationItem.label}</strong>
+            <p>{activeNavigationItem.description}</p>
+          </div>
+          <div className="workspace-toolbar-metrics">
+            <div className="toolbar-chip">
+              <span>Focus</span>
+              <strong>{topbarSummary}</strong>
+            </div>
+            <div className="toolbar-chip">
+              <span>Sources</span>
+              <strong>{workspace?.source_cards.length ?? 0}</strong>
+            </div>
+            <div className="toolbar-chip">
+              <span>Signals</span>
+              <strong>{workspace?.recent_activity.length ?? 0}</strong>
+            </div>
+            <div className="toolbar-chip">
+              <span>Tasks</span>
+              <strong>{tasks.length}</strong>
+            </div>
+          </div>
+        </section>
 
         {activeView === "checklist" ? (
         <section className="content-grid">

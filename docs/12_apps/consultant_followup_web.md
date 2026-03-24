@@ -43,6 +43,7 @@ The adoption is style-level, not product-level. The current app keeps Agent.Chap
 
 - cool neutral workspace background instead of the older warm parchment theme
 - persistent dark left rail for navigation and status
+- a workspace context bar above the active view for focus, source, signal, and task counts
 - Plus Jakarta Sans / Inter typography stack
 - tighter SaaS-style cards, borders, and shadows
 - command-center framing without reintroducing dashboard clutter

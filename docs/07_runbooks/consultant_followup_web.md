@@ -42,6 +42,7 @@ The current shell/theme direction intentionally follows the reference repo:
 Adoption rules:
 
 - match the reference's darker left rail, cooler command-center palette, and tighter SaaS card styling
+- keep a visible workspace context bar above the active surface so operators can see focus and volume at a glance
 - preserve Agent.Chappie's product structure and product rules
 - do not import dashboard clutter, fake analytics, or generic admin framing
 - keep the current views:
