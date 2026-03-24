@@ -287,6 +287,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         list_recent_source_snapshots(source_package.project_id, path=config.local_db_path),
         knowledge_cards,
         linked_tasks_by_source,
+        evidence_units,
     )
     update_source_snapshot(
         source_package.source_ref,
@@ -722,7 +723,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     else:
         draft_segments = list_draft_segments(project_id, path=config.local_db_path)
         draft_segments = [normalize_legacy_product_voice_in_segment(segment) for segment in draft_segments]
-    source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
+    source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards, evidence_units)
     competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows, evidence_units)
 
     knowledge_summary_rows = [
@@ -925,6 +926,7 @@ def reprocess_source_snapshot(project_id: str, source_ref: str, config: WorkerBr
         list_recent_source_snapshots(project_id, path=config.local_db_path),
         knowledge_cards,
         {},
+        evidence_units,
     )
     update_source_snapshot(
         source_ref,
@@ -946,6 +948,7 @@ def build_ingested_source_cards(
     source_rows: list[dict[str, Any]],
     observation_rows: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     source_cards: list[dict[str, Any]] = []
     for row in source_rows[:8]:
@@ -964,8 +967,8 @@ def build_ingested_source_cards(
                 ),
                 "last_used_in_checklist": bool(row.get("last_used_in_checklist")),
                 "signal_count": signal_count,
-                "key_takeaway": row.get("key_takeaway") or derive_source_takeaway(row, knowledge_cards),
-                "business_impact": row.get("business_impact") or derive_source_business_impact(row, knowledge_cards),
+                "key_takeaway": row.get("key_takeaway") or derive_source_takeaway(row, knowledge_cards, evidence_units),
+                "business_impact": row.get("business_impact") or derive_source_business_impact(row, knowledge_cards, evidence_units),
                 "linked_tasks": parse_json_list(row.get("linked_task_titles_json")),
                 "confidence": round(float(row.get("source_confidence") or derive_source_confidence(signal_count, knowledge_count)), 2),
                 "created_at": row["created_at"],
@@ -2608,6 +2611,12 @@ def build_competitive_snapshot(
     pricing_units = [unit for unit in evidence_units if unit["unit_kind"] in {"pricing", "pricing_change"}]
     offer_units = [unit for unit in evidence_units if unit["unit_kind"] in {"offer", "positioning", "messaging_shift"}]
     proof_units = [unit for unit in evidence_units if unit["unit_kind"] in {"proof", "proof_signal"}]
+    pricing_clusters = cluster_units_by_action_shape(pricing_units)
+    offer_clusters = cluster_units_by_action_shape(offer_units)
+    proof_clusters = cluster_units_by_action_shape(proof_units)
+    top_pricing_cluster = pick_best_action_cluster(pricing_units)
+    top_offer_cluster = pick_best_action_cluster(offer_units)
+    top_proof_cluster = pick_best_action_cluster(proof_units)
 
     pricing_position = "No pricing pressure detected yet."
     if pricing_observation:
@@ -2615,9 +2624,12 @@ def build_competitive_snapshot(
             f"{pricing_observation['competitor']} is resetting buyer price expectations in "
             f"{humanize_region(pricing_observation['region'])}, which exposes any weaker entry offer you still show."
         )
-    elif pricing_units:
-        top_pricing = pricing_units[0]
-        pricing_position = f"{top_pricing.get('competitor') or 'The market'} is using pricing or onboarding pressure in the comparison set, even if a direct price change is still thin."
+    elif top_pricing_cluster:
+        pricing_position = summarize_snapshot_cluster_pressure(
+            cluster=top_pricing_cluster,
+            fallback_competitor=competitor,
+            fallback="Pricing pressure is visible in the comparison set.",
+        )
 
     acquisition_strategy = "No competitor is clearly winning on low-friction acquisition yet."
     if offer_observation:
@@ -2629,11 +2641,17 @@ def build_competitive_snapshot(
         acquisition_strategy = (
             f"{asset_sale_observation['competitor']} is creating a cost-side acquisition opening through asset pressure."
         )
-    elif offer_units:
-        top_offer = offer_units[0]
-        acquisition_strategy = f"{top_offer.get('competitor') or 'A competitor'} is shaping low-friction acquisition through offer or positioning pressure."
+    elif top_offer_cluster:
+        acquisition_strategy = summarize_snapshot_cluster_pressure(
+            cluster=top_offer_cluster,
+            fallback_competitor=competitor,
+            fallback="Offer or positioning pressure is shaping low-friction acquisition.",
+        )
 
     active_threats = [summarize_observation_threat(row) for row in observation_rows[:3]] or ["No immediate competitive threats are strongly evidenced yet."]
+    cluster_threats = build_snapshot_cluster_threats(pricing_clusters, offer_clusters, proof_clusters, competitor)
+    if cluster_threats:
+        active_threats = unique_values(cluster_threats + active_threats)[:3]
     immediate_opportunities = []
     if closure_observation:
         immediate_opportunities.append(
@@ -2654,8 +2672,8 @@ def build_competitive_snapshot(
         current_weakness = "Weakness: no lower-friction entry offer is visible while a competitor is using offer-led acquisition."
     elif pricing_observation:
         current_weakness = "Weakness: your current price framing may look exposed if you do not answer the new comparison anchor quickly."
-    elif proof_units:
-        current_weakness = "Weakness: proof quality may be weaker than the trust signals buyers are seeing elsewhere in the market."
+    elif top_proof_cluster:
+        current_weakness = summarize_snapshot_weakness(top_proof_cluster, competitor)
 
     risk_level = "low"
     if closure_observation or (pricing_observation and offer_observation):
@@ -2701,13 +2719,17 @@ def build_source_insights(
     source_rows: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
     linked_tasks_by_source: dict[str, list[str]],
+    evidence_units: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     insights: dict[str, dict[str, Any]] = {}
     for row in source_rows:
         relevant_cards = [card for card in knowledge_cards if row["source_ref"] in card["source_refs"]]
         preferred_card = pick_source_priority_card(relevant_cards)
-        takeaway = preferred_card["insight"] if preferred_card else "This source adds new market context."
-        impact = preferred_card["implication"] if preferred_card else "This source strengthens what the system knows about the market."
+        source_cluster = pick_best_action_cluster(
+            [unit for unit in evidence_units if unit.get("source_ref") == row["source_ref"]]
+        )
+        takeaway = summarize_source_cluster_takeaway(source_cluster) if source_cluster else (preferred_card["insight"] if preferred_card else "This source adds new market context.")
+        impact = summarize_source_cluster_impact(source_cluster) if source_cluster else (preferred_card["implication"] if preferred_card else "This source strengthens what the system knows about the market.")
         confidence = max((float(card["confidence"]) for card in relevant_cards), default=0.52)
         insights[row["source_ref"]] = {
             "key_takeaway": takeaway,
@@ -2718,13 +2740,23 @@ def build_source_insights(
     return insights
 
 
-def derive_source_takeaway(row: dict[str, Any], knowledge_cards: list[dict[str, Any]]) -> str:
+def derive_source_takeaway(row: dict[str, Any], knowledge_cards: list[dict[str, Any]], evidence_units: list[dict[str, Any]]) -> str:
+    source_cluster = pick_best_action_cluster(
+        [unit for unit in evidence_units if unit.get("source_ref") == row["source_ref"]]
+    )
+    if source_cluster:
+        return summarize_source_cluster_takeaway(source_cluster)
     relevant_cards = [card for card in knowledge_cards if row["source_ref"] in card["source_refs"]]
     relevant_card = pick_source_priority_card(relevant_cards)
     return relevant_card["insight"] if relevant_card else "This source adds context to the local market picture."
 
 
-def derive_source_business_impact(row: dict[str, Any], knowledge_cards: list[dict[str, Any]]) -> str:
+def derive_source_business_impact(row: dict[str, Any], knowledge_cards: list[dict[str, Any]], evidence_units: list[dict[str, Any]]) -> str:
+    source_cluster = pick_best_action_cluster(
+        [unit for unit in evidence_units if unit.get("source_ref") == row["source_ref"]]
+    )
+    if source_cluster:
+        return summarize_source_cluster_impact(source_cluster)
     relevant_cards = [card for card in knowledge_cards if row["source_ref"] in card["source_refs"]]
     relevant_card = pick_source_priority_card(relevant_cards)
     return relevant_card["implication"] if relevant_card else "Use this source to improve future recommendation quality."
@@ -2748,6 +2780,106 @@ def pick_source_priority_card(relevant_cards: list[dict[str, Any]]) -> dict[str,
         if match:
             return match
     return relevant_cards[0] if relevant_cards else None
+
+
+def summarize_source_cluster_takeaway(cluster: dict[str, Any]) -> str:
+    competitor = str(cluster.get("competitor") or "A competitor").strip()
+    asset = str(cluster.get("asset") or "").strip()
+    channel = str(cluster.get("channel") or "").strip()
+    claim = str(cluster.get("claim") or "").strip()
+    if asset and channel and claim:
+        return f"{competitor} is pressing on {channel} with {asset} shaped around the {claim} claim."
+    if asset and channel:
+        return f"{competitor} is making {channel} more competitive through {asset}."
+    if claim:
+        return f"{competitor} is using the {claim} claim in the current comparison set."
+    excerpt = str(cluster.get("excerpt") or "").strip()
+    if excerpt:
+        return excerpt[:220]
+    return "This source adds new market context."
+
+
+def summarize_source_cluster_impact(cluster: dict[str, Any]) -> str:
+    competitor = str(cluster.get("competitor") or "a competitor").strip()
+    asset = str(cluster.get("asset") or "").strip()
+    channel = str(cluster.get("channel") or "").strip()
+    claim = str(cluster.get("claim") or "").strip()
+    if asset and channel and claim:
+        return f"If you do not answer {competitor}'s {claim} claim in the {channel}, your current {asset} can look weaker in live comparisons."
+    if asset and channel:
+        return f"This source changes what you may need to show in the {channel}, because {competitor} is already making that asset visible."
+    if claim:
+        return f"This source changes the comparison language buyers may hear first, because {competitor} is already using the {claim} claim."
+    return "This source strengthens what the system knows about the market."
+
+
+def cluster_specificity_score(cluster: dict[str, Any]) -> float:
+    score = float(cluster.get("confidence") or 0)
+    if cluster.get("competitor"):
+        score += 1.0
+    if cluster.get("claim"):
+        score += 1.0
+    if cluster.get("asset"):
+        score += 0.8
+    if cluster.get("channel"):
+        score += 0.6
+    if cluster.get("section"):
+        score += 0.4
+    score += min(0.5, float(cluster.get("cluster_size") or 0) * 0.1)
+    return score
+
+
+def pick_best_action_cluster(units: list[dict[str, Any]]) -> dict[str, Any] | None:
+    clusters = cluster_units_by_action_shape(units)
+    if not clusters:
+        return None
+    clusters.sort(key=cluster_specificity_score, reverse=True)
+    return clusters[0]
+
+
+def summarize_snapshot_cluster_pressure(cluster: dict[str, Any], fallback_competitor: str, fallback: str) -> str:
+    competitor = str(cluster.get("competitor") or fallback_competitor or "A competitor").strip()
+    asset = str(cluster.get("asset") or "").strip()
+    channel = str(cluster.get("channel") or "").strip()
+    claim = str(cluster.get("claim") or "").strip()
+    excerpt = str(cluster.get("excerpt") or "").strip()
+    if asset and channel and claim:
+        return f"{competitor} is using {asset} in the {channel} to push the {claim} claim into live buyer comparisons."
+    if excerpt and claim:
+        return f"{competitor} is pushing the {claim} claim into live comparisons: {excerpt[:180]}"
+    if asset and channel:
+        return f"{competitor} is making the {channel} more competitive through {asset}."
+    if excerpt:
+        return f"{competitor} is shaping live comparisons through this visible pressure: {excerpt[:180]}"
+    if claim:
+        return f"{competitor} is pushing the {claim} claim into the active comparison set."
+    return fallback
+
+
+def build_snapshot_cluster_threats(
+    pricing_clusters: list[dict[str, Any]],
+    offer_clusters: list[dict[str, Any]],
+    proof_clusters: list[dict[str, Any]],
+    fallback_competitor: str,
+) -> list[str]:
+    threats: list[str] = []
+    for cluster in (pricing_clusters[:1] + offer_clusters[:1] + proof_clusters[:1]):
+        summary = summarize_snapshot_cluster_pressure(
+            cluster=cluster,
+            fallback_competitor=fallback_competitor,
+            fallback="Competitive pressure is active.",
+        )
+        if summary and summary not in threats:
+            threats.append(summary)
+    return threats[:3]
+
+
+def summarize_snapshot_weakness(cluster: dict[str, Any], fallback_competitor: str) -> str:
+    competitor = str(cluster.get("competitor") or fallback_competitor or "a competitor").strip()
+    asset = str(cluster.get("asset") or "proof").strip()
+    channel = str(cluster.get("channel") or "the current comparison path").strip()
+    claim = str(cluster.get("claim") or "trust").strip()
+    return f"Weakness: your current {asset} in the {channel} may look weaker if you do not answer {competitor}'s {claim} claim quickly."
 
 
 def parse_json_list(value: Any) -> list[str]:

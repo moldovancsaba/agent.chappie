@@ -55,6 +55,7 @@ URL_MIN_CONTENT_CHARS = 280
 GENERIC_ENTITY_WORDS = {
     "Add",
     "Check",
+    "FAQ",
     "The",
     "Contact",
     "Launch",
@@ -81,6 +82,7 @@ ENTITY_NOISE_WORDS = {
     "briefing",
     "buyers",
     "check",
+    "faq",
     "analysis",
     "competitive",
     "content",

@@ -36,6 +36,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
         self.assertIsNone(clean_entity("Add"))
         self.assertIsNone(clean_entity("Rewrite"))
         self.assertIsNone(clean_entity("Publish"))
+        self.assertIsNone(clean_entity("FAQ"))
 
     def test_extract_action_detail_captures_channel_section_asset_and_claim(self) -> None:
         detail = extract_action_detail(
@@ -97,6 +98,46 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             positioning_card = next(card for card in workspace["knowledge_cards"] if card["knowledge_id"] == "offer_positioning")
             self.assertTrue(any("pricing comparison block" in item.lower() for item in pricing_card["items"]))
             self.assertTrue(any("hero section" in item.lower() or "homepage comparison section" in item.lower() for item in positioning_card["items"]))
+
+    def test_source_cards_and_snapshot_use_action_aware_clusters(self) -> None:
+        source = SourcePackage(
+            project_id="project_source_snapshot_clusters",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text=(
+                "Add a pricing comparison block and onboarding FAQ to the pricing page this week before Fortitude AI's free trial sets buyer expectations. "
+                "Rewrite the homepage hero section to answer the no engineering required claim before buyers already comparing options default to Fortitude AI."
+            ),
+            source_ref="source_source_snapshot_clusters",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            save_source_snapshot(source.__dict__, build_source_hash(source), db_path)
+
+            workspace = build_workspace_payload(
+                "project_source_snapshot_clusters",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+
+            source_card = workspace["source_cards"][0]
+            snapshot = workspace["competitive_snapshot"]
+            combined_source = f"{source_card['key_takeaway']} {source_card['business_impact']}".lower()
+            combined_snapshot = " ".join(
+                [
+                    snapshot["pricing_position"],
+                    snapshot["acquisition_strategy_comparison"],
+                    snapshot["current_weakness"],
+                    *snapshot["active_threats"],
+                ]
+            ).lower()
+
+            self.assertIn("fortitude ai", combined_source)
+            self.assertTrue("pricing page" in combined_source or "homepage" in combined_source)
+            self.assertTrue("free trial" in combined_source or "no engineering required" in combined_source)
+            self.assertIn("fortitude ai", combined_snapshot)
+            self.assertTrue("pricing page" in combined_snapshot or "homepage" in combined_snapshot)
+            self.assertTrue("free trial" in combined_snapshot or "no engineering required" in combined_snapshot)
 
     def test_auto_research_rejects_irrelevant_public_results(self) -> None:
         source = SourcePackage(

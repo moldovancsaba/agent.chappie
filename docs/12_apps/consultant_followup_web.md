@@ -161,6 +161,7 @@ The next evidence layer is now explicit:
 - when the winning bundle contains an explicit claim like `free trial` or `no engineering required`, the title and rationale should reuse that exact claim instead of reverting to generic audience/frame wording
 - entity cleanup should reject imperative instruction verbs as fake competitors so tasks never come back with names like `Add` or `Rewrite`
 - when both the legacy observation path and the bundle-authored segment path can produce valid tasks, the system should prefer the more specific bundle-authored result instead of replaying the older generic checklist family
+- source cards and the competitive snapshot should also reuse action-aware unit clusters so those surfaces can reflect concrete assets, channels, and claims instead of broad category blur
 
 ## Sources and activity
 

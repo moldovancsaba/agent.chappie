@@ -221,6 +221,8 @@ Task detail should be evidence-bundle-specific:
 - if the legacy observation engine and the bundle-authored segment writer both produce valid task sets, the worker should prefer the more specific bundle-authored set
 - execution steps must be operational, not generic filler
 - reopened job results must not replay stale generic task text if the current worker can regenerate a sharper checklist from the same project knowledge
+- source-card takeaway and business-impact summaries should prefer action-aware source clusters over broad card blur when a source contains explicit asset/channel/claim structure
+- the competitive snapshot should prefer those same action-aware clusters so it can talk about concrete assets and claims, not only broad pricing/offer pressure labels
 
 If a rich source is processed but no immediate action is strong enough:
 
