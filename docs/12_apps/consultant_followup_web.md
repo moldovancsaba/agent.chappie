@@ -224,6 +224,9 @@ If a stored result still matches known stale legacy task patterns, the app must 
 - silent task delete must regenerate without storing a negative teaching signal
 - `Delete and teach` must regenerate and persist what We should avoid
 - `Hold for later` must regenerate while keeping the task out of the current live set
+- task-card feedback must be automatic:
+  - clicking the task action is the save action
+  - text-based actions should persist on blur without a second explicit submit request
 - visible last run, last result summary, and current status for sources
 - visible trigger type, schedule, last three runs, last action summary, and expected impact summary for jobs
 - knowledge cards must support:

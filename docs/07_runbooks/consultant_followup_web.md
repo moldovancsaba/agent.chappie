@@ -239,6 +239,7 @@ The app now treats `Sources & Jobs` as a management surface:
 The app must never invent this state locally. All CRUD actions proxy to the worker and re-render from worker responses.
 Use `We` for the service voice and `You` for the operator in all user-facing copy.
 Do not ship detached internal product language such as `the worker` or `the user` on visible screens.
+Task feedback must save automatically from the action button or text-field blur. Do not require a second `Submit decisions` step after the operator already clicked the task action.
 
 ## Knowledge surface behavior
 

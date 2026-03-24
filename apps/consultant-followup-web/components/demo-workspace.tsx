@@ -527,10 +527,6 @@ function buildTaskFeedbackItems(tasks: RecommendedTask[], decisions: Record<numb
   });
 }
 
-function allTasksDecided(tasks: RecommendedTask[], decisions: Record<number, TaskDecision>) {
-  return tasks.every((task) => Boolean(decisions[task.rank]?.status));
-}
-
 function findTaskSourceRef(task: RecommendedTask) {
   return task.supporting_source_refs?.find((sourceRef) => sourceRef && !sourceRef.startsWith("feedback::")) ?? null;
 }
@@ -830,12 +826,29 @@ export function DemoWorkspace() {
     setSubmissionError("");
   }
 
-  async function handleSaveFeedback() {
-    if (!isCompleteResultWithTasks(jobResult)) {
+  async function submitSingleDecision(
+    task: RecommendedTask,
+    status: DecisionStatus,
+    overrides?: { adjustedText?: string; commentText?: string }
+  ) {
+    if (!jobResult || !isCompleteResultWithTasks(jobResult)) {
       return;
     }
 
-    const feedbackPayload = buildFeedbackPayload(jobResult.result_payload.recommended_tasks, taskDecisions);
+    const decision: TaskDecision = {
+      status,
+      adjustedText: overrides?.adjustedText ?? taskDecisions[task.rank]?.adjustedText ?? task.title,
+      commentText: overrides?.commentText ?? taskDecisions[task.rank]?.commentText ?? "",
+    };
+
+    setTaskDecisions((current) => ({
+      ...current,
+      [task.rank]: decision,
+    }));
+
+    const feedbackPayload = buildFeedbackPayload(jobResult.result_payload.recommended_tasks, {
+      [task.rank]: decision,
+    });
     const fallbackAction: DecisionStatus =
       feedbackPayload.done.length > 0
         ? "done"
@@ -864,7 +877,7 @@ export function DemoWorkspace() {
         submitted_at: new Date().toISOString(),
         user_action: fallbackAction,
         feedback_payload: feedbackPayload,
-        task_feedback_items: buildTaskFeedbackItems(jobResult.result_payload.recommended_tasks, taskDecisions),
+        task_feedback_items: buildTaskFeedbackItems([task], { [task.rank]: decision }),
         actor_id: `anonymous:${sessionId}`,
         linked_result_status: jobResult.status,
       });
@@ -898,7 +911,7 @@ export function DemoWorkspace() {
         }
       }
 
-      setFeedbackStatus("Thanks. Your response was stored locally and the checklist was regenerated.");
+      setFeedbackStatus("Saved automatically. We regenerated the checklist from your action.");
     } catch (error) {
       setFeedbackStatus(error instanceof Error ? error.message : "Unknown feedback error.");
     } finally {
@@ -1254,7 +1267,6 @@ export function DemoWorkspace() {
     (workspace?.source_cards ?? []).filter((source) => isAutoCollectedSourceKind(source.source_kind)).map((source) => source.source_ref)
   );
   const confidence = completeResult?.decision_summary?.confidence;
-  const canSubmitFeedback = completeResult ? allTasksDecided(tasks, taskDecisions) : false;
   const topKnowledge = workspace?.knowledge_summary[0];
   const blockedReason =
     blockedResult && "reason" in blockedResult.result_payload && typeof blockedResult.result_payload.reason === "string"
@@ -1519,7 +1531,7 @@ export function DemoWorkspace() {
                             <button
                               className={`decision-button done ${decision?.status === "done" ? "selected" : ""}`}
                               type="button"
-                              onClick={() => setDecision(task.rank, "done", task.title)}
+                              onClick={() => void submitSingleDecision(task, "done")}
                             >
                               ✓ Done
                             </button>
@@ -1533,7 +1545,7 @@ export function DemoWorkspace() {
                             <button
                               className={`decision-button reject ${decision?.status === "deleted_silent" ? "selected" : ""}`}
                               type="button"
-                              onClick={() => setDecision(task.rank, "deleted_silent", task.title)}
+                              onClick={() => void submitSingleDecision(task, "deleted_silent")}
                             >
                               Delete
                             </button>
@@ -1581,6 +1593,7 @@ export function DemoWorkspace() {
                                 id={`adjust-${task.rank}`}
                                 value={decision.adjustedText}
                                 onChange={(event) => setAdjustedText(task.rank, event.target.value)}
+                                onBlur={(event) => void submitSingleDecision(task, "edited", { adjustedText: event.target.value })}
                               />
                             </div>
                           ) : null}
@@ -1595,6 +1608,12 @@ export function DemoWorkspace() {
                                 id={`comment-${task.rank}`}
                                 value={decision.commentText}
                                 onChange={(event) => setCommentText(task.rank, event.target.value)}
+                                onBlur={(event) =>
+                                  void submitSingleDecision(task, decision?.status ?? "commented", {
+                                    adjustedText: taskDecisions[task.rank]?.adjustedText,
+                                    commentText: event.target.value,
+                                  })
+                                }
                                 placeholder="Tell us what was wrong, what We should avoid, or why this should wait."
                               />
                             </div>
@@ -1856,25 +1875,6 @@ export function DemoWorkspace() {
                   <p>Open one checklist card to inspect why it was chosen, what evidence supports it, and which sources shaped it.</p>
                 </div>
               )}
-
-              <div className="feedback-panel">
-                <h3>Help improve the next recommendation</h3>
-                <p>Use Done, Adjust, Delete, Delete and teach, or Hold for later so We can keep the live checklist clean and learn the right lessons.</p>
-                <div className="feedback-totals">
-                  <span>{buildFeedbackPayload(tasks, taskDecisions).done.length} done</span>
-                  <span>{buildFeedbackPayload(tasks, taskDecisions).edited.length} adjusted</span>
-                  <span>{buildFeedbackPayload(tasks, taskDecisions).declined.length} rejected</span>
-                  <span>{buildFeedbackPayload(tasks, taskDecisions).commented.length} commented</span>
-                  <span>{buildFeedbackPayload(tasks, taskDecisions).deleted_silent.length} deleted</span>
-                  <span>{buildFeedbackPayload(tasks, taskDecisions).deleted_with_annotation.length} taught deletes</span>
-                  <span>{buildFeedbackPayload(tasks, taskDecisions).held_for_later.length} held</span>
-                </div>
-                <button className="button-primary wide" disabled={!canSubmitFeedback || isSavingFeedback} onClick={handleSaveFeedback} type="button">
-                  {isSavingFeedback ? "Saving decisions..." : "Submit decisions"}
-                </button>
-                {feedbackStatus ? <div className="notice success"><p>{feedbackStatus}</p></div> : null}
-                {workspaceError ? <div className="notice error"><p>{workspaceError}</p></div> : null}
-              </div>
             </section>
           </aside>
         </section>
