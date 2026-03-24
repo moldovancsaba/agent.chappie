@@ -1304,6 +1304,18 @@ def segment_to_task(
     )
     if not strongest_excerpt:
         strongest_excerpt = segment_text
+    supporting_signal_refs = select_task_support_signals(
+        segment_text=segment_text,
+        observations=observations,
+        supporting_source_refs=supporting_source_refs,
+        competitor=competitor,
+        move_bucket=move_bucket,
+    )
+    supporting_segment_ids = select_task_support_segments(
+        segment=segment,
+        move_bucket=move_bucket,
+        competitor=competitor,
+    )
 
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
         competitor_name = competitor or "the strongest visible competitor"
@@ -1329,6 +1341,8 @@ def segment_to_task(
             "mechanism": "Add a side-by-side pricing comparison and onboarding FAQ that lowers perceived adoption friction.",
             "done_definition": f"The {comparison_channel} contains a live pricing comparison block and onboarding FAQ that explicitly answers {competitor_name}'s lower-friction commercial claim.",
             "execution_steps": execution_steps,
+            "supporting_signal_refs": supporting_signal_refs,
+            "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
@@ -1359,6 +1373,8 @@ def segment_to_task(
             "mechanism": "Replace the exposed claim in the live page copy with a direct response to the strongest competitor angle.",
             "done_definition": f"The {channel} now answers {competitor_name}'s strongest offer or positioning claim in the first comparison section.",
             "execution_steps": execution_steps,
+            "supporting_signal_refs": supporting_signal_refs,
+            "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
@@ -1380,6 +1396,8 @@ def segment_to_task(
                 competitor=competitor or "the current comparison set",
                 mechanism="Request one missing proprietary fact in a single message and add it back to this workspace.",
             ),
+            "supporting_signal_refs": supporting_signal_refs,
+            "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
@@ -1407,6 +1425,8 @@ def segment_to_task(
             "mechanism": "Secure direct access before another operator captures the transition window.",
             "done_definition": f"You have a confirmed meeting, offer, or first-right-of-access with {competitor_name} tied to the exposed asset or transition window.",
             "execution_steps": execution_steps,
+            "supporting_signal_refs": supporting_signal_refs,
+            "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
@@ -1435,6 +1455,8 @@ def segment_to_task(
             "mechanism": "Add concrete proof blocks where hesitant buyers compare trust signals.",
             "done_definition": f"The {proof_channel} contains at least two concrete proof blocks that directly answer the trust pressure in the market.",
             "execution_steps": execution_steps,
+            "supporting_signal_refs": supporting_signal_refs,
+            "supporting_segment_ids": supporting_segment_ids,
             "supporting_source_refs": supporting_source_refs,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
@@ -2779,6 +2801,81 @@ def select_task_support_bundle(
     chosen = filtered[:3] if filtered else scored[:2]
     strongest_excerpt = chosen[0][2] if chosen else None
     return [item[0] for item in chosen], strongest_excerpt
+
+
+def score_task_supporting_signal(
+    *,
+    observation: dict[str, Any],
+    segment_text: str,
+    competitor: str | None,
+    move_bucket: str,
+) -> float:
+    text = str(observation.get("summary") or "").lower()
+    score = float(observation.get("confidence") or 0)
+    competitor_lc = (competitor or "").lower()
+    if competitor_lc and competitor_lc in text:
+        score += 1.2
+    signal_type = str(observation.get("signal_type") or "")
+    bucket_signal_map = {
+        "pricing_or_offer_move": {"pricing_change", "offer"},
+        "messaging_or_positioning_move": {"offer", "messaging_shift", "vendor_adoption"},
+        "intercept_or_capture_move": {"closure", "asset_sale", "opening"},
+        "proof_or_trust_move": {"proof_signal"},
+        "information_request": {"pricing_change", "offer", "proof_signal", "messaging_shift"},
+    }
+    if signal_type in bucket_signal_map.get(move_bucket, set()):
+        score += 1.0
+    keywords = {token for token in re.findall(r"[a-z0-9]+", segment_text.lower()) if len(token) >= 4}
+    overlap = sum(1 for token in keywords if token in text)
+    score += min(1.5, overlap * 0.2)
+    return score
+
+
+def select_task_support_signals(
+    *,
+    segment_text: str,
+    observations: list[dict[str, Any]],
+    supporting_source_refs: list[str],
+    competitor: str | None,
+    move_bucket: str,
+) -> list[str]:
+    candidates = [
+        observation
+        for observation in observations
+        if not supporting_source_refs or observation.get("source_ref") in supporting_source_refs
+    ]
+    scored = sorted(
+        (
+            (
+                str(observation.get("signal_id") or ""),
+                score_task_supporting_signal(
+                    observation=observation,
+                    segment_text=segment_text,
+                    competitor=competitor,
+                    move_bucket=move_bucket,
+                ),
+            )
+            for observation in candidates
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    return [signal_id for signal_id, score in scored if signal_id and score >= 0.9][:3]
+
+
+def select_task_support_segments(
+    *,
+    segment: dict[str, Any],
+    move_bucket: str,
+    competitor: str | None,
+) -> list[str]:
+    segment_id = str(segment.get("segment_id") or "")
+    refs = [segment_id] if segment_id else []
+    if move_bucket == "information_request":
+        refs.extend(str(ref) for ref in segment.get("evidence_refs") or [] if str(ref).startswith("segment::"))
+    if competitor and segment_id:
+        return unique_values(refs)[:2]
+    return unique_values(refs)[:1]
 
 
 def build_task_execution_steps(

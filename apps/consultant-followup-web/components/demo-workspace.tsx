@@ -1184,6 +1184,7 @@ export function DemoWorkspace() {
   const selectedTaskEvidence = selectedTask
     ? workspace?.recent_activity.filter(
         (activity) =>
+          selectedTask.supporting_signal_refs?.includes(activity.signal_id) ||
           selectedTask.evidence_refs.includes(activity.signal_id) ||
           (!!taskScopedSourceRefs.length && taskScopedSourceRefs.includes(activity.source_ref))
       ) ?? []
@@ -1192,6 +1193,7 @@ export function DemoWorkspace() {
     ? workspace?.draft_segments.filter(
         (segment) =>
           (
+            selectedTask.supporting_segment_ids?.includes(segment.segment_id) ||
             selectedTask.evidence_refs.includes(`segment::${segment.segment_id}`) ||
             selectedTask.evidence_refs.includes(segment.segment_id) ||
             segment.evidence_refs.some((ref) => selectedTask.evidence_refs.includes(ref))

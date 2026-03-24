@@ -138,6 +138,8 @@ The next evidence layer is now explicit:
   - `mechanism`
   - `done_definition`
   - `execution_steps`
+  - `supporting_signal_refs`
+  - `supporting_segment_ids`
   - `supporting_source_refs`
   - `strongest_evidence_excerpt`
 - task detail should prefer that metadata over title-only heuristics so the operator sees narrower, cleaner evidence and clearer execution guidance
