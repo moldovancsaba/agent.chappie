@@ -186,7 +186,7 @@ def generate_recommended_tasks(
                 "result_payload": {
                     "reason": "insufficient_signal_quality"
                     if source.source_kind == "url"
-                    else "The worker could not derive three distinct, high-confidence actions from the supplied evidence.",
+                    else "We could not derive three distinct, high-confidence actions from the supplied evidence.",
                 },
             }
         )["result_payload"]

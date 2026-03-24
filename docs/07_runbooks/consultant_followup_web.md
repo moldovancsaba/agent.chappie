@@ -174,6 +174,8 @@ The app now treats `Sources & Jobs` as a management surface:
 - job cards expose trigger type, schedule, last three runs, last action summary, and expected impact summary
 
 The app must never invent this state locally. All CRUD actions proxy to the worker and re-render from worker responses.
+Use `We` for the service voice and `You` for the operator in all user-facing copy.
+Do not ship detached internal product language such as `the worker` or `the user` on visible screens.
 
 ## Knowledge surface behavior
 

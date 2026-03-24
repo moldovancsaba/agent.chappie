@@ -1027,7 +1027,7 @@ export function DemoWorkspace() {
       ? blockedResult.result_payload.reason === "insufficient_output_quality"
         ? "The current evidence builds useful knowledge, but not a strong enough advantage to recommend an immediate move."
         : blockedResult.result_payload.reason
-      : "The worker ingested the source but could not derive three distinct, high-confidence actions from it.";
+      : "We processed your source but could not derive three distinct, high-confidence actions from it.";
   const currentStatus = isSubmitting
     ? "Processing"
     : completeResult
@@ -1215,7 +1215,7 @@ export function DemoWorkspace() {
                   <p>{blockedReason}</p>
                   {workspace?.draft_segments.length ? (
                     <div className="task-block">
-                      <span>What the worker still learned from this source</span>
+                      <span>What we still learned from this source</span>
                       <ul>
                         {workspace.draft_segments.slice(0, 3).map((segment) => (
                           <li key={segment.segment_id}>{segment.segment_text}</li>
@@ -1224,9 +1224,9 @@ export function DemoWorkspace() {
                     </div>
                   ) : null}
                   <p>
-                    The source was still processed. We are monitoring pricing shifts, competitor positioning, and offer
+                    We still processed the source. We are monitoring pricing shifts, competitor positioning, and offer
                     changes from it. Open Know More to review the current intelligence, or add another source if you
-                    want the worker to push toward a checklist move.
+                    want us to push toward a checklist move.
                   </p>
                   <div className="guided-actions">
                     <button
@@ -1506,7 +1506,7 @@ export function DemoWorkspace() {
                     <h3>Business Facts In Play</h3>
                     <span>{workspace.fact_chips.length} normalized facts</span>
                   </div>
-                  <p>These chips are worker-normalized business facts derived from the current source set. They feed the knowledge cards and future checklist moves.</p>
+                  <p>These chips are business facts we normalized from the current source set. They feed the knowledge cards and future checklist moves.</p>
                   <div className="evidence-chip-list">
                     {workspace.fact_chips.map((chip) => (
                       <button
@@ -1746,7 +1746,7 @@ export function DemoWorkspace() {
                 ) : (
                   <article className="intel-card">
                     <h3>No knowledge cards yet</h3>
-                    <p>Upload a real source and the worker will surface market knowledge here, even if no immediate task is strong enough yet.</p>
+                    <p>Upload a real source and we will surface market knowledge here, even if no immediate task is strong enough yet.</p>
                   </article>
                 )}
               </div>
@@ -1763,7 +1763,7 @@ export function DemoWorkspace() {
                 <div>
                   <span className="section-kicker">Sources &amp; Jobs</span>
                   <h2>Monitor your market and capture signals automatically.</h2>
-                  <p className="section-subcopy">Add one source first. The worker will watch it, synthesize what changed, and surface actions when a strong move emerges.</p>
+                  <p className="section-subcopy">Add one source first. We will watch it, synthesize what changed, and surface actions when a strong move emerges.</p>
                 </div>
               </div>
 
@@ -1841,7 +1841,7 @@ export function DemoWorkspace() {
                         sourceForm.sourceKind === "url"
                           ? "https://competitor.example/pricing"
                           : sourceForm.sourceKind === "manual_text"
-                            ? "Paste the source text you want the worker to monitor"
+                            ? "Paste the source text you want us to monitor"
                             : "Paste extracted document text or the source reference"
                       }
                     />
@@ -2113,7 +2113,7 @@ export function DemoWorkspace() {
                 <div>
                   <span className="section-kicker">Monitoring brief</span>
                   <h2>What your monitoring workspace is tracking</h2>
-                  <p className="section-subcopy">This panel shows what the worker has seen recently and whether monitoring is active.</p>
+                  <p className="section-subcopy">This panel shows what we have seen recently and whether monitoring is active.</p>
                 </div>
               </div>
               <div className="secondary-assets">
@@ -2132,7 +2132,7 @@ export function DemoWorkspace() {
                   ) : (
                     <div className="job-item">
                       <strong>No source activity yet</strong>
-                      <span>Add one source and the worker will start showing real signal changes here.</span>
+                      <span>Add one source and we will start showing real signal changes here.</span>
                       <p>This panel stays grounded in actual monitoring activity, not placeholders.</p>
                     </div>
                   )}

@@ -959,7 +959,7 @@ def build_knowledge_cards(
         knowledge_card(
             "competitors_detected",
             "Competitors Detected",
-            "Named companies, schools, clubs, or products the worker has extracted from the source set.",
+            "Named companies, schools, clubs, or products we extracted from the current source set.",
             competitor_items[:6] or ["No named competitors have been extracted with enough confidence yet."],
             "The source set points to the competitors most likely shaping the current comparison set.",
             "These names should anchor who you benchmark, monitor, and position against first.",
@@ -980,7 +980,7 @@ def build_knowledge_cards(
         knowledge_card(
             "pricing_packaging",
             "Pricing / Packaging",
-            "Commercial packaging and pricing observations the worker has extracted from the source material.",
+            "Commercial packaging and pricing observations we extracted from the current source material.",
             pricing_items[:5] or ["No pricing or packaging observations are strong enough yet."],
             "Packaging and onboarding language are the strongest commercial signals currently visible in the source set.",
             "If these signals keep appearing, your offer may need a clearer pricing or packaging response before buyers compare options.",
@@ -1202,11 +1202,11 @@ def write_tasks_from_segments(
     judged = judge_tasks(candidates[:12], source, feedback_rows or [])
     if not judged:
         return {
-            "reason": "The worker could not derive three distinct, high-confidence actions from the supplied evidence.",
+            "reason": "We could not derive three distinct, high-confidence actions from the supplied evidence.",
         }
     return {
         "recommended_tasks": judged[:3],
-        "summary": "Three judged actions were written from worker-synthesized draft knowledge segments and available evidence.",
+        "summary": "We wrote three judged actions from the drafted knowledge segments and available evidence.",
     }
 
 
@@ -1226,7 +1226,7 @@ def segment_to_task(
         return {
             "rank": 0,
             "title": "Publish a pricing and onboarding comparison this week before buyers lock in the current competitor frame",
-            "why_now": f"The worker drafted a pricing segment from the source set: {segment_text}",
+            "why_now": f"We drafted a pricing segment from your source set: {segment_text}",
             "expected_advantage": "Improves conversion for active comparison-stage buyers this week by reducing price and onboarding friction versus the market frame already shaping decisions.",
             "evidence_refs": evidence_refs,
             "task_type": "direct_competitive_move",
@@ -1237,7 +1237,7 @@ def segment_to_task(
         return {
             "rank": 0,
             "title": f"Rewrite the {channel} this week to answer the strongest offer and proof pressure before comparison-stage buyers default to the current market leader",
-            "why_now": f"The worker drafted a buyer-pressure segment: {segment_text}",
+            "why_now": f"We drafted a buyer-pressure segment from your source set: {segment_text}",
             "expected_advantage": "Improves conversion for comparison-stage buyers this week by answering the exact low-friction or trust claim competitors are using against you.",
             "evidence_refs": evidence_refs,
             "task_type": "tactical_response",
@@ -1247,7 +1247,7 @@ def segment_to_task(
         return {
             "rank": 0,
             "title": "Request the missing competitor, pricing, or buyer-proof source this week before making the wrong response move",
-            "why_now": f"The worker found a signal gap that blocks a stronger recommendation: {segment_text}",
+            "why_now": f"We found a signal gap that blocks a stronger recommendation: {segment_text}",
             "expected_advantage": "Improves conversion and win rate this week by resolving the missing competitor, pricing, or buyer-pressure fact that is limiting the next best action.",
             "evidence_refs": evidence_refs,
             "task_type": "information_request",
@@ -1257,7 +1257,7 @@ def segment_to_task(
         return {
             "rank": 0,
             "title": "Contact the exposed competitor this week and test whether there is a capture opportunity in customers, staff, assets, or distribution",
-            "why_now": f"The worker drafted an asymmetric opportunity segment: {segment_text}",
+            "why_now": f"We drafted an asymmetric opportunity segment from your source set: {segment_text}",
             "expected_advantage": "Creates near-term revenue or cost advantage this week by moving before a competitor distress or transition signal closes.",
             "evidence_refs": evidence_refs,
             "task_type": "capture_move",
@@ -1267,8 +1267,8 @@ def segment_to_task(
         return {
             "rank": 0,
             "title": "Publish one buyer-facing response this week before the current comparison narrative hardens",
-            "why_now": f"The worker synthesized a high-importance competitor signal from the source set: {segment_text}",
-            "expected_advantage": "Improves conversion and win rate this week by responding to the strongest buyer pressure the worker can currently prove.",
+            "why_now": f"We synthesized a high-importance competitor signal from your source set: {segment_text}",
+            "expected_advantage": "Improves conversion and win rate this week by responding to the strongest buyer pressure we can currently prove.",
             "evidence_refs": evidence_refs,
             "task_type": "general_business_value",
             "move_bucket": "proof_or_trust_move" if any(token in lowered for token in ("proof", "testimonial", "integration", "trust")) else "messaging_or_positioning_move",
@@ -1344,7 +1344,7 @@ def build_missing_information_tasks(
         candidates.append(
             {
                 "rank": 0,
-                "title": "Request one sharper source this week that exposes a competitor move, buyer objection, or timing window the worker can act on",
+                    "title": "Request one sharper source this week that exposes a competitor move, buyer objection, or timing window we can act on",
                 "why_now": "The drafter created knowledge segments, but the writer still lacks one decisive competitor or timing signal to turn that market picture into a dominant move.",
                 "expected_advantage": "Improves win rate and conversion next week by filling the evidence gap that is currently preventing a stronger competitive response.",
                 "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
@@ -1357,7 +1357,7 @@ def build_missing_information_tasks(
             {
                 "rank": 0,
                 "title": "Request one sharper source this week that exposes the missing competitor move or buyer objection behind this market pattern",
-                "why_now": "The worker can see market pressure, but one decisive source is still missing before it can recommend a stronger intercept or capture move.",
+                "why_now": "We can see market pressure, but one decisive source is still missing before we can recommend a stronger intercept or capture move.",
                 "expected_advantage": "Improves task quality this week by adding the exact missing evidence needed to convert market context into a stronger business move.",
                 "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
                 "task_type": "information_request",
@@ -1453,7 +1453,7 @@ def generate_guaranteed_task_triplet(
                 {
                     "rank": 0,
                     "title": f"Request one sharper source this week that resolves the strongest {humanize_fact_category(str(segment['segment_kind']).replace('open_questions', 'market'))} gap before the next buyer decision window",
-                    "why_now": f"The worker only has partial evidence from this source set, and the strongest drafted segment is still below confident-action threshold: {segment['segment_text']}",
+                    "why_now": f"We only have partial evidence from this source set, and the strongest drafted segment is still below the confident-action threshold: {segment['segment_text']}",
                     "expected_advantage": "Improves conversion and task quality this week by turning a partial market picture into an evidence-backed move before the next decision window closes.",
                     "evidence_refs": segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"],
                     "task_type": "exploratory_action",
@@ -1466,7 +1466,7 @@ def generate_guaranteed_task_triplet(
                 "rank": 0,
                 "title": "Pull one more competitor proof, pricing, or offer source this week and force the next checklist toward a stronger move",
                 "why_now": "The current evidence is still too thin for a stronger action, so the checklist is using exploratory pressure instead of going silent.",
-                "expected_advantage": "Improves conversion and win rate next week by replacing missing evidence with one concrete competitor signal the worker can act on.",
+                "expected_advantage": "Improves conversion and win rate next week by replacing missing evidence with one concrete competitor signal we can act on.",
                 "evidence_refs": [source.source_ref],
                 "task_type": "exploratory_action",
                 "move_bucket": "information_request",

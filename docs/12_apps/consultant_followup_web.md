@@ -104,6 +104,8 @@ The app now depends on a two-layer intelligence model:
 
 The app must not expose the internal observation layer directly.
 The app must not collect or fabricate general project metadata that belongs in the worker brain.
+All user-facing product language must speak as `We` to `You`.
+Do not expose detached internal phrasing such as `the worker` or `the user` in the visible product surface.
 
 The real decision pipeline is now:
 
