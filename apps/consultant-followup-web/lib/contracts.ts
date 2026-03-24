@@ -74,7 +74,15 @@ export const recommendedTaskSchema = z.object({
   best_before: z.string().optional(),
   is_next_best_action: z.boolean().optional(),
   task_type: z.string().min(1).optional(),
+  move_bucket: z.string().min(1).optional(),
   confidence_class: z.enum(["strong_action", "moderate_action", "exploratory_action"]).optional(),
+  competitor_name: z.string().min(1).optional(),
+  target_channel: z.string().min(1).optional(),
+  target_segment: z.string().min(1).optional(),
+  mechanism: z.string().min(1).optional(),
+  done_definition: z.string().min(1).optional(),
+  supporting_source_refs: z.array(z.string().min(1)).optional(),
+  strongest_evidence_excerpt: z.string().min(1).optional(),
 });
 
 export const jobResultCompletePayloadSchema = z.object({

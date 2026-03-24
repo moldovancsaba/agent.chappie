@@ -155,6 +155,15 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
 - each ingested or auto-collected source is broken into smaller evidence units
 - the knowledge surface clusters those units into reusable cards
 - task generation should prefer those clustered units over broad source-level summaries
+- task detail should prefer task-specific evidence bundles with:
+  - supporting source refs
+  - strongest evidence excerpt
+  - target channel
+  - target segment
+  - mechanism
+  - done definition
+- one source may produce multiple knowledge cards
+- multiple sources may strengthen one knowledge card
 The frontend may display draft segments, written tasks, and judged metadata, but it must not generate them.
 
 ## Layered platform boundary

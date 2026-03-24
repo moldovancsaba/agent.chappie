@@ -62,6 +62,8 @@ export type WorkerWorkspacePayload = {
     source_refs: string[];
     evidence_refs: string[];
     confidence: number;
+    support_count?: number;
+    strongest_excerpt?: string | null;
     annotation_status: string;
     confidence_source: string;
     audit: {

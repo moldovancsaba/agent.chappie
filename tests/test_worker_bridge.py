@@ -100,6 +100,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertNotIn("Competitive", competitors["items"])
             self.assertNotIn("SEO", competitors["items"])
             self.assertNotIn("Several", competitors["items"])
+            self.assertGreaterEqual(competitors["support_count"], 1)
             fact_labels = [fact["label"] for fact in workspace["fact_chips"]]
             self.assertTrue(any("Pricing bundles" in label or "packaging" in label.lower() for label in fact_labels))
             self.assertFalse(any(label in {"PDF", "Metadata", "Catalog", "Version", "Pages", "Type"} for label in fact_labels))
@@ -108,6 +109,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("insight", competitors)
             self.assertIn("implication", competitors)
             self.assertIn("potential_moves", competitors)
+            self.assertTrue(next(card for card in workspace["knowledge_cards"] if card["knowledge_id"] == "market_summary")["support_count"] >= 1)
             source_ref = workspace["source_cards"][0]["source_ref"]
             card_refs = [card["knowledge_id"] for card in workspace["knowledge_cards"] if source_ref in card["source_refs"]]
             self.assertGreaterEqual(len(card_refs), 3)
@@ -230,6 +232,11 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("best_before", top_task)
             self.assertIn("is_next_best_action", top_task)
             self.assertIn("confidence_class", top_task)
+            self.assertIn("target_channel", top_task)
+            self.assertIn("target_segment", top_task)
+            self.assertIn("mechanism", top_task)
+            self.assertIn("done_definition", top_task)
+            self.assertIn("supporting_source_refs", top_task)
             task_types = [task["task_type"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
             self.assertLessEqual(task_types.count("information_request"), 1)
             self.assertGreaterEqual(sum(task_type != "information_request" for task_type in task_types), 2)
@@ -238,6 +245,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             titles = [task["title"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
             self.assertFalse(any("buyer-facing response" in title.lower() for title in titles))
             self.assertTrue(any("pricing page" in title.lower() or "homepage" in title.lower() or "enrollment" in title.lower() for title in titles))
+            self.assertFalse(any("current competitor frame" in title.lower() for title in titles))
+            self.assertFalse(any("drafted a buyer-pressure segment" in task["why_now"].lower() for task in result["job_result"]["result_payload"]["recommended_tasks"]))
 
     def test_task_feedback_regenerates_three_tasks(self) -> None:
         payload = {

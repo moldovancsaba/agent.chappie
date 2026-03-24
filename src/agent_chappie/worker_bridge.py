@@ -708,7 +708,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
         draft_segments = list_draft_segments(project_id, path=config.local_db_path)
         draft_segments = [normalize_legacy_product_voice_in_segment(segment) for segment in draft_segments]
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
-    competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows)
+    competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows, evidence_units)
 
     knowledge_summary_rows = [
         {
@@ -952,35 +952,44 @@ def build_knowledge_cards(
     cards: list[dict[str, Any]] = []
     facts_by_category = group_fact_chips(fact_chips)
     units_by_kind = group_evidence_units(evidence_units)
+    all_units = sorted(evidence_units, key=lambda unit: float(unit.get("confidence") or 0), reverse=True)
 
-    market_items = []
-    if source_rows:
+    market_units = unique_units_by_label(
+        units_by_kind.get("pricing", [])
+        + units_by_kind.get("offer", [])
+        + units_by_kind.get("positioning", [])
+        + units_by_kind.get("proof", [])
+        + units_by_kind.get("opportunity", [])
+    )
+    market_items = [unit["label"] for unit in market_units[:5]]
+    if not market_items and source_rows:
         market_items.append(f"{len(source_rows)} ingested source{'s' if len(source_rows) != 1 else ''} are shaping the current knowledge state.")
-    if observation_rows:
-        market_items.append(f"{sum(1 for row in observation_rows if row['signal_type'] == 'pricing_change')} pricing signal(s) are active.")
-        market_items.append(f"{sum(1 for row in observation_rows if row['signal_type'] in {'offer', 'asset_sale'})} offer or asset signal(s) are active.")
-    topic_items = summarize_market_fact_patterns(fact_chips) or derive_topic_items(" ".join(row["raw_text"] for row in source_rows))
-    market_items.extend(topic_items[:3])
+    if not market_items:
+        topic_items = summarize_market_fact_patterns(fact_chips) or derive_topic_items(" ".join(row["raw_text"] for row in source_rows))
+        market_items.extend(topic_items[:3])
     cards.append(
         knowledge_card(
             "market_summary",
             "Market Summary",
             "What the system currently knows about this market or project from the ingested sources.",
             market_items or ["No market synthesis has been derived yet."],
-            "We are building a market picture from your source set even if there is no immediate checklist move yet.",
-            "Use this summary to decide whether your market is shifting toward pricing pressure, offer pressure, or proof-based positioning pressure.",
+            market_summary_insight(market_units, source_rows),
+            market_summary_implication(market_units),
             [
                 "Compare your current positioning against the strongest pattern in the source set.",
                 "Add one denser source if the market story still feels incomplete.",
             ],
             observation_rows[:4],
-            [row["source_ref"] for row in source_rows[:4]],
+            flatten_unit_source_refs(market_units[:5]) or [row["source_ref"] for row in source_rows[:4]],
             0.78 if source_rows else 0.22,
             feedback_lookup,
+            support_count=len(market_units),
+            strongest_excerpt=strongest_unit_excerpt(market_units),
         )
     )
 
-    competitor_items = [fact["label"] for fact in facts_by_category.get("competitor", [])] or entities[:6]
+    competitor_items = competitor_card_items(evidence_units, facts_by_category.get("competitor", []), entities)
+    competitor_source_refs = source_refs_for_competitor_items(competitor_items, evidence_units)
     cards.append(
         knowledge_card(
             "competitors_detected",
@@ -994,9 +1003,11 @@ def build_knowledge_cards(
                 "Add one competitor-specific source if the detected list feels too thin.",
             ],
             observation_rows[:4],
-            flatten_fact_source_refs(facts_by_category.get("competitor", [])) or [row["source_ref"] for row in source_rows[:4]],
+            competitor_source_refs or flatten_fact_source_refs(facts_by_category.get("competitor", [])) or [row["source_ref"] for row in source_rows[:4]],
             0.74 if competitor_items else 0.28,
             feedback_lookup,
+            support_count=len(competitor_items),
+            strongest_excerpt=strongest_competitor_excerpt(competitor_items, evidence_units),
         )
     )
 
@@ -1075,10 +1086,14 @@ def build_knowledge_cards(
     open_questions = []
     if not any(row.get("region") and row["region"] != "region_unknown" for row in source_rows + knowledge_rows):
         open_questions.append("Region is still weakly inferred. Add one source with explicit geography or local market scope.")
-    if not entities:
+    if not competitor_items:
         open_questions.append("No clear named competitors were extracted. A denser market source would improve competitor confidence.")
-    if source_rows and not observation_rows:
-        open_questions.append("The source produced knowledge but not enough action-quality signals yet. Checklist can stay blocked while Know More stays populated.")
+    if source_rows and not any(
+        unit["unit_kind"] in {"pricing", "pricing_change", "offer", "proof", "positioning", "messaging_shift", "proof_signal"}
+        for unit in all_units
+    ):
+        open_questions.append("We still do not have enough commercial pressure evidence to support a stronger action move.")
+    open_questions.extend(missing_evidence_categories(all_units)[:2])
     if not open_questions:
         open_questions.append("No major confidence gaps are currently blocking the knowledge surface.")
     cards.append(
@@ -1097,6 +1112,7 @@ def build_knowledge_cards(
             [row["source_ref"] for row in source_rows[:3]],
             0.55,
             feedback_lookup,
+            support_count=len(open_questions),
         )
     )
 
@@ -1261,38 +1277,53 @@ def segment_to_task(
     segment_text = str(segment["segment_text"])
     lowered = segment_text.lower()
     evidence_refs = segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"]
+    supporting_source_refs = unique_values(list(segment.get("source_refs") or []))
     domain = infer_domain_from_sources(source, fact_chips)
     detail = extract_action_detail(segment_text)
     competitor = infer_segment_competitor(segment_text, source)
     audience = infer_operator_audience(domain, detail)
     primary_channel = infer_primary_channel(domain, lowered)
     comparison_channel = "pricing page" if "pricing" in lowered or "onboarding" in lowered else primary_channel
+    timing_window = detail.get("timeframe") or "this week"
 
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
-        competitor_name = competitor or "the current competitor set"
-        timeframe = detail.get("timeframe") or "this week"
+        competitor_name = competitor or "the strongest visible competitor"
         return {
             "rank": 0,
-            "title": f"Publish a {comparison_channel} comparison {timeframe} and add one lower-friction onboarding move before {audience} lock into {competitor_name}'s pricing frame",
-            "why_now": f"We drafted a pricing-pressure segment from your source set: {segment_text}",
-            "expected_advantage": f"Increases conversion for active {audience} {timeframe} by reducing price and onboarding friction versus {competitor_name}'s current commercial frame.",
+            "title": f"Add a pricing comparison block and onboarding FAQ to the {comparison_channel} {timing_window} before {competitor_name} sets buyer expectations for {audience}",
+            "why_now": f"We found repeated pricing and onboarding signals in your sources: {segment_text}",
+            "expected_advantage": f"Increases conversion for active {audience} {timing_window} by answering {competitor_name}'s lower-friction pricing and onboarding comparison before buyers commit elsewhere.",
             "evidence_refs": evidence_refs,
             "task_type": "direct_competitive_move",
             "move_bucket": "pricing_or_offer_move",
+            "competitor_name": competitor_name,
+            "target_channel": comparison_channel,
+            "target_segment": audience,
+            "mechanism": "Add a side-by-side pricing comparison and onboarding FAQ that lowers perceived adoption friction.",
+            "done_definition": f"The {comparison_channel} contains a live pricing comparison block and onboarding FAQ that explicitly answers {competitor_name}'s lower-friction commercial claim.",
+            "supporting_source_refs": supporting_source_refs,
+            "strongest_evidence_excerpt": segment_text,
         }
     if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
         competitor_name = competitor or "the current market leader"
-        offer = detail.get("offer")
+        offer = detail.get("offer") or strongest_offer_hint(segment_text)
         channel = primary_channel
-        offer_phrase = f" and answer the {offer} claim" if offer else ""
+        offer_phrase = f" to answer the {offer} claim" if offer else ""
         return {
             "rank": 0,
-            "title": f"Rewrite the {channel} this week{offer_phrase} before comparison-stage {audience} default to {competitor_name}",
-            "why_now": f"We drafted a buyer-pressure segment from your source set: {segment_text}",
-            "expected_advantage": f"Increases shortlist conversion for comparison-stage {audience} this week by answering the exact low-friction or trust claim {competitor_name} is using against you.",
+            "title": f"Rewrite the {channel} {timing_window}{offer_phrase} before comparison-stage {audience} default to {competitor_name}",
+            "why_now": f"We found an offer or positioning signal in your sources: {segment_text}",
+            "expected_advantage": f"Increases shortlist conversion for comparison-stage {audience} {timing_window} by answering the exact offer, proof, or positioning claim {competitor_name} is using against you.",
             "evidence_refs": evidence_refs,
             "task_type": "tactical_response",
             "move_bucket": "messaging_or_positioning_move",
+            "competitor_name": competitor_name,
+            "target_channel": channel,
+            "target_segment": audience,
+            "mechanism": "Replace the exposed claim in the live page copy with a direct response to the strongest competitor angle.",
+            "done_definition": f"The {channel} now answers {competitor_name}'s strongest offer or positioning claim in the first comparison section.",
+            "supporting_source_refs": supporting_source_refs,
+            "strongest_evidence_excerpt": segment_text,
         }
     if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
         return {
@@ -1303,18 +1334,27 @@ def segment_to_task(
             "evidence_refs": evidence_refs,
             "task_type": "information_request",
             "move_bucket": "information_request",
+            "target_segment": audience,
+            "supporting_source_refs": supporting_source_refs,
+            "strongest_evidence_excerpt": segment_text,
         }
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
         competitor_name = competitor or "the exposed competitor"
-        timeframe = detail.get("timeframe") or "this week"
         return {
             "rank": 0,
-            "title": f"Contact {competitor_name} {timeframe} and secure first access to customers, staff, assets, or distribution before the window closes",
-            "why_now": f"We drafted an asymmetric opportunity segment from your source set: {segment_text}",
-            "expected_advantage": f"Creates near-term revenue or cost advantage {timeframe} by moving before {competitor_name}'s distress or transition window closes.",
+            "title": f"Contact {competitor_name} {timing_window} and secure first access to customers, staff, assets, or distribution before the window closes",
+            "why_now": f"We found a closure, asset, or opportunity signal in your sources: {segment_text}",
+            "expected_advantage": f"Creates near-term revenue or cost advantage {timing_window} by moving before {competitor_name}'s distress or transition window closes.",
             "evidence_refs": evidence_refs,
             "task_type": "capture_move",
             "move_bucket": "intercept_or_capture_move",
+            "competitor_name": competitor_name,
+            "target_channel": "direct outreach",
+            "target_segment": audience,
+            "mechanism": "Secure direct access before another operator captures the transition window.",
+            "done_definition": f"You have a confirmed meeting, offer, or first-right-of-access with {competitor_name} tied to the exposed asset or transition window.",
+            "supporting_source_refs": supporting_source_refs,
+            "strongest_evidence_excerpt": segment_text,
         }
     if segment["importance"] >= 0.7:
         competitor_name = competitor or "the current market leader"
@@ -1322,11 +1362,18 @@ def segment_to_task(
         return {
             "rank": 0,
             "title": f"Add two proof blocks on the {proof_channel} this week so hesitant {audience} do not trust {competitor_name} first",
-            "why_now": f"We synthesized a high-importance competitor signal from your source set: {segment_text}",
+            "why_now": f"We found a proof or trust signal in your sources: {segment_text}",
             "expected_advantage": f"Increases conversion and win rate for hesitant {audience} this week by reducing trust friction before {competitor_name} hardens the comparison narrative.",
             "evidence_refs": evidence_refs,
             "task_type": "general_business_value",
             "move_bucket": "proof_or_trust_move" if any(token in lowered for token in ("proof", "testimonial", "integration", "trust")) else "messaging_or_positioning_move",
+            "competitor_name": competitor_name,
+            "target_channel": proof_channel,
+            "target_segment": audience,
+            "mechanism": "Add concrete proof blocks where hesitant buyers compare trust signals.",
+            "done_definition": f"The {proof_channel} contains at least two concrete proof blocks that directly answer the trust pressure in the market.",
+            "supporting_source_refs": supporting_source_refs,
+            "strongest_evidence_excerpt": segment_text,
         }
     return None
 
@@ -1484,6 +1531,36 @@ def judge_tasks(
         sorted(filtered, key=lambda task: task_priority_score(task, generation_memory_rows), reverse=True),
         target_count=3,
     )
+    if len(final_tasks) < 3:
+        fallback_titles = {
+            normalize_task_key(task["title"])
+            for task in final_tasks
+        }
+        for index in range(len(final_tasks), 3):
+            fallback_title = (
+                "Request one proprietary pricing, offer, or buyer-proof fact this week before the next regeneration"
+                if index == 2
+                else f"Ship one specific response move this week in the strongest visible channel before {source.competitor or 'the current competitor'} hardens buyer expectations"
+            )
+            normalized_title = normalize_task_key(fallback_title)
+            if normalized_title in fallback_titles:
+                fallback_title = f"Add one specific proof or pricing block this week before {source.competitor or 'the current competitor'} hardens buyer expectations"
+                normalized_title = normalize_task_key(fallback_title)
+            fallback_titles.add(normalized_title)
+            final_tasks.append(
+                {
+                    "rank": 0,
+                    "title": fallback_title,
+                    "why_now": "We still need one more concrete signal-backed move to keep the checklist at three actions this week.",
+                    "expected_advantage": "Improves conversion and execution speed this week by keeping the checklist active while a stronger replacement is still forming.",
+                    "evidence_refs": [source.source_ref],
+                    "task_type": "exploratory_action",
+                    "move_bucket": "information_request" if index == 2 else "messaging_or_positioning_move",
+                    "target_segment": "buyers",
+                    "supporting_source_refs": [source.source_ref],
+                    "strongest_evidence_excerpt": source.raw_text[:220] if source.raw_text else source.source_ref,
+                }
+            )
 
     now = datetime.now(UTC)
     for index, task in enumerate(final_tasks[:3], start=1):
@@ -2084,12 +2161,18 @@ def build_competitive_snapshot(
     knowledge_cards: list[dict[str, Any]],
     observation_rows: list[dict[str, Any]],
     knowledge_rows: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    competitor = next((row["competitor"] for row in knowledge_rows if clean_entity(row["competitor"])), "Comparison set still forming")
+    competitor = next((unit["competitor"] for unit in evidence_units if clean_entity(str(unit.get("competitor") or ""))), None)
+    if not competitor:
+        competitor = next((row["competitor"] for row in knowledge_rows if clean_entity(row["competitor"])), "Comparison set still forming")
     pricing_observation = next((row for row in observation_rows if row["signal_type"] == "pricing_change"), None)
     offer_observation = next((row for row in observation_rows if row["signal_type"] == "offer"), None)
     closure_observation = next((row for row in observation_rows if row["signal_type"] == "closure"), None)
     asset_sale_observation = next((row for row in observation_rows if row["signal_type"] == "asset_sale"), None)
+    pricing_units = [unit for unit in evidence_units if unit["unit_kind"] in {"pricing", "pricing_change"}]
+    offer_units = [unit for unit in evidence_units if unit["unit_kind"] in {"offer", "positioning", "messaging_shift"}]
+    proof_units = [unit for unit in evidence_units if unit["unit_kind"] in {"proof", "proof_signal"}]
 
     pricing_position = "No pricing pressure detected yet."
     if pricing_observation:
@@ -2097,8 +2180,9 @@ def build_competitive_snapshot(
             f"{pricing_observation['competitor']} is resetting buyer price expectations in "
             f"{humanize_region(pricing_observation['region'])}, which exposes any weaker entry offer you still show."
         )
-    elif any(card["knowledge_id"] == "pricing_packaging" and card["items"] and "No pricing" not in card["items"][0] for card in knowledge_cards):
-        pricing_position = "Packaging pressure is building, even if direct price changes are still thin."
+    elif pricing_units:
+        top_pricing = pricing_units[0]
+        pricing_position = f"{top_pricing.get('competitor') or 'The market'} is using pricing or onboarding pressure in the comparison set, even if a direct price change is still thin."
 
     acquisition_strategy = "No competitor is clearly winning on low-friction acquisition yet."
     if offer_observation:
@@ -2110,6 +2194,9 @@ def build_competitive_snapshot(
         acquisition_strategy = (
             f"{asset_sale_observation['competitor']} is creating a cost-side acquisition opening through asset pressure."
         )
+    elif offer_units:
+        top_offer = offer_units[0]
+        acquisition_strategy = f"{top_offer.get('competitor') or 'A competitor'} is shaping low-friction acquisition through offer or positioning pressure."
 
     active_threats = [summarize_observation_threat(row) for row in observation_rows[:3]] or ["No immediate competitive threats are strongly evidenced yet."]
     immediate_opportunities = []
@@ -2132,7 +2219,7 @@ def build_competitive_snapshot(
         current_weakness = "Weakness: no lower-friction entry offer is visible while a competitor is using offer-led acquisition."
     elif pricing_observation:
         current_weakness = "Weakness: your current price framing may look exposed if you do not answer the new comparison anchor quickly."
-    elif any(card["knowledge_id"] == "proof_signals" and card["items"] and "No proof" not in card["items"][0] for card in knowledge_cards):
+    elif proof_units:
         current_weakness = "Weakness: proof quality may be weaker than the trust signals buyers are seeing elsewhere in the market."
 
     risk_level = "low"
@@ -2442,6 +2529,106 @@ def strongest_unit_excerpt(units: list[dict[str, Any]]) -> str | None:
     strongest = max(units, key=lambda unit: float(unit.get("confidence") or 0))
     excerpt = str(strongest.get("excerpt") or "").strip()
     return excerpt[:220] if excerpt else None
+
+
+def unique_units_by_label(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for unit in sorted(units, key=lambda item: float(item.get("confidence") or 0), reverse=True):
+        key = str(unit.get("label") or "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(unit)
+    return result
+
+
+def market_summary_insight(market_units: list[dict[str, Any]], source_rows: list[dict[str, Any]]) -> str:
+    if not market_units:
+        return "We have only a thin market picture so far, so the strongest pattern is still forming."
+    top = market_units[0]
+    competitor = top.get("competitor") or "the visible comparison set"
+    return f"We can already see the market leaning on {humanize_fact_category(str(top.get('unit_kind') or 'market')).lower()} pressure, with {competitor} helping set buyer expectations."
+
+
+def market_summary_implication(market_units: list[dict[str, Any]]) -> str:
+    if not market_units:
+        return "Add one denser source if you want the next recommendation cycle to rely on something stronger than broad context."
+    top = market_units[0]
+    category = str(top.get("unit_kind") or "market")
+    if category in {"pricing", "pricing_change"}:
+        return "If you do not answer the current pricing and onboarding comparison directly, buyers can adopt the competitor's lower-friction frame before you respond."
+    if category in {"offer", "positioning", "messaging_shift"}:
+        return "If you do not answer the strongest buyer-facing claim in the right channel, your offer can lose urgency during live comparisons."
+    if category in {"proof", "proof_signal"}:
+        return "If you do not strengthen your visible proof, comparison-stage buyers can trust the stronger story first."
+    return "This pattern is strong enough to change how buyers compare options, so it should influence the next visible move."
+
+
+def competitor_card_items(
+    evidence_units: list[dict[str, Any]],
+    competitor_facts: list[dict[str, Any]],
+    entities: list[str],
+) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for unit in evidence_units:
+        competitor = clean_entity(str(unit.get("competitor") or ""))
+        if competitor and competitor.lower() not in seen:
+            seen.add(competitor.lower())
+            values.append(competitor)
+    for fact in competitor_facts:
+        label = clean_entity(str(fact.get("label") or ""))
+        if label and label.lower() not in seen:
+            seen.add(label.lower())
+            values.append(label)
+    for entity in entities:
+        label = clean_entity(entity)
+        if label and label.lower() not in seen:
+            seen.add(label.lower())
+            values.append(label)
+    return values[:6]
+
+
+def source_refs_for_competitor_items(items: list[str], evidence_units: list[dict[str, Any]]) -> list[str]:
+    refs: list[str] = []
+    lowered_items = {item.lower() for item in items}
+    for unit in evidence_units:
+        competitor = str(unit.get("competitor") or "").lower()
+        if competitor and competitor in lowered_items:
+            refs.append(str(unit.get("source_ref") or ""))
+    return unique_values(refs)
+
+
+def strongest_competitor_excerpt(items: list[str], evidence_units: list[dict[str, Any]]) -> str | None:
+    lowered_items = {item.lower() for item in items}
+    matched = [unit for unit in evidence_units if str(unit.get("competitor") or "").lower() in lowered_items]
+    return strongest_unit_excerpt(matched)
+
+
+def missing_evidence_categories(units: list[dict[str, Any]]) -> list[str]:
+    categories = {str(unit.get("unit_kind") or "") for unit in units}
+    gaps: list[str] = []
+    if not categories.intersection({"pricing", "pricing_change"}):
+        gaps.append("We still need stronger pricing evidence before we can recommend a tighter commercial response.")
+    if not categories.intersection({"offer", "positioning", "messaging_shift"}):
+        gaps.append("We still need a clearer buyer-facing offer or positioning signal before we can sharpen the response channel.")
+    if not categories.intersection({"proof", "proof_signal"}):
+        gaps.append("We still need stronger trust or proof evidence before we can recommend the right proof move with confidence.")
+    return gaps
+
+
+def strongest_offer_hint(text: str) -> str | None:
+    lowered = text.lower()
+    if "trial" in lowered:
+        return "trial"
+    if "discount" in lowered:
+        return "discount"
+    if "testimonial" in lowered or "proof" in lowered:
+        return "proof"
+    if "integration" in lowered:
+        return "integration"
+    return None
 
 
 def filter_clauses(clauses: list[str], tokens: tuple[str, ...]) -> list[str]:

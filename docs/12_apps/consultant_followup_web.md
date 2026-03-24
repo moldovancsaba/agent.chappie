@@ -119,6 +119,7 @@ The next evidence layer is now explicit:
 - one source may produce many evidence units
 - many sources may strengthen the same knowledge card
 - `Know More` should be rebuilt from those units instead of flattening each source into one broad summary
+- key knowledge cards should expose `support_count` and `strongest_excerpt` so the operator can see why the card exists
 
 ## Ingestion behavior
 
@@ -130,6 +131,15 @@ The next evidence layer is now explicit:
 - when the worker can enrich missing public-web context itself, it should do that automatically before recommending an operator research task
 - auto-collected public-web enrichment must be written into the local worker brain and surfaced distinctly in `Know More`
 - the checklist should still return exactly three tasks, preferring action-taking moves over information-request tasks whenever competitive pressure exists
+- task output should now carry task-specific metadata when available:
+  - `competitor_name`
+  - `target_channel`
+  - `target_segment`
+  - `mechanism`
+  - `done_definition`
+  - `supporting_source_refs`
+  - `strongest_evidence_excerpt`
+- task detail should prefer that metadata over title-only heuristics so the operator sees narrower, cleaner evidence and clearer execution guidance
 
 ## Sources and activity
 

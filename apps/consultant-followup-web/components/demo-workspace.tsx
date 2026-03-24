@@ -35,6 +35,8 @@ type KnowledgeCard = {
   source_refs: string[];
   evidence_refs: string[];
   confidence: number;
+  support_count?: number;
+  strongest_excerpt?: string | null;
   annotation_status: string;
   confidence_source: "extracted" | "user_confirmed" | "user_modified" | string;
   audit: {
@@ -319,6 +321,10 @@ function buildConsequenceOfInaction(task: RecommendedTask) {
 function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
   const lowerTitle = task.title.toLowerCase();
   const sourceSummary = sourceLabels.length ? sourceLabels.join(", ") : "the linked source set";
+  const targetChannel = task.target_channel ?? "named channel";
+  const targetSegment = task.target_segment ?? "buyers";
+  const competitor = task.competitor_name ?? "the strongest competitor";
+  const mechanism = task.mechanism ?? "the exact change described in the task";
 
   if (task.task_type === "information_request") {
     return [
@@ -331,18 +337,18 @@ function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
 
   if (lowerTitle.includes("pricing") || lowerTitle.includes("onboarding")) {
     return [
-      `Pull the exact pricing, onboarding, and proof claims from ${sourceSummary}.`,
-      "Turn those claims into a 2-column comparison block and one onboarding FAQ or friction-reduction section.",
-      "Publish the update on the pricing page or comparison section before the stated best-before date.",
-      "Send the updated asset to active comparison-stage prospects and check whether objections drop.",
+      `Pull the exact pricing, onboarding, and proof claims from ${sourceSummary}, especially anything tied to ${competitor}.`,
+      `Turn those claims into the exact asset described by the task and place it on the ${targetChannel}.`,
+      `Publish the ${targetChannel} update before the best-before date so active ${targetSegment} see the lower-friction comparison immediately.`,
+      "Send the updated asset to live prospects or active deals and check whether pricing or onboarding objections drop.",
     ];
   }
 
   if (lowerTitle.includes("homepage") || lowerTitle.includes("hero") || lowerTitle.includes("enrollment")) {
     return [
-      `Identify the strongest competitor claim in ${sourceSummary}.`,
-      "Rewrite the specified page section so it answers that exact claim in your own positioning language.",
-      "Publish the update in the named channel this week and keep the change above the fold or in the first comparison section.",
+      `Identify the strongest competitor claim in ${sourceSummary}, especially the angle ${competitor} is using against ${targetSegment}.`,
+      `Rewrite the ${targetChannel} so it answers that exact claim in your own positioning language.`,
+      `Publish the update in the ${targetChannel} this week and keep the change in the first comparison section buyers will see.`,
       "Check whether the updated page now answers the objection or offer pressure named in the task.",
     ];
   }
@@ -366,9 +372,9 @@ function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
   }
 
   return [
-    `Use the strongest evidence from ${sourceSummary} to define the exact asset or channel change required.`,
-    `Create and publish the action described in the task title: ${task.title}.`,
-    "Make the change live in the named channel this week so buyers can actually experience the move.",
+    `Use the strongest evidence from ${sourceSummary} to define the exact asset or channel change required against ${competitor}.`,
+    `Create the exact move described by the task using this mechanism: ${mechanism}.`,
+    `Publish the change in the ${targetChannel} this week so ${targetSegment} can actually experience the move.`,
     "Check whether the result reduced the threat or captured the opportunity described in the expected impact.",
   ];
 }
@@ -1148,6 +1154,7 @@ export function DemoWorkspace() {
     : [];
   const selectedTaskSourceRefs = Array.from(
     new Set([
+      ...((selectedTask?.supporting_source_refs ?? []) as string[]),
       ...selectedTaskEvidence.map((activity) => activity.source_ref),
       ...selectedTaskDraftSegments.flatMap((segment) => segment.source_refs),
     ])
@@ -1435,6 +1442,24 @@ export function DemoWorkspace() {
                         {confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}
                       </strong>
                     </div>
+                    {selectedTask.target_channel ? (
+                      <div className="summary-row">
+                        <span>Target channel</span>
+                        <strong>{selectedTask.target_channel}</strong>
+                      </div>
+                    ) : null}
+                    {selectedTask.target_segment ? (
+                      <div className="summary-row">
+                        <span>Target segment</span>
+                        <strong>{selectedTask.target_segment}</strong>
+                      </div>
+                    ) : null}
+                    {selectedTask.competitor_name ? (
+                      <div className="summary-row">
+                        <span>Competitor</span>
+                        <strong>{selectedTask.competitor_name}</strong>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="task-block">
@@ -1447,6 +1472,13 @@ export function DemoWorkspace() {
                     <p>{buildConsequenceOfInaction(selectedTask)}</p>
                   </div>
 
+                  {selectedTask.strongest_evidence_excerpt ? (
+                    <div className="task-block">
+                      <span>Strongest evidence</span>
+                      <p>{selectedTask.strongest_evidence_excerpt}</p>
+                    </div>
+                  ) : null}
+
                   <div className="task-detail-list">
                     <h3>Execution steps</h3>
                     <ol className="compact-run-list">
@@ -1455,6 +1487,13 @@ export function DemoWorkspace() {
                       ))}
                     </ol>
                   </div>
+
+                  {selectedTask.done_definition ? (
+                    <div className="task-block">
+                      <span>Done looks like</span>
+                      <p>{selectedTask.done_definition}</p>
+                    </div>
+                  ) : null}
 
                   <div className="task-evidence">
                     <span>Evidence</span>
@@ -1699,6 +1738,12 @@ export function DemoWorkspace() {
                         <span>Implication</span>
                         <p>{card.implication}</p>
                       </div>
+                      {card.strongest_excerpt ? (
+                        <div className="task-block">
+                          <span>Strongest excerpt</span>
+                          <p>{card.strongest_excerpt}</p>
+                        </div>
+                      ) : null}
                       <div className="task-block">
                         <span>Potential moves</span>
                         <ul>
@@ -1712,6 +1757,16 @@ export function DemoWorkspace() {
                           <li key={`${card.knowledge_id}-${index}`}>{item}</li>
                         ))}
                       </ul>
+                      <div className="summary-stack">
+                        <div className="summary-row">
+                          <span>Supporting units</span>
+                          <strong>{card.support_count ?? card.items.length}</strong>
+                        </div>
+                        <div className="summary-row">
+                          <span>Supporting sources</span>
+                          <strong>{card.source_refs.length}</strong>
+                        </div>
+                      </div>
                       <div className="evidence-chip-list">
                         {card.source_refs.map((sourceRef) => (
                           <button
