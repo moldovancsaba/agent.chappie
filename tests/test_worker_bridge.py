@@ -502,6 +502,56 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue("pricing page" in combined or "homepage hero section" in combined)
             self.assertNotIn("current competitor frame", combined)
             self.assertNotIn("comparison-stage buyers", combined)
+            self.assertNotEqual(tasks[2]["task_type"], "information_request")
+            self.assertFalse(any("proof block in proof section" in task["title"].lower() for task in tasks))
+            self.assertFalse(any("the current market leader" in task["title"].lower() for task in tasks))
+            self.assertFalse(any("the strongest visible competitor" in task["title"].lower() for task in tasks))
+
+    def test_pressure_cases_prefer_three_action_tasks_with_cleaner_wording(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_pressure_diverse_mix",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_pressure_diverse_mix",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-24T10:00:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Identify competitive signals and return exactly 3 actionable follow-up tasks.",
+                    "artifacts": [{"type": "upload", "ref": "source_pressure_diverse_mix"}],
+                },
+                "source_refs": ["source_pressure_diverse_mix"],
+            },
+            "source_package": {
+                "project_id": "project_pressure_diverse_mix",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "FlowOps raised onboarding and pricing friction in the SEO market. "
+                    "Competitors are using testimonials, proof blocks, integration claims, and comparison messaging. "
+                    "One exposed operator is reducing staff and may sell assets. "
+                    "Trial-led acquisition pressure is rising."
+                ),
+                "source_ref": "source_pressure_diverse_mix",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            result = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+
+            tasks = result["job_result"]["result_payload"]["recommended_tasks"]
+            titles = [task["title"].lower() for task in tasks]
+            buckets = {task["move_bucket"] for task in tasks}
+
+            self.assertEqual(len(tasks), 3)
+            self.assertNotEqual(tasks[2]["task_type"], "information_request")
+            self.assertGreaterEqual(len(buckets), 3)
+            self.assertFalse(any("the current market leader" in title for title in titles))
+            self.assertFalse(any("the strongest visible competitor" in title for title in titles))
+            self.assertFalse(any("proof block in proof section" in title for title in titles))
 
     def test_task_feedback_regenerates_three_tasks(self) -> None:
         payload = {

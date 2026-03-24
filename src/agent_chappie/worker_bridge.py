@@ -1389,6 +1389,9 @@ def segment_to_task(
         supporting_source_refs=supporting_source_refs,
         evidence_units=evidence_units,
         strongest_excerpt=strongest_excerpt,
+        move_bucket=move_bucket,
+        segment_text=segment_text,
+        competitor=competitor,
     )
     explicit_asset = str((strongest_unit or {}).get("asset") or detail.get("asset") or "").strip() or None
     explicit_section = str((strongest_unit or {}).get("section") or detail.get("section") or "").strip() or None
@@ -1399,9 +1402,14 @@ def segment_to_task(
         for observation in observations
         if observation.get("signal_id") in supporting_signal_refs
     ]
+    has_proof_signal = any(token in lowered for token in ("proof", "testimonial", "integration", "trust"))
+    has_offer_signal = any(token in lowered for token in ("trial", "offer", "discount", "positioning", "message"))
 
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
-        competitor_name = competitor or "the strongest visible competitor"
+        competitor_name = competitor or fallback_competitor_reference(
+            strongest_excerpt=strongest_excerpt,
+            explicit_claim=explicit_claim,
+        )
         comparison_channel = explicit_channel or comparison_channel
         mechanism = "Add a side-by-side pricing comparison and onboarding FAQ that lowers perceived adoption friction."
         title = synthesize_task_title(
@@ -1475,8 +1483,89 @@ def segment_to_task(
             "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
-    if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
-        competitor_name = competitor or "the current market leader"
+    if segment["segment_kind"] in {"proof"} or (has_proof_signal and not has_offer_signal):
+        competitor_name = competitor or fallback_competitor_reference(
+            strongest_excerpt=strongest_excerpt,
+            explicit_claim=explicit_claim,
+        )
+        proof_channel = explicit_channel or infer_proof_channel(domain, lowered)
+        mechanism = "Add concrete proof blocks where hesitant buyers compare trust and implementation confidence."
+        title = synthesize_task_title(
+            move_bucket="proof_or_trust_move",
+            competitor=competitor_name,
+            audience=audience,
+            channel=proof_channel,
+            timing_window=timing_window,
+            strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
+        )
+        why_now = synthesize_task_why_now(
+            move_bucket="proof_or_trust_move",
+            strongest_excerpt=strongest_excerpt,
+            observations=bundle_observations,
+            competitor=competitor_name,
+            audience=audience,
+            channel=proof_channel,
+            explicit_claim=explicit_claim,
+        )
+        expected_advantage = synthesize_task_expected_advantage(
+            move_bucket="proof_or_trust_move",
+            competitor=competitor_name,
+            audience=audience,
+            channel=proof_channel,
+            timing_window=timing_window,
+            explicit_claim=explicit_claim,
+        )
+        execution_steps = build_task_execution_steps(
+            move_bucket="proof_or_trust_move",
+            source_refs=supporting_source_refs,
+            channel=proof_channel,
+            audience=audience,
+            competitor=competitor_name,
+            mechanism=mechanism,
+            strongest_excerpt=strongest_excerpt,
+            explicit_asset=explicit_asset,
+            explicit_section=explicit_section,
+            explicit_claim=explicit_claim,
+        )
+        return {
+            "rank": 0,
+            "title": title,
+            "why_now": why_now,
+            "expected_advantage": expected_advantage,
+            "evidence_refs": evidence_refs,
+            "task_type": "general_business_value",
+            "move_bucket": "proof_or_trust_move",
+            "competitor_name": competitor_name,
+            "target_channel": proof_channel,
+            "target_segment": audience,
+            "mechanism": mechanism,
+            "done_definition": synthesize_done_definition(
+                move_bucket="proof_or_trust_move",
+                competitor=competitor_name,
+                channel=proof_channel,
+                audience=audience,
+                mechanism=mechanism,
+                strongest_excerpt=strongest_excerpt,
+                explicit_asset=explicit_asset,
+                explicit_section=explicit_section,
+            ),
+            "execution_steps": execution_steps,
+            "supporting_signal_refs": supporting_signal_refs,
+            "supporting_segment_ids": supporting_segment_ids,
+            "supporting_signal_scores": supporting_signal_bundle,
+            "supporting_segment_scores": supporting_segment_bundle,
+            "supporting_source_refs": supporting_source_refs,
+            "supporting_source_scores": supporting_source_bundle,
+            "strongest_evidence_excerpt": strongest_excerpt,
+        }
+    if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "message")):
+        competitor_name = competitor or fallback_competitor_reference(
+            strongest_excerpt=strongest_excerpt,
+            explicit_claim=explicit_claim,
+        )
         offer = detail.get("offer") or strongest_offer_hint(segment_text)
         channel = explicit_channel or primary_channel
         mechanism = "Replace the exposed claim in the live page copy with a direct response to the strongest competitor angle."
@@ -1555,7 +1644,10 @@ def segment_to_task(
     if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
         title = synthesize_task_title(
             move_bucket="information_request",
-            competitor=competitor or "the current comparison set",
+            competitor=competitor or fallback_competitor_reference(
+                strongest_excerpt=strongest_excerpt,
+                explicit_claim=explicit_claim,
+            ),
             audience=audience,
             channel="same workspace",
             timing_window=timing_window,
@@ -1568,7 +1660,10 @@ def segment_to_task(
             move_bucket="information_request",
             strongest_excerpt=strongest_excerpt,
             observations=bundle_observations,
-            competitor=competitor or "the current comparison set",
+            competitor=competitor or fallback_competitor_reference(
+                strongest_excerpt=strongest_excerpt,
+                explicit_claim=explicit_claim,
+            ),
             audience=audience,
             channel="same workspace",
             explicit_claim=explicit_claim,
@@ -1587,7 +1682,10 @@ def segment_to_task(
                 source_refs=supporting_source_refs,
                 channel="same workspace",
                 audience=audience,
-                competitor=competitor or "the current comparison set",
+                competitor=competitor or fallback_competitor_reference(
+                    strongest_excerpt=strongest_excerpt,
+                    explicit_claim=explicit_claim,
+                ),
                 mechanism="Request one missing proprietary fact in a single message and add it back to this workspace.",
                 strongest_excerpt=strongest_excerpt,
                 explicit_asset=explicit_asset,
@@ -1596,7 +1694,10 @@ def segment_to_task(
             ),
             "done_definition": synthesize_done_definition(
                 move_bucket="information_request",
-                competitor=competitor or "the current comparison set",
+                competitor=competitor or fallback_competitor_reference(
+                    strongest_excerpt=strongest_excerpt,
+                    explicit_claim=explicit_claim,
+                ),
                 channel="same workspace",
                 audience=audience,
                 mechanism="Request one missing proprietary fact in a single message and add it back to this workspace.",
@@ -1613,7 +1714,10 @@ def segment_to_task(
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
-        competitor_name = competitor or "the exposed competitor"
+        competitor_name = competitor or fallback_competitor_reference(
+            strongest_excerpt=strongest_excerpt,
+            explicit_claim=explicit_claim,
+        )
         outreach_channel = explicit_channel or "direct outreach"
         mechanism = "Secure direct access before another operator captures the transition window."
         title = synthesize_task_title(
@@ -1688,7 +1792,10 @@ def segment_to_task(
             "strongest_evidence_excerpt": strongest_excerpt,
         }
     if segment["importance"] >= 0.7:
-        competitor_name = competitor or "the current market leader"
+        competitor_name = competitor or fallback_competitor_reference(
+            strongest_excerpt=strongest_excerpt,
+            explicit_claim=explicit_claim,
+        )
         proof_channel = explicit_channel or infer_proof_channel(domain, lowered)
         mechanism = "Add concrete proof blocks where hesitant buyers compare trust signals."
         title = synthesize_task_title(
@@ -1775,10 +1882,15 @@ def build_missing_information_tasks(
     strongest = draft_segments[:3]
     domain = infer_domain_from_sources(source, fact_chips)
     audience = "buyers" if domain == "general" else "families"
-    strongest_competitor = normalize_competitor_fact(source.competitor or "") or "the strongest visible competitor"
+    audience_phrase = normalize_task_audience(audience)
+    strongest_competitor = normalize_competitor_fact(source.competitor or "") or fallback_competitor_reference(
+        strongest_excerpt=source.raw_text,
+        explicit_claim=None,
+    )
 
     for segment in strongest:
         evidence_refs = segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"]
+        lowered_segment = str(segment["segment_text"]).lower()
         if segment["segment_kind"] == "competitor":
             candidates.append(
                 {
@@ -1791,23 +1903,23 @@ def build_missing_information_tasks(
                     "move_bucket": "information_request",
                 }
             )
-        elif segment["segment_kind"] == "proof":
+        elif segment["segment_kind"] == "proof" or any(token in lowered_segment for token in ("proof", "testimonial", "integration", "trust")):
             candidates.append(
                 {
                     "rank": 0,
-                    "title": f"Add two proof blocks this week on the {infer_proof_channel(domain, segment['segment_text'].lower())} where comparison-stage {audience} hesitate most",
+                    "title": f"Add two proof blocks this week on the {infer_proof_channel(domain, lowered_segment)} where {audience_phrase} hesitate most",
                     "why_now": f"We found a proof signal in the market: {segment['segment_text']}",
-                    "expected_advantage": f"Improves conversion for comparison-stage {audience} this week by reducing trust friction versus the strongest proof language currently visible in the market.",
+                    "expected_advantage": f"Improves conversion for {audience_phrase} this week by reducing trust friction versus the strongest proof language currently visible in the market.",
                     "evidence_refs": evidence_refs,
                     "task_type": "general_business_value",
                     "move_bucket": "proof_or_trust_move",
                 }
             )
-        elif segment["segment_kind"] in {"pricing", "pricing_packaging"}:
+        elif segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered_segment for token in ("pricing", "price", "package", "bundle", "onboarding")):
             candidates.append(
                 {
                     "rank": 0,
-                    "title": f"Ship one simpler pricing or onboarding entry move this week on the {infer_primary_channel(domain, segment['segment_text'].lower())} before comparison-stage {audience} decide your offer is harder to adopt",
+                    "title": f"Ship one simpler pricing or onboarding entry move this week on the {infer_primary_channel(domain, lowered_segment)} before {audience_phrase} decide your offer is harder to adopt",
                     "why_now": f"We found commercial friction in the market picture: {segment['segment_text']}",
                     "expected_advantage": f"Improves conversion for active {audience} this week by lowering adoption friction before buyers choose a lower-friction competitor path.",
                     "evidence_refs": evidence_refs,
@@ -1815,11 +1927,23 @@ def build_missing_information_tasks(
                     "move_bucket": "pricing_or_offer_move",
                 }
             )
+        elif segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered_segment for token in ("trial", "offer", "positioning", "message", "homepage", "hero", "comparison")):
+            candidates.append(
+                {
+                    "rank": 0,
+                    "title": f"Rewrite the strongest homepage or comparison claim this week before {strongest_competitor} shapes how {audience_phrase} judge your offer",
+                    "why_now": f"We found a visible claim in the market picture: {segment['segment_text']}",
+                    "expected_advantage": f"Improves shortlist conversion for active {audience_phrase} this week by replacing a live competitor claim before it becomes the default comparison language.",
+                    "evidence_refs": evidence_refs,
+                    "task_type": "tactical_response",
+                    "move_bucket": "messaging_or_positioning_move",
+                }
+            )
         elif segment["segment_kind"] == "source_clause":
             candidates.append(
                 {
                     "rank": 0,
-                    "title": f"Turn the strongest validated clause into a live {infer_primary_channel(domain, segment['segment_text'].lower())} response this week instead of leaving it as passive context",
+                    "title": f"Turn the strongest validated clause into a live {infer_primary_channel(domain, lowered_segment)} response this week instead of leaving it as passive context",
                     "why_now": f"We isolated a high-importance market signal in this source that is still sitting below task threshold: {segment['segment_text']}",
                     "expected_advantage": "Improves conversion and execution speed this week by converting one validated market observation into a concrete business move before the window closes.",
                     "evidence_refs": evidence_refs,
@@ -1857,22 +1981,44 @@ def build_missing_information_tasks(
 
     if has_actionable_candidates and len(candidates) < 3:
         anchor_segment = strongest[0] if strongest else None
-        channel = infer_primary_channel(domain, (anchor_segment["segment_text"] if anchor_segment else source.raw_text).lower())
-        candidates.append(
+        anchor_text = (anchor_segment["segment_text"] if anchor_segment else source.raw_text).lower()
+        channel = infer_primary_channel(domain, anchor_text)
+        fallback_actions = [
             {
                 "rank": 0,
-                "title": f"Add one concrete trust or onboarding answer on the {channel} this week before {strongest_competitor} hardens buyer expectations",
+                "title": f"Add one trust-building proof block on the {infer_proof_channel(domain, anchor_text)} this week before {strongest_competitor} hardens buyer expectations",
                 "why_now": (
-                    f"We already have enough visible pressure to act, but one more response move is still missing: {anchor_segment['segment_text']}"
+                    f"We already have enough visible pressure to act, but your proof surface is still weaker than the live comparison pressure: {anchor_segment['segment_text']}"
                     if anchor_segment
-                    else "We already have enough visible pressure to act, but one more response move is still missing from the current checklist."
+                    else "We already have enough visible pressure to act, but your proof surface is still weaker than the live comparison pressure."
                 ),
-                "expected_advantage": f"Improves conversion for active {audience} this week by adding one more visible comparison response before buyers lock into {strongest_competitor}'s current frame.",
+                "expected_advantage": f"Improves conversion for active {audience_phrase} this week by making trust visible before {strongest_competitor} becomes the safer default.",
                 "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
                 "task_type": "exploratory_action",
                 "move_bucket": "proof_or_trust_move",
-            }
-        )
+            },
+            {
+                "rank": 0,
+                "title": f"Rewrite one comparison-facing claim on the {channel} this week before {strongest_competitor} shapes how {audience_phrase} frame the decision",
+                "why_now": (
+                    f"We already have enough visible pressure to act, but one cleaner claim response is still missing: {anchor_segment['segment_text']}"
+                    if anchor_segment
+                    else "We already have enough visible pressure to act, but one cleaner claim response is still missing from the current checklist."
+                ),
+                "expected_advantage": f"Improves shortlist conversion for active {audience_phrase} this week by giving buyers a clearer decision frame before {strongest_competitor} owns it.",
+                "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
+                "task_type": "exploratory_action",
+                "move_bucket": "messaging_or_positioning_move",
+            },
+        ]
+        existing_buckets = {str(candidate.get("move_bucket") or "") for candidate in candidates}
+        for fallback_action in fallback_actions:
+            if len(candidates) >= 3:
+                break
+            if str(fallback_action["move_bucket"]) in existing_buckets:
+                continue
+            candidates.append(fallback_action)
+            existing_buckets.add(str(fallback_action["move_bucket"]))
 
     return candidates
 
@@ -1938,20 +2084,36 @@ def judge_tasks(
         sorted(filtered, key=lambda task: task_priority_score(task, generation_memory_rows), reverse=True),
         target_count=3,
     )
+    non_info_final_count = sum(1 for task in final_tasks if task.get("task_type") != "information_request")
+    if final_tasks and len(final_tasks) >= 3 and final_tasks[-1].get("task_type") == "information_request" and non_info_final_count >= 2:
+        replacement = next(
+            (
+                task
+                for task in sorted(filtered, key=lambda task: task_priority_score(task, generation_memory_rows), reverse=True)
+                if task not in final_tasks and task.get("task_type") != "information_request"
+            ),
+            None,
+        )
+        if replacement:
+            final_tasks[-1] = replacement
     if len(final_tasks) < 3:
         fallback_titles = {
             normalize_task_key(task["title"])
             for task in final_tasks
         }
+        fallback_competitor = normalize_competitor_fact(source.competitor or "") or fallback_competitor_reference(
+            strongest_excerpt=source.raw_text,
+            explicit_claim=None,
+        )
         for index in range(len(final_tasks), 3):
             fallback_title = (
-                "Request one proprietary pricing, offer, or buyer-proof fact this week before the next regeneration"
+                f"Add one trust-building proof block this week before {fallback_competitor} hardens buyer expectations"
                 if index == 2
-                else f"Ship one specific response move this week in the strongest visible channel before {source.competitor or 'the current competitor'} hardens buyer expectations"
+                else f"Ship one specific response move this week in the strongest visible channel before {fallback_competitor} hardens buyer expectations"
             )
             normalized_title = normalize_task_key(fallback_title)
             if normalized_title in fallback_titles:
-                fallback_title = f"Add one specific proof or pricing block this week before {source.competitor or 'the current competitor'} hardens buyer expectations"
+                fallback_title = f"Add one specific proof or pricing block this week before {fallback_competitor} hardens buyer expectations"
                 normalized_title = normalize_task_key(fallback_title)
             fallback_titles.add(normalized_title)
             final_tasks.append(
@@ -1962,7 +2124,7 @@ def judge_tasks(
                     "expected_advantage": "Improves conversion and execution speed this week by keeping the checklist active while a stronger replacement is still forming.",
                     "evidence_refs": [source.source_ref],
                     "task_type": "exploratory_action",
-                    "move_bucket": "information_request" if index == 2 else "messaging_or_positioning_move",
+                    "move_bucket": "proof_or_trust_move" if index == 2 else "messaging_or_positioning_move",
                     "target_segment": "buyers",
                     "supporting_source_refs": [source.source_ref],
                     "strongest_evidence_excerpt": source.raw_text[:220] if source.raw_text else source.source_ref,
@@ -2375,6 +2537,9 @@ def strongest_supporting_unit(
     supporting_source_refs: list[str],
     evidence_units: list[dict[str, Any]],
     strongest_excerpt: str,
+    move_bucket: str,
+    segment_text: str,
+    competitor: str | None,
 ) -> dict[str, Any] | None:
     normalized_excerpt = strongest_excerpt.strip().lower()
     candidates = [
@@ -2384,7 +2549,32 @@ def strongest_supporting_unit(
     ]
     if not candidates:
         return None
-    candidates.sort(key=lambda unit: float(unit.get("confidence") or 0), reverse=True)
+    bucket_kinds = {
+        "pricing_or_offer_move": {"pricing", "pricing_change", "offer"},
+        "messaging_or_positioning_move": {"offer", "positioning", "messaging_shift", "segment"},
+        "intercept_or_capture_move": {"opportunity", "closure", "asset_sale", "opening"},
+        "proof_or_trust_move": {"proof", "proof_signal"},
+        "information_request": {"timing", "segment", "market"},
+    }.get(move_bucket, {"market"})
+    keywords = {
+        token
+        for token in re.findall(r"[a-z0-9]+", segment_text.lower())
+        if len(token) >= 4 and token not in {"this", "week", "your", "from", "with", "that", "they", "into", "current", "source", "sources"}
+    }
+    competitor_lc = (competitor or "").lower()
+
+    def unit_score(unit: dict[str, Any]) -> float:
+        text = f"{unit.get('label') or ''} {unit.get('excerpt') or ''}".lower()
+        score = float(unit.get("confidence") or 0)
+        if str(unit.get("unit_kind") or "") in bucket_kinds:
+            score += 1.4
+        if competitor_lc and competitor_lc in text:
+            score += 1.2
+        overlap = sum(1 for token in keywords if token in text)
+        score += min(1.5, overlap * 0.2)
+        return score
+
+    candidates.sort(key=unit_score, reverse=True)
     return candidates[0]
 
 
@@ -3411,7 +3601,9 @@ def strongest_offer_hint(text: str) -> str | None:
 def infer_task_move_bucket(segment_kind: str, lowered_text: str) -> str:
     if segment_kind in {"pricing", "pricing_packaging"} or any(token in lowered_text for token in ("price", "pricing", "package", "bundle", "onboarding")):
         return "pricing_or_offer_move"
-    if segment_kind in {"offer", "offer_positioning", "positioning"} or any(token in lowered_text for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
+    if segment_kind in {"proof"} or any(token in lowered_text for token in ("proof", "testimonial", "integration", "trust")):
+        return "proof_or_trust_move"
+    if segment_kind in {"offer", "offer_positioning", "positioning"} or any(token in lowered_text for token in ("trial", "offer", "discount", "positioning", "message")):
         return "messaging_or_positioning_move"
     if segment_kind in {"opportunity", "closure", "asset_sale"} or any(token in lowered_text for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
         return "intercept_or_capture_move"
@@ -3608,17 +3800,17 @@ def synthesize_task_why_now(
         primary = observations[0]
         summary = str(primary.get("summary") or strongest_excerpt).strip()
         signal_type = str(primary.get("signal_type") or "signal").replace("_", " ")
-        return f"We found a {signal_type} in your sources tied to {competitor}: {summary} If you do not answer that specific pressure in the {channel}, {audience_phrase} can keep comparing you through {competitor}'s claim."
+        return f"We detected a {signal_type} signal in your sources tied to {competitor}: {summary} If you do not answer that specific pressure in the {channel}, {audience_phrase} can keep comparing you through {competitor}'s claim."
 
     if move_bucket == "pricing_or_offer_move":
-        return f"We found pricing or onboarding pressure tied to {competitor}: {claim_phrase} If you do not answer it in the {channel}, {audience_phrase} can adopt {competitor}'s lower-friction commercial expectation first."
+        return f"We detected pricing or onboarding pressure tied to {competitor}: {claim_phrase} If you do not answer it in the {channel}, {audience_phrase} can adopt {competitor}'s lower-friction commercial expectation first."
     if move_bucket == "messaging_or_positioning_move":
-        return f"We found a visible market claim tied to {competitor}: {claim_phrase} If you do not answer it in the {channel}, {audience_phrase} can default to that framing."
+        return f"We detected a visible comparison signal tied to {competitor}: {claim_phrase} If you do not answer it in the {channel}, {audience_phrase} can default to that framing."
     if move_bucket == "intercept_or_capture_move":
-        return f"We found a closure, asset, or transition signal tied to {competitor}: {claim_phrase} This creates a short-lived opening that should be acted on through {channel}."
+        return f"We detected a closure, asset, or transition signal tied to {competitor}: {claim_phrase} This creates a short-lived opening that should be acted on through {channel}."
     if move_bucket == "proof_or_trust_move":
-        return f"We found trust pressure tied to {competitor}: {claim_phrase} This is already influencing how hesitant {audience_phrase} judge credibility."
-    return f"We found a concrete signal in your sources: {claim_phrase} This is the strongest reason to act now."
+        return f"We detected proof or trust pressure tied to {competitor}: {claim_phrase} This is already influencing how hesitant {audience_phrase} judge credibility."
+    return f"We detected a concrete signal in your sources: {claim_phrase} This is the strongest reason to act now."
 
 
 def synthesize_task_title(
@@ -3636,6 +3828,7 @@ def synthesize_task_title(
 ) -> str:
     audience_phrase = normalize_task_audience(audience)
     competitor_claim = explicit_claim or offer or infer_competitor_claim(strongest_excerpt) or "its strongest visible claim"
+    competitor_phrase = competitor_possessive_phrase(competitor)
     title_asset = infer_title_asset(
         move_bucket=move_bucket,
         channel=channel,
@@ -3644,13 +3837,14 @@ def synthesize_task_title(
         explicit_section=explicit_section,
     )
     if move_bucket == "pricing_or_offer_move":
-        return f"Add {title_asset} {timing_window} before {competitor}'s {competitor_claim} sets expectations for {audience_phrase}"
+        return f"Add {title_asset} {timing_window} before {competitor_phrase} {competitor_claim} sets expectations for {audience_phrase}"
     if move_bucket == "messaging_or_positioning_move":
-        return f"Rewrite {title_asset} {timing_window} to answer {competitor}'s {competitor_claim} before {audience_phrase} default to it"
+        return f"Rewrite {title_asset} {timing_window} to answer {competitor_phrase} {competitor_claim} before {audience_phrase} default to it"
     if move_bucket == "intercept_or_capture_move":
         return f"Contact {competitor} {timing_window} and secure first access to customers, staff, assets, or distribution before the window closes"
     if move_bucket == "proof_or_trust_move":
-        return f"Add proof blocks to {title_asset} {timing_window} so hesitant {audience_phrase} do not trust {competitor} first"
+        prefix = "Add" if title_asset.startswith("proof") else "Add proof blocks to"
+        return f"{prefix} {title_asset} {timing_window} so hesitant {audience_phrase} do not trust {competitor} first"
     if move_bucket == "information_request":
         if any(token in strongest_excerpt.lower() for token in ("pricing", "onboarding", "offer", "proof")):
             return f"Request the missing proprietary pricing, offer, or buyer-proof fact {timing_window} before making the wrong response move"
@@ -3701,8 +3895,26 @@ def infer_competitor_claim(text: str) -> str | None:
     if "pricing" in lowered:
         return "pricing comparison"
     if "testimonial" in lowered or "proof" in lowered:
-        return "proof message"
+        return "proof claim"
     return None
+
+
+def fallback_competitor_reference(*, strongest_excerpt: str, explicit_claim: str | None = None) -> str:
+    claim = explicit_claim or infer_competitor_claim(strongest_excerpt)
+    if claim:
+        return f"the competitor using {claim}"
+    if "pricing" in strongest_excerpt.lower() or "onboarding" in strongest_excerpt.lower():
+        return "the competitor setting the pricing expectation"
+    return "the visible competitor"
+
+
+def competitor_possessive_phrase(competitor: str) -> str:
+    cleaned = competitor.strip()
+    if cleaned.lower().startswith("the competitor ") or cleaned.lower().startswith("the visible competitor"):
+        return cleaned
+    if cleaned.endswith("s"):
+        return f"{cleaned}'"
+    return f"{cleaned}'s"
 
 
 def infer_title_asset(
@@ -3721,7 +3933,10 @@ def infer_title_asset(
         explicit_asset=explicit_asset,
         explicit_section=explicit_section,
     )
-    return asset.replace(" on the ", " on ").replace(" in the ", " in ")
+    asset = asset.replace(" on the ", " on ").replace(" in the ", " in ")
+    asset = asset.replace("proof block in proof section", "proof block")
+    asset = asset.replace("proof blocks in proof section", "proof blocks")
+    return asset
 
 
 def infer_task_asset(
@@ -3740,10 +3955,16 @@ def infer_task_asset(
         asset_norm = clean_phrase(asset_text)
         section_norm = clean_phrase(section_text)
         channel_norm = clean_phrase(channel_text)
+        asset_tokens = {token for token in re.findall(r"[a-z0-9]+", asset_norm.lower()) if len(token) >= 4}
+        section_tokens = {token for token in re.findall(r"[a-z0-9]+", section_norm.lower()) if len(token) >= 4}
         if section_norm and section_norm.lower() in asset_norm.lower():
+            section_norm = ""
+        if asset_tokens and section_tokens and len(asset_tokens & section_tokens) >= 1:
             section_norm = ""
         if channel_norm and channel_norm.lower() in asset_norm.lower():
             channel_norm = ""
+        if channel_norm == "homepage comparison section" and ("hero" in asset_norm.lower() or "homepage" in asset_norm.lower()):
+            channel_norm = "homepage"
         phrase = asset_norm
         if section_norm:
             phrase = f"{phrase} in the {section_norm}"
@@ -3751,7 +3972,17 @@ def infer_task_asset(
             phrase = f"{phrase} on the {channel_norm}"
         return phrase
 
-    if explicit_asset:
+    def asset_matches_bucket(asset_text: str, bucket: str) -> bool:
+        lowered = asset_text.lower()
+        if bucket == "pricing_or_offer_move":
+            return not any(token in lowered for token in ("proof block", "proof blocks", "testimonial"))
+        if bucket == "proof_or_trust_move":
+            return any(token in lowered for token in ("proof", "testimonial", "trust"))
+        if bucket == "messaging_or_positioning_move":
+            return not any(token in lowered for token in ("pricing comparison block and onboarding faq",))
+        return True
+
+    if explicit_asset and asset_matches_bucket(explicit_asset, move_bucket):
         return compose_asset_phrase(explicit_asset, explicit_section or "", channel)
     excerpt = strongest_excerpt.lower()
     if move_bucket == "pricing_or_offer_move":
@@ -3762,7 +3993,7 @@ def infer_task_asset(
         if "hero" in channel.lower():
             return f"hero section copy on the {channel}"
         if "homepage" in channel.lower():
-            return channel
+            return "homepage comparison copy"
         return f"comparison section copy on the {channel}"
     if move_bucket == "proof_or_trust_move":
         return f"proof blocks on the {channel}"
