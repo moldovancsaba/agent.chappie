@@ -1222,24 +1222,34 @@ def segment_to_task(
     lowered = segment_text.lower()
     evidence_refs = segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"]
     domain = infer_domain_from_sources(source, fact_chips)
+    detail = extract_action_detail(segment_text)
+    competitor = infer_segment_competitor(segment_text, source)
+    audience = infer_operator_audience(domain, detail)
+    primary_channel = infer_primary_channel(domain, lowered)
+    comparison_channel = "pricing page" if "pricing" in lowered or "onboarding" in lowered else primary_channel
 
     if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
+        competitor_name = competitor or "the current competitor set"
+        timeframe = detail.get("timeframe") or "this week"
         return {
             "rank": 0,
-            "title": "Publish a pricing and onboarding comparison this week before buyers lock in the current competitor frame",
-            "why_now": f"We drafted a pricing segment from your source set: {segment_text}",
-            "expected_advantage": "Improves conversion for active comparison-stage buyers this week by reducing price and onboarding friction versus the market frame already shaping decisions.",
+            "title": f"Publish a {comparison_channel} comparison {timeframe} and add one lower-friction onboarding move before {audience} lock into {competitor_name}'s pricing frame",
+            "why_now": f"We drafted a pricing-pressure segment from your source set: {segment_text}",
+            "expected_advantage": f"Increases conversion for active {audience} {timeframe} by reducing price and onboarding friction versus {competitor_name}'s current commercial frame.",
             "evidence_refs": evidence_refs,
             "task_type": "direct_competitive_move",
             "move_bucket": "pricing_or_offer_move",
         }
     if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
-        channel = "enrollment page" if domain == "academy" else "homepage comparison section"
+        competitor_name = competitor or "the current market leader"
+        offer = detail.get("offer")
+        channel = primary_channel
+        offer_phrase = f" and answer the {offer} claim" if offer else ""
         return {
             "rank": 0,
-            "title": f"Rewrite the {channel} this week to answer the strongest offer and proof pressure before comparison-stage buyers default to the current market leader",
+            "title": f"Rewrite the {channel} this week{offer_phrase} before comparison-stage {audience} default to {competitor_name}",
             "why_now": f"We drafted a buyer-pressure segment from your source set: {segment_text}",
-            "expected_advantage": "Improves conversion for comparison-stage buyers this week by answering the exact low-friction or trust claim competitors are using against you.",
+            "expected_advantage": f"Increases shortlist conversion for comparison-stage {audience} this week by answering the exact low-friction or trust claim {competitor_name} is using against you.",
             "evidence_refs": evidence_refs,
             "task_type": "tactical_response",
             "move_bucket": "messaging_or_positioning_move",
@@ -1255,21 +1265,25 @@ def segment_to_task(
             "move_bucket": "information_request",
         }
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
+        competitor_name = competitor or "the exposed competitor"
+        timeframe = detail.get("timeframe") or "this week"
         return {
             "rank": 0,
-            "title": "Contact the exposed competitor this week and test whether there is a capture opportunity in customers, staff, assets, or distribution",
+            "title": f"Contact {competitor_name} {timeframe} and secure first access to customers, staff, assets, or distribution before the window closes",
             "why_now": f"We drafted an asymmetric opportunity segment from your source set: {segment_text}",
-            "expected_advantage": "Creates near-term revenue or cost advantage this week by moving before a competitor distress or transition signal closes.",
+            "expected_advantage": f"Creates near-term revenue or cost advantage {timeframe} by moving before {competitor_name}'s distress or transition window closes.",
             "evidence_refs": evidence_refs,
             "task_type": "capture_move",
             "move_bucket": "intercept_or_capture_move",
         }
     if segment["importance"] >= 0.7:
+        competitor_name = competitor or "the current market leader"
+        proof_channel = infer_proof_channel(domain, lowered)
         return {
             "rank": 0,
-            "title": "Publish one buyer-facing response this week before the current comparison narrative hardens",
+            "title": f"Add two proof blocks on the {proof_channel} this week so hesitant {audience} do not trust {competitor_name} first",
             "why_now": f"We synthesized a high-importance competitor signal from your source set: {segment_text}",
-            "expected_advantage": "Improves conversion and win rate this week by responding to the strongest buyer pressure we can currently prove.",
+            "expected_advantage": f"Increases conversion and win rate for hesitant {audience} this week by reducing trust friction before {competitor_name} hardens the comparison narrative.",
             "evidence_refs": evidence_refs,
             "task_type": "general_business_value",
             "move_bucket": "proof_or_trust_move" if any(token in lowered for token in ("proof", "testimonial", "integration", "trust")) else "messaging_or_positioning_move",
@@ -1294,8 +1308,8 @@ def build_missing_information_tasks(
             candidates.append(
                 {
                     "rank": 0,
-                    "title": "Pull one live competitor page this week and capture the exact pricing, proof, and offer claims buyers will compare against you",
-                    "why_now": f"The drafter identified a competitor signal that is still too broad for a stronger move: {segment['segment_text']}",
+                    "title": "Capture one live competitor pricing, proof, and offer page this week so we can replace guesswork with the exact claims buyers will compare against you",
+                    "why_now": f"We identified a competitor signal that is still too broad for a stronger move: {segment['segment_text']}",
                     "expected_advantage": f"Improves conversion for active {audience} this week by replacing broad market assumptions with the exact competitor claims now shaping comparison decisions.",
                     "evidence_refs": evidence_refs,
                     "task_type": "information_request",
@@ -1306,8 +1320,8 @@ def build_missing_information_tasks(
             candidates.append(
                 {
                     "rank": 0,
-                    "title": "Publish one stronger proof block this week where buyers hesitate most in the current comparison flow",
-                    "why_now": f"The drafter found a proof signal in the market: {segment['segment_text']}",
+                    "title": f"Add two proof blocks this week on the {infer_proof_channel(domain, segment['segment_text'].lower())} where comparison-stage {audience} hesitate most",
+                    "why_now": f"We found a proof signal in the market: {segment['segment_text']}",
                     "expected_advantage": f"Improves conversion for comparison-stage {audience} this week by reducing trust friction versus the strongest proof language currently visible in the market.",
                     "evidence_refs": evidence_refs,
                     "task_type": "general_business_value",
@@ -1318,8 +1332,8 @@ def build_missing_information_tasks(
             candidates.append(
                 {
                     "rank": 0,
-                    "title": "Ship one simpler pricing or onboarding entry move this week before comparison-stage buyers decide your offer is harder to adopt",
-                    "why_now": f"The drafter found commercial friction in the market picture: {segment['segment_text']}",
+                    "title": f"Ship one simpler pricing or onboarding entry move this week on the {infer_primary_channel(domain, segment['segment_text'].lower())} before comparison-stage {audience} decide your offer is harder to adopt",
+                    "why_now": f"We found commercial friction in the market picture: {segment['segment_text']}",
                     "expected_advantage": f"Improves conversion for active {audience} this week by lowering adoption friction before buyers choose a lower-friction competitor path.",
                     "evidence_refs": evidence_refs,
                     "task_type": "direct_competitive_move",
@@ -1330,8 +1344,8 @@ def build_missing_information_tasks(
             candidates.append(
                 {
                     "rank": 0,
-                    "title": "Publish one operator response this week from the strongest clause in this source instead of leaving it as passive market context",
-                    "why_now": f"The drafter isolated a high-importance market signal in this source that is still sitting below task threshold: {segment['segment_text']}",
+                    "title": f"Turn the strongest validated clause into a live {infer_primary_channel(domain, segment['segment_text'].lower())} response this week instead of leaving it as passive context",
+                    "why_now": f"We isolated a high-importance market signal in this source that is still sitting below task threshold: {segment['segment_text']}",
                     "expected_advantage": "Improves conversion and execution speed this week by converting one validated market observation into a concrete business move before the window closes.",
                     "evidence_refs": evidence_refs,
                     "task_type": "general_business_value",
@@ -1637,6 +1651,47 @@ def normalize_legacy_product_voice_in_segment(segment: dict[str, Any]) -> dict[s
     normalized["segment_text"] = normalize_legacy_product_voice(str(segment.get("segment_text") or ""))
     normalized["title"] = normalize_legacy_product_voice(str(segment.get("title") or ""))
     return normalized
+
+
+def infer_segment_competitor(segment_text: str, source: SourcePackage) -> str | None:
+    candidates: list[str] = []
+    if source.competitor:
+        candidates.append(source.competitor)
+    candidates.extend(extract_named_entities(segment_text))
+    for candidate in candidates:
+        cleaned = clean_entity(candidate)
+        if cleaned:
+            return cleaned
+    return None
+
+
+def infer_operator_audience(domain: str, detail: dict[str, str | None]) -> str:
+    tier = detail.get("tier")
+    if domain == "academy" and tier:
+        return f"{tier} families"
+    if domain == "academy":
+        return "families"
+    return "buyers"
+
+
+def infer_primary_channel(domain: str, lowered_text: str) -> str:
+    if "homepage" in lowered_text or "hero" in lowered_text:
+        return "homepage comparison section"
+    if "pricing" in lowered_text:
+        return "pricing page"
+    if "enrollment" in lowered_text:
+        return "enrollment path"
+    if "sales" in lowered_text or "call" in lowered_text:
+        return "sales script"
+    return "enrollment path" if domain == "academy" else "homepage comparison section"
+
+
+def infer_proof_channel(domain: str, lowered_text: str) -> str:
+    if "pricing" in lowered_text:
+        return "pricing page and comparison section"
+    if "sales" in lowered_text:
+        return "sales script and follow-up email"
+    return "enrollment page and comparison section" if domain == "academy" else "homepage and comparison section"
 
 
 def infer_domain_from_sources(source: SourcePackage, fact_chips: list[dict[str, Any]]) -> str:

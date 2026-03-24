@@ -193,6 +193,9 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertGreaterEqual(sum(task_type != "information_request" for task_type in task_types), 2)
             move_buckets = [task["move_bucket"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
             self.assertGreaterEqual(len(set(move_buckets)), 2)
+            titles = [task["title"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
+            self.assertFalse(any("buyer-facing response" in title.lower() for title in titles))
+            self.assertTrue(any("pricing page" in title.lower() or "homepage" in title.lower() or "enrollment" in title.lower() for title in titles))
 
     def test_task_feedback_regenerates_three_tasks(self) -> None:
         payload = {
@@ -326,6 +329,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             move_buckets = [task["move_bucket"] for task in tasks]
             self.assertEqual(len(tasks), 3)
             self.assertGreaterEqual(len(set(move_buckets)), 3)
+            self.assertEqual(tasks[0]["priority_label"], "critical")
+            self.assertTrue(any("this week" in task["title"].lower() for task in tasks))
 
 
 if __name__ == "__main__":
