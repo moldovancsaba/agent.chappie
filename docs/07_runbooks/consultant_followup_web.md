@@ -117,6 +117,26 @@ This local SQLite database stores:
 - `monitor_state`
 - `managed_sources`
 - `managed_jobs`
+- `task_feedback`
+- `replacement_history`
+
+## Worker service
+
+The private worker must run as a supervised local service, not as a manual terminal process.
+
+- launch agent label: `com.agentchappie.worker`
+- launch agent path: `/Users/chappie/Library/LaunchAgents/com.agentchappie.worker.plist`
+- health check: `curl http://127.0.0.1:8787/health`
+- stdout log: `runtime_status/worker_stdout.log`
+- stderr log: `runtime_status/worker_stderr.log`
+
+Recommended lifecycle:
+
+```bash
+launchctl bootout gui/$(id -u) /Users/chappie/Library/LaunchAgents/com.agentchappie.worker.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) /Users/chappie/Library/LaunchAgents/com.agentchappie.worker.plist
+launchctl kickstart -k gui/$(id -u)/com.agentchappie.worker
+```
 
 ## Vercel deployment notes
 

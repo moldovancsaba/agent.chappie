@@ -200,6 +200,46 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertEqual(len(regenerated), 3)
             self.assertNotEqual(regenerated[0]["title"], first_tasks[0]["title"])
 
+    def test_process_job_payload_can_reuse_same_segment_templates_across_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+
+            for project_id, job_id, source_ref in (
+                ("project_alpha", "job_alpha", "source_alpha"),
+                ("project_beta", "job_beta", "source_beta"),
+            ):
+                payload = {
+                    "job_request": {
+                        "job_id": job_id,
+                        "app_id": "consultant_followup_web",
+                        "project_id": project_id,
+                        "priority_class": "normal",
+                        "job_class": "light",
+                        "submitted_at": "2026-03-24T07:00:00+00:00",
+                        "requested_capability": "followup_task_recommendation",
+                        "input_payload": {
+                            "context_type": "working_document",
+                            "prompt": "Identify competitive signals and return exactly 3 actionable follow-up tasks.",
+                            "artifacts": [{"type": "upload", "ref": source_ref}],
+                        },
+                    },
+                    "source_package": {
+                        "project_id": project_id,
+                        "source_kind": "manual_text",
+                        "project_summary": "managed_on_worker",
+                        "raw_text": (
+                            "Competitive Analysis in the Marketing and SEO Intelligence Market with a Fortitude AI Focus. "
+                            "The document compares packaging models, AI-led positioning, service-led onboarding, "
+                            "customer testimonials, integration claims, trial offers, and buyer objections."
+                        ),
+                        "source_ref": source_ref,
+                    },
+                }
+                result = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+                self.assertEqual(result["job_result"]["status"], "complete")
+                self.assertEqual(len(result["job_result"]["result_payload"]["recommended_tasks"]), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

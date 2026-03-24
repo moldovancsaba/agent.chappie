@@ -198,7 +198,13 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         fetch_knowledge_feedback_rows(source_package.project_id, path=config.local_db_path),
         fact_chips,
     )
-    draft_segments = build_draft_segments(refreshed_sources, aggregated or observations, knowledge_cards, fact_chips)
+    draft_segments = build_draft_segments(
+        source_package.project_id,
+        refreshed_sources,
+        aggregated or observations,
+        knowledge_cards,
+        fact_chips,
+    )
     replace_draft_segments(source_package.project_id, draft_segments, path=config.local_db_path)
     feedback_rows = list_task_feedback_rows(source_package.project_id, path=config.local_db_path)
     result_payload = generate_learning_checklist(
@@ -426,7 +432,13 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
     draft_segments = list_draft_segments(project_id, path=config.local_db_path)
     if not draft_segments and (source_rows or observation_rows or knowledge_cards or fact_chips):
-        draft_segments = build_draft_segments(source_rows, observation_rows, knowledge_cards, fact_chips)
+        draft_segments = build_draft_segments(
+            project_id,
+            source_rows,
+            observation_rows,
+            knowledge_cards,
+            fact_chips,
+        )
         replace_draft_segments(project_id, draft_segments, path=config.local_db_path)
     source_cards = build_ingested_source_cards(source_rows, observation_rows, knowledge_cards)
     competitive_snapshot = build_competitive_snapshot(knowledge_cards, observation_rows, knowledge_rows)
@@ -519,7 +531,13 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
     knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
     draft_segments = list_draft_segments(project_id, path=config.local_db_path)
     if not draft_segments:
-        draft_segments = build_draft_segments(source_rows, observation_rows, knowledge_cards, fact_chips)
+        draft_segments = build_draft_segments(
+            project_id,
+            source_rows,
+            observation_rows,
+            knowledge_cards,
+            fact_chips,
+        )
         replace_draft_segments(project_id, draft_segments, path=config.local_db_path)
 
     seed_source = SourcePackage(
@@ -798,6 +816,7 @@ def build_knowledge_cards(
 
 
 def build_draft_segments(
+    project_id: str,
     source_rows: list[dict[str, Any]],
     observation_rows: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
@@ -820,9 +839,10 @@ def build_draft_segments(
         if key in seen:
             return
         seen.add(key)
+        namespaced_segment_id = f"{project_id}::{segment_id}"
         segments.append(
             {
-                "segment_id": segment_id,
+                "segment_id": namespaced_segment_id,
                 "segment_kind": segment_kind,
                 "title": title,
                 "segment_text": segment_text,
