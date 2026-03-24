@@ -37,6 +37,10 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
         self.assertIsNone(clean_entity("Rewrite"))
         self.assertIsNone(clean_entity("Publish"))
         self.assertIsNone(clean_entity("FAQ"))
+        self.assertIsNone(clean_entity("Notes"))
+        self.assertIsNone(clean_entity("Its"))
+        self.assertIsNone(clean_entity("Trial"))
+        self.assertEqual(clean_entity("Fortitude AI Focus"), "Fortitude AI")
 
     def test_extract_action_detail_captures_channel_section_asset_and_claim(self) -> None:
         detail = extract_action_detail(
@@ -750,6 +754,49 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertGreaterEqual(len(set(move_buckets)), 3)
             self.assertEqual(tasks[0]["priority_label"], "critical")
             self.assertTrue(any("this week" in task["title"].lower() for task in tasks))
+
+    def test_pressure_cases_do_not_leak_fake_competitors_or_default_to_request_third_task(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_pressure_regression",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_pressure_regression",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-24T18:00:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Turn these messy notes into the next three useful business moves.",
+                    "artifacts": [{"type": "upload", "ref": "source_pressure_regression"}],
+                },
+            },
+            "source_package": {
+                "project_id": "project_pressure_regression",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "Notes: buyers keep asking if setup is heavy, two prospects mentioned Fortitude AI's free trial, "
+                    "pricing page doesn't answer onboarding objections, homepage proof is weak, sales calls keep rebuilding the same comparison manually."
+                ),
+                "source_ref": "source_pressure_regression",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            result = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+            tasks = result["job_result"]["result_payload"]["recommended_tasks"]
+            combined = " ".join(
+                [task["title"] + " " + task["why_now"] + " " + task["expected_advantage"] for task in tasks]
+            ).lower()
+
+            self.assertNotIn("notes's", combined)
+            self.assertNotIn("its first", combined)
+            self.assertNotIn("trial's trial", combined)
+            self.assertNotIn("fortitude ai focus", combined)
+            self.assertGreaterEqual(sum(task["task_type"] != "information_request" for task in tasks), 2)
+            self.assertNotEqual(tasks[2]["task_type"], "information_request")
 
 
 if __name__ == "__main__":

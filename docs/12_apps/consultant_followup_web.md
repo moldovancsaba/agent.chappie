@@ -246,6 +246,23 @@ npm install
 npm run dev
 ```
 
+## Pressure test harness
+
+The repo now includes a repeatable Phase 7 pressure-test harness:
+
+- script: `scripts/pressure_test_worker.py`
+- output:
+  - `runtime_status/pressure_tests/phase7_pressure_report.md`
+  - `runtime_status/pressure_tests/phase7_pressure_report.json`
+
+The harness runs multiple messy worker cases and scores:
+
+- distinctness across the 3 tasks
+- rank-1 dominance
+- generic wording leaks
+- fallback third-task behavior
+- repeated awkward asset phrasing
+
 ## Vercel deployment target
 
 - deploy only `apps/consultant-followup-web`

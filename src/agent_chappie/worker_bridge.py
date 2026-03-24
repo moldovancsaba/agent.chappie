@@ -1775,6 +1775,7 @@ def build_missing_information_tasks(
     strongest = draft_segments[:3]
     domain = infer_domain_from_sources(source, fact_chips)
     audience = "buyers" if domain == "general" else "families"
+    strongest_competitor = normalize_competitor_fact(source.competitor or "") or "the strongest visible competitor"
 
     for segment in strongest:
         evidence_refs = segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"]
@@ -1851,6 +1852,25 @@ def build_missing_information_tasks(
                 "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
                 "task_type": "information_request",
                 "move_bucket": "information_request",
+            }
+        )
+
+    if has_actionable_candidates and len(candidates) < 3:
+        anchor_segment = strongest[0] if strongest else None
+        channel = infer_primary_channel(domain, (anchor_segment["segment_text"] if anchor_segment else source.raw_text).lower())
+        candidates.append(
+            {
+                "rank": 0,
+                "title": f"Add one concrete trust or onboarding answer on the {channel} this week before {strongest_competitor} hardens buyer expectations",
+                "why_now": (
+                    f"We already have enough visible pressure to act, but one more response move is still missing: {anchor_segment['segment_text']}"
+                    if anchor_segment
+                    else "We already have enough visible pressure to act, but one more response move is still missing from the current checklist."
+                ),
+                "expected_advantage": f"Improves conversion for active {audience} this week by adding one more visible comparison response before buyers lock into {strongest_competitor}'s current frame.",
+                "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
+                "task_type": "exploratory_action",
+                "move_bucket": "proof_or_trust_move",
             }
         )
 
@@ -3713,10 +3733,26 @@ def infer_task_asset(
     explicit_asset: str | None = None,
     explicit_section: str | None = None,
 ) -> str:
+    def clean_phrase(value: str | None) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip(" .:-")).strip()
+
+    def compose_asset_phrase(asset_text: str, section_text: str, channel_text: str) -> str:
+        asset_norm = clean_phrase(asset_text)
+        section_norm = clean_phrase(section_text)
+        channel_norm = clean_phrase(channel_text)
+        if section_norm and section_norm.lower() in asset_norm.lower():
+            section_norm = ""
+        if channel_norm and channel_norm.lower() in asset_norm.lower():
+            channel_norm = ""
+        phrase = asset_norm
+        if section_norm:
+            phrase = f"{phrase} in the {section_norm}"
+        if channel_norm:
+            phrase = f"{phrase} on the {channel_norm}"
+        return phrase
+
     if explicit_asset:
-        if explicit_section and explicit_section.lower() not in explicit_asset.lower():
-            return f"{explicit_asset} in the {explicit_section} on the {channel}"
-        return f"{explicit_asset} on the {channel}"
+        return compose_asset_phrase(explicit_asset, explicit_section or "", channel)
     excerpt = strongest_excerpt.lower()
     if move_bucket == "pricing_or_offer_move":
         if "faq" in excerpt or "onboarding" in excerpt:
@@ -3726,10 +3762,10 @@ def infer_task_asset(
         if "hero" in channel.lower():
             return f"hero section copy on the {channel}"
         if "homepage" in channel.lower():
-            return f"homepage comparison section on the {channel}"
+            return channel
         return f"comparison section copy on the {channel}"
     if move_bucket == "proof_or_trust_move":
-        return f"proof block set on the {channel}"
+        return f"proof blocks on the {channel}"
     if move_bucket == "intercept_or_capture_move":
         return "direct outreach message and follow-up ask"
     if move_bucket == "information_request":

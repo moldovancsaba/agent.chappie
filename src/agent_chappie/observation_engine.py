@@ -56,14 +56,18 @@ GENERIC_ENTITY_WORDS = {
     "Add",
     "Check",
     "FAQ",
+    "Focus",
     "The",
     "Contact",
     "Launch",
+    "Its",
+    "Notes",
     "Our",
     "Pull",
     "Publish",
     "Request",
     "Rewrite",
+    "Trial",
     "Current",
     "Sales",
     "Context",
@@ -88,13 +92,16 @@ ENTITY_NOISE_WORDS = {
     "content",
     "contact",
     "document",
+    "focus",
     "families",
     "industry",
     "intelligence",
+    "its",
     "launch",
     "market",
     "marketing",
     "memo",
+    "notes",
     "packaging",
     "platforms",
     "pricing",
@@ -108,6 +115,7 @@ ENTITY_NOISE_WORDS = {
     "software",
     "source",
     "strategy",
+    "trial",
     "vendors",
 }
 REGION_TERMS = ("cluster", "region", "county", "city", "area", "district", "zone")
@@ -1236,6 +1244,14 @@ def first_viable_entity(candidates: list[str]) -> str | None:
 
 def clean_entity(value: str) -> str | None:
     candidate = " ".join(value.strip().split())
+    if not candidate or len(candidate) < 3:
+        return None
+    candidate = re.sub(
+        r"\b(Focus|Analysis|Market|Intelligence|Report|Guide|Study|Platform|Software|Notes)\b$",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip(" .:-")
     if not candidate or len(candidate) < 3:
         return None
     if re.fullmatch(r"[A-Z]?\d{1,2}|U\d{1,2}", candidate):

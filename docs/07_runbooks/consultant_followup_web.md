@@ -178,6 +178,30 @@ launchctl kickstart -k gui/$(id -u)/com.agentchappie.worker
 - supported document uploads are currently: `.txt`, `.md`, `.csv`, `.pdf`, `.docx`
 - unsupported document or media formats should be rejected honestly, not shown as parsed
 
+## Pressure testing
+
+Phase 7 pressure testing is now a first-class runbook step.
+
+Run:
+
+```bash
+cd /Users/chappie/Projects/Agent.Chappie
+source .venv/bin/activate
+python scripts/pressure_test_worker.py
+```
+
+Artifacts are written to:
+
+- `runtime_status/pressure_tests/phase7_pressure_report.md`
+- `runtime_status/pressure_tests/phase7_pressure_report.json`
+
+The report must be used to identify:
+
+- strongest cases
+- weakest cases
+- repeated task-quality failures
+- where the third task is still falling back to an information request
+
 ## Sources & Jobs behavior
 
 The app now treats `Sources & Jobs` as a management surface:
