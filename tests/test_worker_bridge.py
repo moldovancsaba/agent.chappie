@@ -191,6 +191,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             task_types = [task["task_type"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
             self.assertLessEqual(task_types.count("information_request"), 1)
             self.assertGreaterEqual(sum(task_type != "information_request" for task_type in task_types), 2)
+            move_buckets = [task["move_bucket"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
+            self.assertGreaterEqual(len(set(move_buckets)), 2)
 
     def test_task_feedback_regenerates_three_tasks(self) -> None:
         payload = {
@@ -286,6 +288,44 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 result = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
                 self.assertEqual(result["job_result"]["status"], "complete")
                 self.assertEqual(len(result["job_result"]["result_payload"]["recommended_tasks"]), 3)
+
+    def test_judge_prefers_distinct_move_buckets(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_diverse_buckets",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_diverse_buckets",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-24T07:00:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Identify competitive signals and return exactly 3 actionable follow-up tasks.",
+                    "artifacts": [{"type": "upload", "ref": "source_diverse_buckets"}],
+                },
+            },
+            "source_package": {
+                "project_id": "project_diverse_buckets",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "FlowOps raised onboarding and pricing friction in the SEO market. "
+                    "Competitors are using testimonials, proof blocks, integration claims, and comparison messaging. "
+                    "One exposed operator is reducing staff and may sell assets. "
+                    "Trial-led acquisition pressure is rising."
+                ),
+                "source_ref": "source_diverse_buckets",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            result = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+            tasks = result["job_result"]["result_payload"]["recommended_tasks"]
+            move_buckets = [task["move_bucket"] for task in tasks]
+            self.assertEqual(len(tasks), 3)
+            self.assertGreaterEqual(len(set(move_buckets)), 3)
 
 
 if __name__ == "__main__":

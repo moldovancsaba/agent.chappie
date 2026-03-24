@@ -1230,6 +1230,7 @@ def segment_to_task(
             "expected_advantage": "Improves conversion for active comparison-stage buyers this week by reducing price and onboarding friction versus the market frame already shaping decisions.",
             "evidence_refs": evidence_refs,
             "task_type": "direct_competitive_move",
+            "move_bucket": "pricing_or_offer_move",
         }
     if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "proof", "testimonial", "integration")):
         channel = "enrollment page" if domain == "academy" else "homepage comparison section"
@@ -1240,6 +1241,7 @@ def segment_to_task(
             "expected_advantage": "Improves conversion for comparison-stage buyers this week by answering the exact low-friction or trust claim competitors are using against you.",
             "evidence_refs": evidence_refs,
             "task_type": "tactical_response",
+            "move_bucket": "messaging_or_positioning_move",
         }
     if segment["segment_kind"] in {"open_questions", "timing"} or any(token in lowered for token in ("region", "unknown", "need", "add one source", "gap", "confirm")):
         return {
@@ -1249,6 +1251,7 @@ def segment_to_task(
             "expected_advantage": "Improves conversion and win rate this week by resolving the missing competitor, pricing, or buyer-pressure fact that is limiting the next best action.",
             "evidence_refs": evidence_refs,
             "task_type": "information_request",
+            "move_bucket": "information_request",
         }
     if segment["segment_kind"] in {"opportunity", "closure", "asset_sale"} or any(token in lowered for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
         return {
@@ -1258,6 +1261,7 @@ def segment_to_task(
             "expected_advantage": "Creates near-term revenue or cost advantage this week by moving before a competitor distress or transition signal closes.",
             "evidence_refs": evidence_refs,
             "task_type": "capture_move",
+            "move_bucket": "intercept_or_capture_move",
         }
     if segment["importance"] >= 0.7:
         return {
@@ -1267,6 +1271,7 @@ def segment_to_task(
             "expected_advantage": "Improves conversion and win rate this week by responding to the strongest buyer pressure the worker can currently prove.",
             "evidence_refs": evidence_refs,
             "task_type": "general_business_value",
+            "move_bucket": "proof_or_trust_move" if any(token in lowered for token in ("proof", "testimonial", "integration", "trust")) else "messaging_or_positioning_move",
         }
     return None
 
@@ -1293,6 +1298,7 @@ def build_missing_information_tasks(
                     "expected_advantage": f"Improves conversion for active {audience} this week by replacing broad market assumptions with the exact competitor claims now shaping comparison decisions.",
                     "evidence_refs": evidence_refs,
                     "task_type": "information_request",
+                    "move_bucket": "information_request",
                 }
             )
         elif segment["segment_kind"] == "proof":
@@ -1304,6 +1310,7 @@ def build_missing_information_tasks(
                     "expected_advantage": f"Improves conversion for comparison-stage {audience} this week by reducing trust friction versus the strongest proof language currently visible in the market.",
                     "evidence_refs": evidence_refs,
                     "task_type": "general_business_value",
+                    "move_bucket": "proof_or_trust_move",
                 }
             )
         elif segment["segment_kind"] in {"pricing", "pricing_packaging"}:
@@ -1315,6 +1322,7 @@ def build_missing_information_tasks(
                     "expected_advantage": f"Improves conversion for active {audience} this week by lowering adoption friction before buyers choose a lower-friction competitor path.",
                     "evidence_refs": evidence_refs,
                     "task_type": "direct_competitive_move",
+                    "move_bucket": "pricing_or_offer_move",
                 }
             )
         elif segment["segment_kind"] == "source_clause":
@@ -1326,6 +1334,7 @@ def build_missing_information_tasks(
                     "expected_advantage": "Improves conversion and execution speed this week by converting one validated market observation into a concrete business move before the window closes.",
                     "evidence_refs": evidence_refs,
                     "task_type": "general_business_value",
+                    "move_bucket": "messaging_or_positioning_move",
                 }
             )
 
@@ -1340,6 +1349,7 @@ def build_missing_information_tasks(
                 "expected_advantage": "Improves win rate and conversion next week by filling the evidence gap that is currently preventing a stronger competitive response.",
                 "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
                 "task_type": "information_request",
+                "move_bucket": "information_request",
             }
         )
     elif not has_actionable_candidates and info_request_count == 0:
@@ -1351,6 +1361,7 @@ def build_missing_information_tasks(
                 "expected_advantage": "Improves task quality this week by adding the exact missing evidence needed to convert market context into a stronger business move.",
                 "evidence_refs": [f"segment::{segment['segment_id']}" for segment in strongest[:2]] or [source.source_ref],
                 "task_type": "information_request",
+                "move_bucket": "information_request",
             }
         )
 
@@ -1391,6 +1402,7 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
                 "expected_advantage": str(row.get("original_expected_advantage") or "Improves conversion and execution speed this week by using the operator-corrected action instead of repeating a weaker task template."),
                 "evidence_refs": [f"feedback::{row['feedback_id']}"],
                 "task_type": "operator_corrected",
+                "move_bucket": "operator_corrected",
             },
         )
 
@@ -1400,15 +1412,18 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
     ) else 3
     filtered: list[dict[str, Any]] = []
     info_request_seen = 0
-    for task in sorted(judged, key=lambda task: task_priority_score(task), reverse=True):
+    sorted_tasks = sorted(judged, key=lambda task: task_priority_score(task), reverse=True)
+    for task in sorted_tasks:
         if task.get("task_type") == "information_request":
             if info_request_seen >= info_request_limit:
                 continue
             info_request_seen += 1
         filtered.append(task)
 
+    final_tasks = select_diverse_tasks(filtered, target_count=3)
+
     now = datetime.now(UTC)
-    for index, task in enumerate(filtered[:3], start=1):
+    for index, task in enumerate(final_tasks[:3], start=1):
         task["rank"] = index
         task["is_next_best_action"] = index == 1
         task["priority_label"] = "critical" if index == 1 else "high" if index == 2 else "normal"
@@ -1421,7 +1436,7 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
         )
         best_before_days = 2 if index == 1 else 4 if index == 2 else 6
         task["best_before"] = (now + timedelta(days=best_before_days)).date().isoformat()
-    return filtered[:3]
+    return final_tasks[:3]
 
 
 def generate_guaranteed_task_triplet(
@@ -1442,6 +1457,7 @@ def generate_guaranteed_task_triplet(
                     "expected_advantage": "Improves conversion and task quality this week by turning a partial market picture into an evidence-backed move before the next decision window closes.",
                     "evidence_refs": segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"],
                     "task_type": "exploratory_action",
+                    "move_bucket": "information_request",
                 }
             )
     while len(fallback_tasks) < 3:
@@ -1453,6 +1469,7 @@ def generate_guaranteed_task_triplet(
                 "expected_advantage": "Improves conversion and win rate next week by replacing missing evidence with one concrete competitor signal the worker can act on.",
                 "evidence_refs": [source.source_ref],
                 "task_type": "exploratory_action",
+                "move_bucket": "information_request",
             }
         )
     judged = judge_tasks(fallback_tasks[:6], source, feedback_rows)
@@ -1541,6 +1558,57 @@ def task_priority_score(task: dict[str, Any]) -> int:
     if any(token in title or token in why for token in ("before", "closure", "capture", "pricing", "trial", "offer")):
         score += 3
     return score
+
+
+def task_move_bucket(task: dict[str, Any]) -> str:
+    bucket = str(task.get("move_bucket") or "").strip()
+    if bucket:
+        return bucket
+
+    task_type = str(task.get("task_type") or "")
+    if task_type == "capture_move":
+        return "intercept_or_capture_move"
+    if task_type == "direct_competitive_move":
+        return "pricing_or_offer_move"
+    if task_type in {"tactical_response", "competitive_response"}:
+        return "messaging_or_positioning_move"
+    if task_type == "information_request":
+        return "information_request"
+    if task_type == "operator_corrected":
+        return "operator_corrected"
+
+    text = f"{task.get('title', '')} {task.get('why_now', '')}".lower()
+    if any(token in text for token in ("pricing", "price", "offer", "trial", "discount", "onboarding")):
+        return "pricing_or_offer_move"
+    if any(token in text for token in ("capture", "asset", "closure", "staff", "distribution")):
+        return "intercept_or_capture_move"
+    if any(token in text for token in ("proof", "testimonial", "trust", "integration")):
+        return "proof_or_trust_move"
+    if any(token in text for token in ("partner", "referral", "channel", "distribution")):
+        return "partnership_or_distribution_move"
+    return "messaging_or_positioning_move"
+
+
+def select_diverse_tasks(tasks: list[dict[str, Any]], target_count: int) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_buckets: set[str] = set()
+
+    for task in tasks:
+        bucket = task_move_bucket(task)
+        if bucket in seen_buckets:
+            continue
+        selected.append(task)
+        seen_buckets.add(bucket)
+        if len(selected) >= target_count:
+            return selected
+
+    for task in tasks:
+        if task in selected:
+            continue
+        selected.append(task)
+        if len(selected) >= target_count:
+            break
+    return selected
 
 
 def normalize_task_key(value: str) -> str:
