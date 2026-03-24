@@ -24,6 +24,7 @@ from agent_chappie.local_store import (
     initialize_local_store,
     insert_observations,
     list_draft_segments,
+    list_task_feedback_rows,
     list_observations_for_source,
     list_managed_jobs,
     list_managed_sources,
@@ -32,6 +33,8 @@ from agent_chappie.local_store import (
     list_recent_source_snapshots,
     replace_draft_segments,
     save_source_snapshot,
+    save_replacement_history,
+    save_task_feedback_rows,
     update_managed_job,
     update_managed_source,
     update_monitor_state,
@@ -197,9 +200,15 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     )
     draft_segments = build_draft_segments(refreshed_sources, aggregated or observations, knowledge_cards, fact_chips)
     replace_draft_segments(source_package.project_id, draft_segments, path=config.local_db_path)
-    result_payload = generate_recommended_tasks(source_package, aggregated or observations)
-    if "recommended_tasks" not in result_payload:
-        result_payload = write_tasks_from_segments(source_package, aggregated or observations, draft_segments, knowledge_cards, fact_chips)
+    feedback_rows = list_task_feedback_rows(source_package.project_id, path=config.local_db_path)
+    result_payload = generate_learning_checklist(
+        source_package,
+        aggregated or observations,
+        draft_segments,
+        knowledge_cards,
+        fact_chips,
+        feedback_rows,
+    )
     used_source_refs: set[str] = set()
 
     if "recommended_tasks" in result_payload:
@@ -218,32 +227,17 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
             job_result = validate_job_result(result_document)
         except ValidationError:
             repaired_payload = repair_recommended_tasks(source_package, observations, result_payload)
-            if repaired_payload is None:
-                fallback_payload = write_tasks_from_segments(
+            if repaired_payload is not None:
+                result_document["result_payload"] = repaired_payload
+                job_result = validate_job_result(result_document)
+            else:
+                fallback_payload = generate_guaranteed_task_triplet(
                     source_package,
                     aggregated or observations,
                     draft_segments,
-                    knowledge_cards,
-                    fact_chips,
+                    feedback_rows,
                 )
-                if "recommended_tasks" in fallback_payload:
-                    result_document["result_payload"] = fallback_payload
-                    job_result = validate_job_result(result_document)
-                else:
-                    job_result = validate_job_result(
-                        {
-                            "job_id": job_request["job_id"],
-                            "app_id": job_request["app_id"],
-                            "project_id": job_request["project_id"],
-                            "status": "blocked",
-                            "completed_at": utc_now_iso(),
-                            "result_payload": {
-                                "reason": "insufficient_output_quality",
-                            },
-                        }
-                    )
-            else:
-                result_document["result_payload"] = repaired_payload
+                result_document["result_payload"] = fallback_payload
                 job_result = validate_job_result(result_document)
         if job_result["status"] == "complete" and "recommended_tasks" in job_result["result_payload"]:
             evidence_refs = {
@@ -257,24 +251,10 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
                 for evidence_ref in evidence_refs
                 if evidence_ref in observation_lookup
             }
-    else:
-        job_result = validate_job_result(
-            {
-                "job_id": job_request["job_id"],
-                "app_id": job_request["app_id"],
-                "project_id": job_request["project_id"],
-                "status": "blocked",
-                "completed_at": utc_now_iso(),
-                "result_payload": result_payload,
-            }
-        )
-
     processing_summary = (
         job_result["result_payload"].get("summary")
         if job_result["status"] == "complete" and isinstance(job_result["result_payload"], dict)
-        else "Knowledge extracted; no strong checklist action yet."
-        if knowledge_cards
-        else job_result["result_payload"].get("reason", "Source processed")
+        else "Source processed"
     )
     linked_tasks_by_source = build_linked_tasks_by_source(job_result, aggregated or observations)
     source_insights = build_source_insights(
@@ -397,6 +377,9 @@ def process_management_request(
         )
         return build_workspace_payload(project_id, config), HTTPStatus.OK
 
+    if resource == "task-feedback" and method == "POST" and len(parts) == 3:
+        return process_task_feedback(project_id, payload, config), HTTPStatus.OK
+
     return {"error": "not_found"}, HTTPStatus.NOT_FOUND
 
 
@@ -502,6 +485,82 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
         "managed_sources": list_managed_sources(project_id, path=config.local_db_path),
         "managed_jobs": list_managed_jobs(project_id, path=config.local_db_path),
     }
+
+
+def process_task_feedback(project_id: str, payload: dict[str, Any], config: WorkerBridgeConfig) -> dict[str, Any]:
+    job_id = str(payload.get("job_id") or "")
+    feedback_items = payload.get("task_feedback_items") or []
+    if not job_id or not isinstance(feedback_items, list) or not feedback_items:
+        raise ValueError("Task feedback requires a job id and at least one feedback item.")
+
+    rows = []
+    for index, item in enumerate(feedback_items):
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "feedback_id": str(item.get("feedback_id") or f"task_feedback_{project_id}_{index+1}_{int(time.time() * 1000)}"),
+                "task_id": item.get("task_id") or item.get("rank"),
+                "original_title": str(item.get("original_title") or ""),
+                "original_expected_advantage": item.get("original_expected_advantage"),
+                "feedback_type": str(item.get("feedback_type") or "commented"),
+                "feedback_comment": item.get("feedback_comment"),
+                "adjusted_text": item.get("adjusted_text"),
+                "replacement_generated": True,
+            }
+        )
+    save_task_feedback_rows(project_id, job_id, rows, path=config.local_db_path)
+
+    source_rows = list_recent_source_snapshots(project_id, path=config.local_db_path)
+    observation_rows = list_recent_observations(project_id, path=config.local_db_path)
+    knowledge_rows = fetch_knowledge_rows(project_id, path=config.local_db_path)
+    knowledge_feedback_rows = fetch_knowledge_feedback_rows(project_id, path=config.local_db_path)
+    fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
+    knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips)
+    draft_segments = list_draft_segments(project_id, path=config.local_db_path)
+    if not draft_segments:
+        draft_segments = build_draft_segments(source_rows, observation_rows, knowledge_cards, fact_chips)
+        replace_draft_segments(project_id, draft_segments, path=config.local_db_path)
+
+    seed_source = SourcePackage(
+        project_id=project_id,
+        source_kind=source_rows[0]["source_kind"] if source_rows else "manual_text",
+        project_summary=source_rows[0]["project_summary"] if source_rows else "managed_on_worker",
+        raw_text=source_rows[0]["raw_text"] if source_rows else "Feedback-driven regeneration",
+        source_ref=source_rows[0]["source_ref"] if source_rows else f"feedback_source_{project_id}",
+        competitor=source_rows[0].get("competitor") if source_rows else None,
+        region=source_rows[0].get("region") if source_rows else None,
+    )
+    feedback_rows = list_task_feedback_rows(project_id, path=config.local_db_path)
+    result_payload = generate_learning_checklist(
+        seed_source,
+        observation_rows,
+        draft_segments,
+        knowledge_cards,
+        fact_chips,
+        feedback_rows,
+    )
+    result_document = validate_job_result(
+        {
+            "job_id": job_id,
+            "app_id": "consultant_followup_web",
+            "project_id": project_id,
+            "status": "complete",
+            "completed_at": utc_now_iso(),
+            "result_payload": result_payload,
+            "decision_summary": {"route": "proceed", "confidence": 0.74},
+        }
+    )
+    declined_rows = [row for row in rows if row["feedback_type"] in {"declined", "commented"}]
+    for row, task in zip(declined_rows, result_document["result_payload"]["recommended_tasks"], strict=False):
+        save_replacement_history(
+            project_id=project_id,
+            prior_task_title=row["original_title"],
+            replacement_title=task["title"],
+            source_feedback_id=row["feedback_id"],
+            path=config.local_db_path,
+        )
+    return {"job_result": result_document, "workspace": build_workspace_payload(project_id, config)}
 
 
 def reprocess_source_snapshot(project_id: str, source_ref: str, config: WorkerBridgeConfig) -> None:
@@ -852,6 +911,7 @@ def write_tasks_from_segments(
     draft_segments: list[dict[str, Any]],
     knowledge_cards: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
+    feedback_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     candidates: list[dict[str, Any]] = []
     for segment in draft_segments:
@@ -862,7 +922,7 @@ def write_tasks_from_segments(
     if len(candidates) < 3:
         candidates.extend(build_missing_information_tasks(source, draft_segments, fact_chips))
 
-    judged = judge_tasks(candidates[:9], source)
+    judged = judge_tasks(candidates[:12], source, feedback_rows or [])
     if not judged:
         return {
             "reason": "The worker could not derive three distinct, high-confidence actions from the supplied evidence.",
@@ -995,15 +1055,42 @@ def build_missing_information_tasks(
     return candidates
 
 
-def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage) -> list[dict[str, Any]]:
+def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    declined_keys = {
+        normalize_task_key(str(row["original_title"]))
+        for row in feedback_rows
+        if row.get("feedback_type") in {"declined", "commented"}
+    }
     seen: set[str] = set()
     judged: list[dict[str, Any]] = []
     for task in tasks:
         key = normalize_task_key(task["title"])
         if key in seen:
             continue
+        if key in declined_keys:
+            continue
         seen.add(key)
         judged.append(task)
+
+    for row in feedback_rows:
+        adjusted_text = str(row.get("adjusted_text") or "").strip()
+        if row.get("feedback_type") != "edited" or not adjusted_text:
+            continue
+        key = normalize_task_key(adjusted_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        judged.insert(
+            0,
+            {
+                "rank": 0,
+                "title": adjusted_text,
+                "why_now": "The operator previously edited a similar task, so the judge is carrying forward that correction as a stronger replacement.",
+                "expected_advantage": str(row.get("original_expected_advantage") or "Improves conversion and execution speed this week by using the operator-corrected action instead of repeating a weaker task template."),
+                "evidence_refs": [f"feedback::{row['feedback_id']}"],
+                "task_type": "operator_corrected",
+            },
+        )
 
     judged.sort(key=lambda task: task_priority_score(task), reverse=True)
     now = datetime.now(UTC)
@@ -1011,9 +1098,113 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage) -> list[dict
         task["rank"] = index
         task["is_next_best_action"] = index == 1
         task["priority_label"] = "critical" if index == 1 else "high" if index == 2 else "normal"
+        task["confidence_class"] = (
+            "exploratory_action"
+            if task.get("task_type") == "exploratory_action"
+            else "strong_action"
+            if index == 1
+            else "moderate_action"
+        )
         best_before_days = 2 if index == 1 else 4 if index == 2 else 6
         task["best_before"] = (now + timedelta(days=best_before_days)).date().isoformat()
     return judged[:3]
+
+
+def generate_guaranteed_task_triplet(
+    source: SourcePackage,
+    observations: list[dict[str, Any]],
+    draft_segments: list[dict[str, Any]],
+    feedback_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    strongest = draft_segments[:3]
+    fallback_tasks: list[dict[str, Any]] = []
+    if strongest:
+        for segment in strongest:
+            fallback_tasks.append(
+                {
+                    "rank": 0,
+                    "title": f"Request one sharper source this week that resolves the strongest {humanize_fact_category(str(segment['segment_kind']).replace('open_questions', 'market'))} gap before the next buyer decision window",
+                    "why_now": f"The worker only has partial evidence from this source set, and the strongest drafted segment is still below confident-action threshold: {segment['segment_text']}",
+                    "expected_advantage": "Improves conversion and task quality this week by turning a partial market picture into an evidence-backed move before the next decision window closes.",
+                    "evidence_refs": segment.get("evidence_refs") or [f"segment::{segment['segment_id']}"],
+                    "task_type": "exploratory_action",
+                }
+            )
+    while len(fallback_tasks) < 3:
+        fallback_tasks.append(
+            {
+                "rank": 0,
+                "title": "Pull one more competitor proof, pricing, or offer source this week and force the next checklist toward a stronger move",
+                "why_now": "The current evidence is still too thin for a stronger action, so the checklist is using exploratory pressure instead of going silent.",
+                "expected_advantage": "Improves conversion and win rate next week by replacing missing evidence with one concrete competitor signal the worker can act on.",
+                "evidence_refs": [source.source_ref],
+                "task_type": "exploratory_action",
+            }
+        )
+    judged = judge_tasks(fallback_tasks[:6], source, feedback_rows)
+    return {
+        "recommended_tasks": judged[:3],
+        "summary": "Three exploratory or moderate actions were emitted because the product policy forbids an empty checklist.",
+    }
+
+
+def generate_learning_checklist(
+    source_package: SourcePackage,
+    observations: list[dict[str, Any]],
+    draft_segments: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
+    feedback_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    result_payload = generate_recommended_tasks(source_package, observations)
+    if "recommended_tasks" in result_payload:
+        try:
+            validate_job_result(
+                {
+                    "job_id": "precheck",
+                    "app_id": "worker",
+                    "project_id": source_package.project_id,
+                    "status": "complete",
+                    "completed_at": utc_now_iso(),
+                    "result_payload": result_payload,
+                }
+            )
+            return result_payload
+        except ValidationError:
+            repaired_payload = repair_recommended_tasks(source_package, observations, result_payload)
+            if repaired_payload is not None:
+                return repaired_payload
+
+    segment_payload = write_tasks_from_segments(
+        source_package,
+        observations,
+        draft_segments,
+        knowledge_cards,
+        fact_chips,
+        feedback_rows,
+    )
+    if "recommended_tasks" in segment_payload:
+        try:
+            validate_job_result(
+                {
+                    "job_id": "segmentcheck",
+                    "app_id": "worker",
+                    "project_id": source_package.project_id,
+                    "status": "complete",
+                    "completed_at": utc_now_iso(),
+                    "result_payload": segment_payload,
+                }
+            )
+            return segment_payload
+        except ValidationError:
+            pass
+
+    return generate_guaranteed_task_triplet(
+        source_package,
+        observations,
+        draft_segments,
+        feedback_rows,
+    )
 
 
 def task_priority_score(task: dict[str, Any]) -> int:

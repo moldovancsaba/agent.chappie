@@ -352,6 +352,26 @@ function buildFeedbackPayload(tasks: RecommendedTask[], decisions: Record<number
   );
 }
 
+function buildTaskFeedbackItems(tasks: RecommendedTask[], decisions: Record<number, TaskDecision>) {
+  return tasks.flatMap((task) => {
+    const decision = decisions[task.rank];
+    if (!decision?.status) {
+      return [];
+    }
+    return [
+      {
+        feedback_id: generateId("task_feedback"),
+        rank: task.rank,
+        original_title: task.title,
+        original_expected_advantage: task.expected_advantage,
+        feedback_type: decision.status === "edited" ? "edited" : decision.status,
+        adjusted_text: decision.status === "edited" ? decision.adjustedText.trim() || task.title : undefined,
+        feedback_comment: "",
+      },
+    ];
+  });
+}
+
 function allTasksDecided(tasks: RecommendedTask[], decisions: Record<number, TaskDecision>) {
   return tasks.every((task) => Boolean(decisions[task.rank]?.status));
 }
@@ -656,6 +676,7 @@ export function DemoWorkspace() {
         submitted_at: new Date().toISOString(),
         user_action: fallbackAction,
         feedback_payload: feedbackPayload,
+        task_feedback_items: buildTaskFeedbackItems(jobResult.result_payload.recommended_tasks, taskDecisions),
         actor_id: `anonymous:${sessionId}`,
         linked_result_status: jobResult.status,
       });
@@ -670,7 +691,26 @@ export function DemoWorkspace() {
         throw new Error(body.detail ?? "The feedback payload could not be saved.");
       }
 
-      setFeedbackStatus("Thanks. Your response has been captured so future recommendations can improve.");
+      if (
+        body.regenerated &&
+        typeof body.regenerated === "object" &&
+        "job_result" in body.regenerated &&
+        body.regenerated.job_result
+      ) {
+        const regeneratedJobResult = body.regenerated.job_result as JobResult;
+        setJobResult(regeneratedJobResult);
+        setTaskDecisions(
+          isCompleteResultWithTasks(regeneratedJobResult)
+            ? buildDefaultDecisions(regeneratedJobResult.result_payload.recommended_tasks)
+            : {}
+        );
+        setSelectedTask(null);
+        if (projectId) {
+          await reloadWorkspace(projectId);
+        }
+      }
+
+      setFeedbackStatus("Thanks. Your response was stored locally and the checklist was regenerated.");
     } catch (error) {
       setFeedbackStatus(error instanceof Error ? error.message : "Unknown feedback error.");
     } finally {

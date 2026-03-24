@@ -74,12 +74,13 @@ export const recommendedTaskSchema = z.object({
   best_before: z.string().optional(),
   is_next_best_action: z.boolean().optional(),
   task_type: z.string().min(1).optional(),
+  confidence_class: z.enum(["strong_action", "moderate_action", "exploratory_action"]).optional(),
 });
 
 export const jobResultCompletePayloadSchema = z.object({
   recommended_tasks: z
     .array(recommendedTaskSchema)
-    .min(1)
+    .min(3)
     .max(3)
     .superRefine((tasks, ctx) => {
       const ranks = tasks.map((task) => task.rank);
@@ -120,6 +121,16 @@ export const jobResultSchema = z.object({
   error_detail: z.string().min(1).optional(),
 });
 
+export const taskFeedbackItemSchema = z.object({
+  feedback_id: z.string().min(1),
+  rank: z.number().int().min(1).max(3),
+  original_title: z.string().min(1),
+  original_expected_advantage: z.string().min(1),
+  feedback_type: z.enum(["done", "edited", "declined", "commented"]),
+  adjusted_text: z.string().optional(),
+  feedback_comment: z.string().optional(),
+});
+
 export const feedbackPayloadSchema = z.object({
   done: z.array(z.string()),
   edited: z.array(z.string()),
@@ -135,6 +146,7 @@ export const feedbackSchema = z.object({
   submitted_at: z.string().datetime({ offset: true }),
   user_action: z.enum(["done", "edited", "declined"]),
   feedback_payload: feedbackPayloadSchema,
+  task_feedback_items: z.array(taskFeedbackItemSchema).optional(),
   actor_id: z.string().min(1).optional(),
   linked_result_status: resultStatusSchema.optional(),
 });

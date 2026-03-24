@@ -181,8 +181,8 @@ def validate_feedback(data: dict[str, Any]) -> dict[str, Any]:
 def _validate_recommended_tasks(value: Any) -> None:
     if not isinstance(value, list) or not value:
         raise ValidationError("Field 'recommended_tasks' must be a non-empty list")
-    if len(value) > 3:
-        raise ValidationError("Field 'recommended_tasks' must not contain more than 3 tasks")
+    if len(value) != 3:
+        raise ValidationError("Field 'recommended_tasks' must contain exactly 3 tasks")
     seen_ranks: set[int] = set()
     for index, task in enumerate(value):
         if not isinstance(task, dict):

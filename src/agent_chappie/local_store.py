@@ -141,6 +141,29 @@ def initialize_local_store(path: str | None = None) -> str:
               created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+
+            create table if not exists task_feedback (
+              feedback_id text primary key,
+              task_id text,
+              job_id text not null,
+              project_id text not null,
+              original_title text not null,
+              original_expected_advantage text,
+              feedback_type text not null,
+              feedback_comment text,
+              adjusted_text text,
+              replacement_generated integer not null default 0,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            create table if not exists replacement_history (
+              replacement_id text primary key,
+              project_id text not null,
+              prior_task_title text not null,
+              replacement_title text not null,
+              source_feedback_id text,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
             """
         )
         _ensure_column(connection, "source_snapshots", "display_label", "text")
@@ -950,3 +973,95 @@ def fetch_knowledge_feedback_rows(project_id: str, path: str | None = None) -> l
         else:
             row["corrected_potential_moves"] = []
     return feedback_rows
+
+
+def save_task_feedback_rows(project_id: str, job_id: str, rows: list[dict[str, Any]], path: str | None = None) -> None:
+    if not rows:
+        return
+    with _connect(path) as connection:
+        for row in rows:
+            connection.execute(
+                """
+                insert into task_feedback (
+                  feedback_id,
+                  task_id,
+                  job_id,
+                  project_id,
+                  original_title,
+                  original_expected_advantage,
+                  feedback_type,
+                  feedback_comment,
+                  adjusted_text,
+                  replacement_generated
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["feedback_id"],
+                    row.get("task_id"),
+                    job_id,
+                    project_id,
+                    row["original_title"],
+                    row.get("original_expected_advantage"),
+                    row["feedback_type"],
+                    row.get("feedback_comment"),
+                    row.get("adjusted_text"),
+                    int(bool(row.get("replacement_generated"))),
+                ),
+            )
+
+
+def list_task_feedback_rows(project_id: str, limit: int = 80, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              feedback_id,
+              task_id,
+              job_id,
+              project_id,
+              original_title,
+              original_expected_advantage,
+              feedback_type,
+              feedback_comment,
+              adjusted_text,
+              replacement_generated,
+              created_at
+            from task_feedback
+            where project_id = ?
+            order by created_at desc
+            limit ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def save_replacement_history(
+    project_id: str,
+    prior_task_title: str,
+    replacement_title: str,
+    source_feedback_id: str | None = None,
+    replacement_id: str | None = None,
+    path: str | None = None,
+) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into replacement_history (
+              replacement_id,
+              project_id,
+              prior_task_title,
+              replacement_title,
+              source_feedback_id
+            )
+            values (?, ?, ?, ?, ?)
+            """,
+            (
+                replacement_id or f"replacement_{project_id}_{abs(hash((prior_task_title, replacement_title, source_feedback_id)))}",
+                project_id,
+                prior_task_title,
+                replacement_title,
+                source_feedback_id,
+            ),
+        )

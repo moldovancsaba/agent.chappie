@@ -1,4 +1,4 @@
-import type { JobRequest, JobResult } from "@/lib/contracts";
+import type { Feedback, JobRequest, JobResult } from "@/lib/contracts";
 import { jobResultSchema } from "@/lib/contracts";
 import { createDemoRecommendation } from "@/lib/demo-worker";
 import { env } from "@/lib/env";
@@ -371,5 +371,13 @@ export async function updateWorkerKnowledgeCard(
     `/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`,
     "PATCH",
     payload
+  );
+}
+
+export async function submitWorkerTaskFeedback(projectId: string, payload: Feedback) {
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/task-feedback`,
+    "POST",
+    payload as unknown as Record<string, unknown>
   );
 }

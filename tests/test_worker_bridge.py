@@ -13,7 +13,7 @@ if SRC not in sys.path:
 
 from agent_chappie.local_store import initialize_local_store, save_source_snapshot, upsert_knowledge_feedback
 from agent_chappie.observation_engine import SourcePackage, build_source_hash
-from agent_chappie.worker_bridge import WorkerBridgeConfig, build_workspace_payload, process_job_payload
+from agent_chappie.worker_bridge import WorkerBridgeConfig, build_workspace_payload, process_job_payload, process_task_feedback
 
 
 class WorkerBridgeKnowledgeTests(unittest.TestCase):
@@ -143,6 +143,62 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("priority_label", top_task)
             self.assertIn("best_before", top_task)
             self.assertIn("is_next_best_action", top_task)
+            self.assertIn("confidence_class", top_task)
+
+    def test_task_feedback_regenerates_three_tasks(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_feedback_regen",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_feedback_regen",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-23T15:40:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Analyze the uploaded market document and return actions.",
+                    "artifacts": [{"type": "upload", "ref": "source_feedback_regen"}],
+                },
+                "source_refs": ["source_feedback_regen"],
+            },
+            "source_package": {
+                "project_id": "project_feedback_regen",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "Competitive Analysis with Fortitude AI Focus. The document compares packaging, pricing bundles, "
+                    "trial offers, customer testimonials, integration claims, and onboarding friction."
+                ),
+                "source_ref": "source_feedback_regen",
+                "file_name": "feedback-analysis.docx",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            first = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+            first_tasks = first["job_result"]["result_payload"]["recommended_tasks"]
+            feedback_response = process_task_feedback(
+                "project_feedback_regen",
+                {
+                    "job_id": "job_feedback_regen",
+                    "task_feedback_items": [
+                        {
+                            "feedback_id": "task_feedback_1",
+                            "rank": 1,
+                            "original_title": first_tasks[0]["title"],
+                            "original_expected_advantage": first_tasks[0]["expected_advantage"],
+                            "feedback_type": "declined",
+                            "feedback_comment": "Too generic.",
+                        }
+                    ],
+                },
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+            regenerated = feedback_response["job_result"]["result_payload"]["recommended_tasks"]
+            self.assertEqual(len(regenerated), 3)
+            self.assertNotEqual(regenerated[0]["title"], first_tasks[0]["title"])
 
 
 if __name__ == "__main__":
