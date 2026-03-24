@@ -99,6 +99,39 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertTrue(any("pricing comparison block" in item.lower() for item in pricing_card["items"]))
             self.assertTrue(any("hero section" in item.lower() or "homepage comparison section" in item.lower() for item in positioning_card["items"]))
 
+    def test_knowledge_cards_reduce_cross_card_item_duplication(self) -> None:
+        source = SourcePackage(
+            project_id="project_card_dedup",
+            source_kind="manual_text",
+            project_summary="managed_on_worker",
+            raw_text=(
+                "Add a pricing comparison block and onboarding FAQ to the pricing page this week before Fortitude AI's free trial sets buyer expectations. "
+                "Add proof blocks to the homepage hero section to answer the no engineering required claim before buyers already comparing options default to Fortitude AI."
+            ),
+            source_ref="source_card_dedup",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            save_source_snapshot(source.__dict__, build_source_hash(source), db_path)
+
+            workspace = build_workspace_payload(
+                "project_card_dedup",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+
+            cards = {card["knowledge_id"]: card for card in workspace["knowledge_cards"]}
+            market_items = {item.lower() for item in cards["market_summary"]["items"]}
+            pricing_items = {item.lower() for item in cards["pricing_packaging"]["items"]}
+            positioning_items = {item.lower() for item in cards["offer_positioning"]["items"]}
+            proof_items = {item.lower() for item in cards["proof_signals"]["items"]}
+
+            self.assertTrue(market_items)
+            self.assertTrue(pricing_items or positioning_items or proof_items)
+            self.assertTrue(market_items.isdisjoint(pricing_items))
+            self.assertTrue(market_items.isdisjoint(positioning_items))
+            self.assertTrue(market_items.isdisjoint(proof_items))
+
     def test_source_cards_and_snapshot_use_action_aware_clusters(self) -> None:
         source = SourcePackage(
             project_id="project_source_snapshot_clusters",

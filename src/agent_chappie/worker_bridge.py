@@ -1000,7 +1000,7 @@ def build_knowledge_cards(
         + units_by_kind.get("proof", [])
         + units_by_kind.get("opportunity", [])
     )
-    market_items = [unit["label"] for unit in market_units[:5]]
+    market_items = select_market_summary_items(market_units, source_rows)
     if not market_items and source_rows:
         market_items.append(f"{len(source_rows)} ingested source{'s' if len(source_rows) != 1 else ''} are shaping the current knowledge state.")
     if not market_items:
@@ -1052,10 +1052,16 @@ def build_knowledge_cards(
 
     pricing_facts = facts_by_category.get("pricing", [])
     pricing_units = units_by_kind.get("pricing", []) + units_by_kind.get("pricing_packaging", [])
-    pricing_items = action_aware_card_items(
+    used_item_signatures = {normalize_item_signature(item) for item in market_items}
+
+    pricing_items = dedupe_card_items(
+        action_aware_card_items(
         pricing_units,
         [unit["label"] for unit in pricing_units[:5]] or [fact["label"] for fact in pricing_facts],
+        ),
+        blocked_signatures=used_item_signatures,
     )
+    used_item_signatures.update(normalize_item_signature(item) for item in pricing_items)
     cards.append(
         knowledge_card(
             "pricing_packaging",
@@ -1079,10 +1085,14 @@ def build_knowledge_cards(
 
     positioning_facts = facts_by_category.get("offer", []) + facts_by_category.get("positioning", []) + facts_by_category.get("segment", [])
     positioning_units = units_by_kind.get("offer", []) + units_by_kind.get("positioning", []) + units_by_kind.get("segment", [])
-    positioning_items = action_aware_card_items(
+    positioning_items = dedupe_card_items(
+        action_aware_card_items(
         positioning_units,
         [unit["label"] for unit in positioning_units[:5]] or [fact["label"] for fact in positioning_facts],
+        ),
+        blocked_signatures=used_item_signatures,
     )
+    used_item_signatures.update(normalize_item_signature(item) for item in positioning_items)
     cards.append(
         knowledge_card(
             "offer_positioning",
@@ -1106,9 +1116,12 @@ def build_knowledge_cards(
 
     proof_facts = facts_by_category.get("proof", [])
     proof_units = units_by_kind.get("proof", [])
-    proof_items = action_aware_card_items(
+    proof_items = dedupe_card_items(
+        action_aware_card_items(
         proof_units,
         [unit["label"] for unit in proof_units[:5]] or [fact["label"] for fact in proof_facts],
+        ),
+        blocked_signatures=used_item_signatures,
     )
     cards.append(
         knowledge_card(
@@ -3252,6 +3265,61 @@ def market_summary_implication(market_units: list[dict[str, Any]]) -> str:
     if category in {"proof", "proof_signal"}:
         return "If you do not strengthen your visible proof, comparison-stage buyers can trust the stronger story first."
     return "This pattern is strong enough to change how buyers compare options, so it should influence the next visible move."
+
+
+def select_market_summary_items(market_units: list[dict[str, Any]], source_rows: list[dict[str, Any]]) -> list[str]:
+    clusters = cluster_units_by_action_shape(market_units)
+    if not clusters:
+        return []
+
+    selected: list[str] = []
+    seen_kinds: set[str] = set()
+    for cluster in sorted(clusters, key=cluster_specificity_score, reverse=True):
+        unit_kind = str(cluster.get("unit_kind") or "")
+        summary = summarize_market_cluster_item(cluster)
+        if not summary:
+            continue
+        if unit_kind in seen_kinds and len(selected) >= 3:
+            continue
+        seen_kinds.add(unit_kind)
+        selected.append(summary)
+        if len(selected) >= 4:
+            break
+
+    if not selected and source_rows:
+        return [f"{len(source_rows)} ingested source{'s' if len(source_rows) != 1 else ''} are shaping the current knowledge state."]
+    return selected
+
+
+def summarize_market_cluster_item(cluster: dict[str, Any]) -> str:
+    competitor = str(cluster.get("competitor") or "The market").strip()
+    asset = str(cluster.get("asset") or "").strip()
+    channel = str(cluster.get("channel") or "").strip()
+    claim = str(cluster.get("claim") or "").strip()
+    unit_kind = str(cluster.get("unit_kind") or "market")
+    if asset and channel and claim:
+        return f"{competitor} is pushing {claim} pressure through {asset} on the {channel}."
+    if asset and channel:
+        return f"{competitor} is changing expectations through {asset} on the {channel}."
+    if claim:
+        return f"{competitor} is reinforcing {claim} as a live comparison claim."
+    return f"{competitor} is contributing to {humanize_fact_category(unit_kind).lower()} pressure in the active market."
+
+
+def normalize_item_signature(item: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", item.lower()).strip()
+
+
+def dedupe_card_items(items: list[str], blocked_signatures: set[str]) -> list[str]:
+    deduped: list[str] = []
+    seen = set(blocked_signatures)
+    for item in items:
+        signature = normalize_item_signature(item)
+        if not signature or signature in seen:
+            continue
+        seen.add(signature)
+        deduped.append(item)
+    return deduped
 
 
 def competitor_card_items(

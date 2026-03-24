@@ -162,6 +162,7 @@ The next evidence layer is now explicit:
 - entity cleanup should reject imperative instruction verbs as fake competitors so tasks never come back with names like `Add` or `Rewrite`
 - when both the legacy observation path and the bundle-authored segment path can produce valid tasks, the system should prefer the more specific bundle-authored result instead of replaying the older generic checklist family
 - source cards and the competitive snapshot should also reuse action-aware unit clusters so those surfaces can reflect concrete assets, channels, and claims instead of broad category blur
+- `Know More` cards should de-duplicate overlapping item text across cards so `Market Summary` stays high-level while specialized cards keep the more concrete asset/channel/claim detail
 
 ## Sources and activity
 

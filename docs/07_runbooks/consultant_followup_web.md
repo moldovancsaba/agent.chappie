@@ -223,6 +223,7 @@ Task detail should be evidence-bundle-specific:
 - reopened job results must not replay stale generic task text if the current worker can regenerate a sharper checklist from the same project knowledge
 - source-card takeaway and business-impact summaries should prefer action-aware source clusters over broad card blur when a source contains explicit asset/channel/claim structure
 - the competitive snapshot should prefer those same action-aware clusters so it can talk about concrete assets and claims, not only broad pricing/offer pressure labels
+- `Know More` should keep `Market Summary` at the higher pattern level and de-duplicate overlapping item text across the more specific pricing, offer/positioning, and proof cards
 
 If a rich source is processed but no immediate action is strong enough:
 
