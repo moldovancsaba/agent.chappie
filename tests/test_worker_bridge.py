@@ -12,7 +12,13 @@ SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-from agent_chappie.local_store import initialize_local_store, save_source_snapshot, upsert_knowledge_feedback
+from agent_chappie.local_store import (
+    initialize_local_store,
+    list_generation_memory_rows,
+    list_task_feedback_rows,
+    save_source_snapshot,
+    upsert_knowledge_feedback,
+)
 from agent_chappie.observation_engine import SourcePackage, build_source_hash
 from agent_chappie.worker_bridge import (
     WorkerBridgeConfig,
@@ -251,6 +257,123 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             regenerated = feedback_response["job_result"]["result_payload"]["recommended_tasks"]
             self.assertEqual(len(regenerated), 3)
             self.assertNotEqual(regenerated[0]["title"], first_tasks[0]["title"])
+            stored_feedback = list_task_feedback_rows("project_feedback_regen", path=db_path)
+            self.assertEqual(stored_feedback[0]["feedback_comment"], "Too generic.")
+            memory_rows = list_generation_memory_rows("project_feedback_regen", path=db_path)
+            self.assertTrue(any(row["memory_kind"] == "avoid_title" for row in memory_rows))
+
+    def test_commented_task_persists_memory_and_changes_regeneration(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_feedback_comment",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_feedback_comment",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-23T15:40:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Analyze the uploaded market document and return actions.",
+                    "artifacts": [{"type": "upload", "ref": "source_feedback_comment"}],
+                },
+                "source_refs": ["source_feedback_comment"],
+            },
+            "source_package": {
+                "project_id": "project_feedback_comment",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "Competitive Analysis with Fortitude AI Focus. The document compares packaging, pricing bundles, "
+                    "trial offers, customer testimonials, integration claims, and onboarding friction."
+                ),
+                "source_ref": "source_feedback_comment",
+                "file_name": "feedback-analysis.docx",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            first = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+            first_tasks = first["job_result"]["result_payload"]["recommended_tasks"]
+            response = process_task_feedback(
+                "project_feedback_comment",
+                {
+                    "job_id": "job_feedback_comment",
+                    "task_feedback_items": [
+                        {
+                            "feedback_id": "task_feedback_comment_1",
+                            "rank": 3,
+                            "original_title": first_tasks[2]["title"],
+                            "original_expected_advantage": first_tasks[2]["expected_advantage"],
+                            "feedback_type": "commented",
+                            "feedback_comment": "Too generic and overlapping with the homepage messaging task.",
+                        }
+                    ],
+                },
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+            regenerated = response["job_result"]["result_payload"]["recommended_tasks"]
+            self.assertEqual(len(regenerated), 3)
+            self.assertNotIn(first_tasks[2]["title"], [task["title"] for task in regenerated])
+            memory_rows = list_generation_memory_rows("project_feedback_comment", path=db_path)
+            self.assertTrue(any(row["memory_kind"] == "avoid_bucket" for row in memory_rows))
+
+    def test_edited_task_creates_preference_memory(self) -> None:
+        payload = {
+            "job_request": {
+                "job_id": "job_feedback_edit",
+                "app_id": "consultant_followup_web",
+                "project_id": "project_feedback_edit",
+                "priority_class": "normal",
+                "job_class": "light",
+                "submitted_at": "2026-03-23T15:40:00+00:00",
+                "requested_capability": "followup_task_recommendation",
+                "input_payload": {
+                    "context_type": "working_document",
+                    "prompt": "Analyze the uploaded market document and return actions.",
+                    "artifacts": [{"type": "upload", "ref": "source_feedback_edit"}],
+                },
+                "source_refs": ["source_feedback_edit"],
+            },
+            "source_package": {
+                "project_id": "project_feedback_edit",
+                "source_kind": "manual_text",
+                "project_summary": "managed_on_worker",
+                "raw_text": (
+                    "Competitive Analysis with Fortitude AI Focus. The document compares packaging, pricing bundles, "
+                    "trial offers, customer testimonials, integration claims, and onboarding friction."
+                ),
+                "source_ref": "source_feedback_edit",
+                "file_name": "feedback-analysis.docx",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            first = process_job_payload(payload, WorkerBridgeConfig(local_db_path=db_path))
+            response = process_task_feedback(
+                "project_feedback_edit",
+                {
+                    "job_id": "job_feedback_edit",
+                    "task_feedback_items": [
+                        {
+                            "feedback_id": "task_feedback_edit_1",
+                            "rank": 2,
+                            "original_title": first["job_result"]["result_payload"]["recommended_tasks"][1]["title"],
+                            "original_expected_advantage": first["job_result"]["result_payload"]["recommended_tasks"][1]["expected_advantage"],
+                            "feedback_type": "edited",
+                            "adjusted_text": "Rewrite the pricing page hero this week to answer the strongest proof and trial pressure before buyers default to Fortitude AI",
+                            "feedback_comment": "Use the pricing page, not the homepage comparison section.",
+                        }
+                    ],
+                },
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+            regenerated_titles = [task["title"] for task in response["job_result"]["result_payload"]["recommended_tasks"]]
+            self.assertIn("Rewrite the pricing page hero this week to answer the strongest proof and trial pressure before buyers default to Fortitude AI", regenerated_titles)
+            memory_rows = list_generation_memory_rows("project_feedback_edit", path=db_path)
+            self.assertTrue(any(row["memory_kind"] == "prefer_channel" for row in memory_rows))
 
     def test_process_job_payload_can_reuse_same_segment_templates_across_projects(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

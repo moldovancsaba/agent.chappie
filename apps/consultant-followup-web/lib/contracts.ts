@@ -135,6 +135,7 @@ export const feedbackPayloadSchema = z.object({
   done: z.array(z.string()),
   edited: z.array(z.string()),
   declined: z.array(z.string()),
+  commented: z.array(z.string()),
 });
 
 export const feedbackSchema = z.object({
@@ -144,7 +145,7 @@ export const feedbackSchema = z.object({
   project_id: z.string().min(1),
   feedback_type: z.literal("task_response"),
   submitted_at: z.string().datetime({ offset: true }),
-  user_action: z.enum(["done", "edited", "declined"]),
+  user_action: z.enum(["done", "edited", "declined", "commented"]),
   feedback_payload: feedbackPayloadSchema,
   task_feedback_items: z.array(taskFeedbackItemSchema).optional(),
   actor_id: z.string().min(1).optional(),

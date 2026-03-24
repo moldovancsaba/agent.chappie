@@ -164,6 +164,18 @@ def initialize_local_store(path: str | None = None) -> str:
               source_feedback_id text,
               created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+
+            create table if not exists generation_memory (
+              memory_id text primary key,
+              project_id text not null,
+              memory_kind text not null,
+              pattern_key text not null,
+              signal_value text,
+              weight real not null default 1.0,
+              source_feedback_id text,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
             """
         )
         _ensure_column(connection, "source_snapshots", "display_label", "text")
@@ -1065,3 +1077,62 @@ def save_replacement_history(
                 source_feedback_id,
             ),
         )
+
+
+def save_generation_memory_rows(project_id: str, rows: list[dict[str, Any]], path: str | None = None) -> None:
+    if not rows:
+        return
+    with _connect(path) as connection:
+        for row in rows:
+            memory_id = row.get("memory_id") or f"memory_{project_id}_{abs(hash((row['memory_kind'], row['pattern_key'], row.get('signal_value'))))}"
+            connection.execute(
+                """
+                insert into generation_memory (
+                  memory_id,
+                  project_id,
+                  memory_kind,
+                  pattern_key,
+                  signal_value,
+                  weight,
+                  source_feedback_id
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                on conflict(memory_id) do update set
+                  weight = excluded.weight,
+                  source_feedback_id = excluded.source_feedback_id,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                """,
+                (
+                    memory_id,
+                    project_id,
+                    row["memory_kind"],
+                    row["pattern_key"],
+                    row.get("signal_value"),
+                    float(row.get("weight") or 1.0),
+                    row.get("source_feedback_id"),
+                ),
+            )
+
+
+def list_generation_memory_rows(project_id: str, limit: int = 200, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select
+              memory_id,
+              project_id,
+              memory_kind,
+              pattern_key,
+              signal_value,
+              weight,
+              source_feedback_id,
+              created_at,
+              updated_at
+            from generation_memory
+            where project_id = ?
+            order by updated_at desc, created_at desc
+            limit ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]

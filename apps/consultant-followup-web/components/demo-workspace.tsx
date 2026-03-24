@@ -7,10 +7,11 @@ import { generateId } from "@/lib/ids";
 
 type AppView = "checklist" | "know-more" | "sources-jobs";
 type InputMode = "url" | "text" | "file";
-type DecisionStatus = "done" | "edited" | "declined";
+type DecisionStatus = "done" | "edited" | "declined" | "commented";
 type TaskDecision = {
   status: DecisionStatus | null;
   adjustedText: string;
+  commentText: string;
 };
 type SourceFormState = {
   label: string;
@@ -366,6 +367,7 @@ function buildDefaultDecisions(tasks: RecommendedTask[]) {
     current[task.rank] = {
       status: null,
       adjustedText: task.title,
+      commentText: "",
     };
     return current;
   }, {});
@@ -382,12 +384,14 @@ function buildFeedbackPayload(tasks: RecommendedTask[], decisions: Record<number
         current.done.push(task.title);
       } else if (decision.status === "edited") {
         current.edited.push(decision.adjustedText.trim() || task.title);
+      } else if (decision.status === "commented") {
+        current.commented.push(task.title);
       } else {
         current.declined.push(task.title);
       }
       return current;
     },
-    { done: [] as string[], edited: [] as string[], declined: [] as string[] }
+    { done: [] as string[], edited: [] as string[], declined: [] as string[], commented: [] as string[] }
   );
 }
 
@@ -405,7 +409,7 @@ function buildTaskFeedbackItems(tasks: RecommendedTask[], decisions: Record<numb
         original_expected_advantage: task.expected_advantage,
         feedback_type: decision.status === "edited" ? "edited" : decision.status,
         adjusted_text: decision.status === "edited" ? decision.adjustedText.trim() || task.title : undefined,
-        feedback_comment: "",
+        feedback_comment: decision.commentText.trim() || undefined,
       },
     ];
   });
@@ -716,7 +720,13 @@ export function DemoWorkspace() {
 
     const feedbackPayload = buildFeedbackPayload(jobResult.result_payload.recommended_tasks, taskDecisions);
     const fallbackAction: DecisionStatus =
-      feedbackPayload.done.length > 0 ? "done" : feedbackPayload.declined.length > 0 ? "declined" : "edited";
+      feedbackPayload.done.length > 0
+        ? "done"
+        : feedbackPayload.declined.length > 0
+          ? "declined"
+          : feedbackPayload.edited.length > 0
+            ? "edited"
+            : "commented";
 
     setIsSavingFeedback(true);
     setFeedbackStatus("");
@@ -1003,6 +1013,7 @@ export function DemoWorkspace() {
       [rank]: {
         status,
         adjustedText: current[rank]?.adjustedText ?? fallbackTitle,
+        commentText: current[rank]?.commentText ?? "",
       },
     }));
   }
@@ -1013,6 +1024,18 @@ export function DemoWorkspace() {
       [rank]: {
         status: "edited",
         adjustedText: value,
+        commentText: current[rank]?.commentText ?? "",
+      },
+    }));
+  }
+
+  function setCommentText(rank: number, value: string) {
+    setTaskDecisions((current) => ({
+      ...current,
+      [rank]: {
+        status: current[rank]?.status ?? "commented",
+        adjustedText: current[rank]?.adjustedText ?? "",
+        commentText: value,
       },
     }));
   }
@@ -1213,6 +1236,13 @@ export function DemoWorkspace() {
                             >
                               ✕ Reject
                             </button>
+                            <button
+                              className={`decision-button adjust ${decision?.status === "commented" ? "selected" : ""}`}
+                              type="button"
+                              onClick={() => setDecision(task.rank, "commented", task.title)}
+                            >
+                              Comment
+                            </button>
                           </div>
 
                           {decision?.status === "edited" ? (
@@ -1222,6 +1252,17 @@ export function DemoWorkspace() {
                                 id={`adjust-${task.rank}`}
                                 value={decision.adjustedText}
                                 onChange={(event) => setAdjustedText(task.rank, event.target.value)}
+                              />
+                            </div>
+                          ) : null}
+                          {decision?.status === "edited" || decision?.status === "declined" || decision?.status === "commented" ? (
+                            <div className="adjust-shell">
+                              <label htmlFor={`comment-${task.rank}`}>Why?</label>
+                              <textarea
+                                id={`comment-${task.rank}`}
+                                value={decision.commentText}
+                                onChange={(event) => setCommentText(task.rank, event.target.value)}
+                                placeholder="Tell us why this was weak, wrong, overlapping, or how you would improve it."
                               />
                             </div>
                           ) : null}
@@ -1450,6 +1491,7 @@ export function DemoWorkspace() {
                   <span>{buildFeedbackPayload(tasks, taskDecisions).done.length} done</span>
                   <span>{buildFeedbackPayload(tasks, taskDecisions).edited.length} adjusted</span>
                   <span>{buildFeedbackPayload(tasks, taskDecisions).declined.length} rejected</span>
+                  <span>{buildFeedbackPayload(tasks, taskDecisions).commented.length} commented</span>
                 </div>
                 <button className="button-primary wide" disabled={!canSubmitFeedback || isSavingFeedback} onClick={handleSaveFeedback} type="button">
                   {isSavingFeedback ? "Saving decisions..." : "Submit decisions"}

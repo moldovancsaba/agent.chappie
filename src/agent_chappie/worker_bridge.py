@@ -26,6 +26,7 @@ from agent_chappie.local_store import (
     initialize_local_store,
     insert_observations,
     list_draft_segments,
+    list_generation_memory_rows,
     list_task_feedback_rows,
     list_observations_for_source,
     list_managed_jobs,
@@ -35,6 +36,7 @@ from agent_chappie.local_store import (
     list_recent_source_snapshots,
     replace_draft_segments,
     save_source_snapshot,
+    save_generation_memory_rows,
     save_replacement_history,
     save_task_feedback_rows,
     update_managed_job,
@@ -215,6 +217,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     )
     replace_draft_segments(source_package.project_id, draft_segments, path=config.local_db_path)
     feedback_rows = list_task_feedback_rows(source_package.project_id, path=config.local_db_path)
+    generation_memory_rows = list_generation_memory_rows(source_package.project_id, path=config.local_db_path)
     result_payload = generate_learning_checklist(
         source_package,
         aggregated or observations,
@@ -222,6 +225,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         knowledge_cards,
         fact_chips,
         feedback_rows,
+        generation_memory_rows,
     )
     used_source_refs: set[str] = set()
 
@@ -250,6 +254,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
                     aggregated or observations,
                     draft_segments,
                     feedback_rows,
+                    generation_memory_rows,
                 )
                 result_document["result_payload"] = fallback_payload
                 job_result = validate_job_result(result_document)
@@ -776,6 +781,7 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
             }
         )
     save_task_feedback_rows(project_id, job_id, rows, path=config.local_db_path)
+    save_generation_memory_rows(project_id, build_generation_memory_rows(rows), path=config.local_db_path)
 
     source_rows = list_recent_source_snapshots(project_id, path=config.local_db_path)
     observation_rows = list_recent_observations(project_id, path=config.local_db_path)
@@ -804,6 +810,7 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
         region=source_rows[0].get("region") if source_rows else None,
     )
     feedback_rows = list_task_feedback_rows(project_id, path=config.local_db_path)
+    generation_memory_rows = list_generation_memory_rows(project_id, path=config.local_db_path)
     result_payload = generate_learning_checklist(
         seed_source,
         observation_rows,
@@ -811,6 +818,7 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
         knowledge_cards,
         fact_chips,
         feedback_rows,
+        generation_memory_rows,
     )
     result_document = validate_job_result(
         {
@@ -1186,6 +1194,7 @@ def write_tasks_from_segments(
     knowledge_cards: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]] | None = None,
+    generation_memory_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     candidates: list[dict[str, Any]] = []
     for segment in draft_segments:
@@ -1200,7 +1209,7 @@ def write_tasks_from_segments(
     if len(candidates) < 3:
         candidates.extend(build_missing_information_tasks(source, draft_segments, fact_chips, has_actionable_candidates))
 
-    judged = judge_tasks(candidates[:12], source, feedback_rows or [])
+    judged = judge_tasks(candidates[:12], source, feedback_rows or [], generation_memory_rows or [])
     if not judged:
         return {
             "reason": "We could not derive three distinct, high-confidence actions from the supplied evidence.",
@@ -1383,7 +1392,12 @@ def build_missing_information_tasks(
     return candidates
 
 
-def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def judge_tasks(
+    tasks: list[dict[str, Any]],
+    source: SourcePackage,
+    feedback_rows: list[dict[str, Any]],
+    generation_memory_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     declined_keys = {
         normalize_task_key(str(row["original_title"]))
         for row in feedback_rows
@@ -1413,7 +1427,7 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
             {
                 "rank": 0,
                 "title": adjusted_text,
-                "why_now": "The operator previously edited a similar task, so the judge is carrying forward that correction as a stronger replacement.",
+                "why_now": f"You previously corrected a similar task after we surfaced this signal change: {row.get('original_title')}. We are carrying that correction forward as the stronger replacement.",
                 "expected_advantage": str(row.get("original_expected_advantage") or "Improves conversion and execution speed this week by using the operator-corrected action instead of repeating a weaker task template."),
                 "evidence_refs": [f"feedback::{row['feedback_id']}"],
                 "task_type": "operator_corrected",
@@ -1427,7 +1441,7 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
     ) else 3
     filtered: list[dict[str, Any]] = []
     info_request_seen = 0
-    sorted_tasks = sorted(judged, key=lambda task: task_priority_score(task), reverse=True)
+    sorted_tasks = sorted(judged, key=lambda task: task_priority_score(task, generation_memory_rows), reverse=True)
     for task in sorted_tasks:
         if task.get("task_type") == "information_request":
             if info_request_seen >= info_request_limit:
@@ -1435,7 +1449,10 @@ def judge_tasks(tasks: list[dict[str, Any]], source: SourcePackage, feedback_row
             info_request_seen += 1
         filtered.append(task)
 
-    final_tasks = select_diverse_tasks(filtered, target_count=3)
+    final_tasks = select_diverse_tasks(
+        sorted(filtered, key=lambda task: task_priority_score(task, generation_memory_rows), reverse=True),
+        target_count=3,
+    )
 
     now = datetime.now(UTC)
     for index, task in enumerate(final_tasks[:3], start=1):
@@ -1459,6 +1476,7 @@ def generate_guaranteed_task_triplet(
     observations: list[dict[str, Any]],
     draft_segments: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]],
+    generation_memory_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     strongest = draft_segments[:3]
     fallback_tasks: list[dict[str, Any]] = []
@@ -1487,7 +1505,7 @@ def generate_guaranteed_task_triplet(
                 "move_bucket": "information_request",
             }
         )
-    judged = judge_tasks(fallback_tasks[:6], source, feedback_rows)
+    judged = judge_tasks(fallback_tasks[:6], source, feedback_rows, generation_memory_rows)
     return {
         "recommended_tasks": judged[:3],
         "summary": "Three exploratory or moderate actions were emitted because the product policy forbids an empty checklist.",
@@ -1501,6 +1519,7 @@ def generate_learning_checklist(
     knowledge_cards: list[dict[str, Any]],
     fact_chips: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]],
+    generation_memory_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     result_payload = generate_recommended_tasks(source_package, observations)
     if "recommended_tasks" in result_payload:
@@ -1528,6 +1547,7 @@ def generate_learning_checklist(
         knowledge_cards,
         fact_chips,
         feedback_rows,
+        generation_memory_rows,
     )
     if "recommended_tasks" in segment_payload:
         try:
@@ -1550,10 +1570,11 @@ def generate_learning_checklist(
         observations,
         draft_segments,
         feedback_rows,
+        generation_memory_rows,
     )
 
 
-def task_priority_score(task: dict[str, Any]) -> int:
+def task_priority_score(task: dict[str, Any], generation_memory_rows: list[dict[str, Any]] | None = None) -> int:
     title = task["title"].lower()
     why = task["why_now"].lower()
     score = 0
@@ -1572,7 +1593,101 @@ def task_priority_score(task: dict[str, Any]) -> int:
         score += 3
     if any(token in title or token in why for token in ("before", "closure", "capture", "pricing", "trial", "offer")):
         score += 3
+    score += generation_memory_adjustment(task, generation_memory_rows or [])
     return score
+
+
+def generation_memory_adjustment(task: dict[str, Any], generation_memory_rows: list[dict[str, Any]]) -> int:
+    if not generation_memory_rows:
+        return 0
+
+    normalized_title = normalize_task_key(task.get("title", ""))
+    bucket = task_move_bucket(task)
+    channel = infer_primary_channel("academy" if "enrollment" in task.get("title", "").lower() else "general", task.get("title", "").lower())
+    adjustment = 0
+    for row in generation_memory_rows:
+        kind = str(row.get("memory_kind") or "")
+        pattern_key = str(row.get("pattern_key") or "")
+        signal_value = str(row.get("signal_value") or "")
+        weight = int(round(float(row.get("weight") or 0)))
+        if kind == "avoid_title" and pattern_key == normalized_title:
+            adjustment -= max(3, weight)
+        elif kind == "avoid_phrase" and signal_value and signal_value in task.get("title", "").lower():
+            adjustment -= max(2, weight)
+        elif kind == "avoid_bucket" and pattern_key == bucket:
+            adjustment -= max(1, weight)
+        elif kind == "prefer_channel" and signal_value and signal_value == channel:
+            adjustment += max(2, weight)
+        elif kind == "prefer_phrase" and signal_value and signal_value in task.get("title", "").lower():
+            adjustment += max(2, weight)
+    return adjustment
+
+
+def build_generation_memory_rows(feedback_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in feedback_rows:
+        feedback_id = str(row.get("feedback_id") or "")
+        feedback_type = str(row.get("feedback_type") or "")
+        original_title = str(row.get("original_title") or "")
+        normalized_title = normalize_task_key(original_title)
+        title_lower = original_title.lower()
+        comment = str(row.get("feedback_comment") or "").strip().lower()
+        adjusted_text = str(row.get("adjusted_text") or "").strip()
+
+        if feedback_type in {"declined", "commented"} and normalized_title:
+            rows.append(
+                {
+                    "memory_kind": "avoid_title",
+                    "pattern_key": normalized_title,
+                    "signal_value": original_title,
+                    "weight": 3.0 if feedback_type == "declined" else 2.0,
+                    "source_feedback_id": feedback_id,
+                }
+            )
+        if any(token in comment for token in ("generic", "vague", "broad", "weak", "fuzzy")):
+            for phrase in ("buyer-facing response", "operator response", "sharper source", "request one sharper source"):
+                if phrase in title_lower:
+                    rows.append(
+                        {
+                            "memory_kind": "avoid_phrase",
+                            "pattern_key": normalize_task_key(original_title),
+                            "signal_value": phrase,
+                            "weight": 2.0,
+                            "source_feedback_id": feedback_id,
+                        }
+                    )
+        if any(token in comment for token in ("overlap", "duplicate", "same", "similar")):
+            rows.append(
+                {
+                    "memory_kind": "avoid_bucket",
+                    "pattern_key": task_move_bucket({"title": original_title, "why_now": "", "task_type": ""}),
+                    "signal_value": original_title,
+                    "weight": 1.0,
+                    "source_feedback_id": feedback_id,
+                }
+            )
+        if adjusted_text:
+            adjusted_lower = adjusted_text.lower()
+            rows.append(
+                {
+                    "memory_kind": "prefer_phrase",
+                    "pattern_key": normalize_task_key(adjusted_text),
+                    "signal_value": adjusted_lower,
+                    "weight": 2.0,
+                    "source_feedback_id": feedback_id,
+                }
+            )
+            preferred_channel = infer_primary_channel("academy" if "enrollment" in adjusted_lower else "general", adjusted_lower)
+            rows.append(
+                {
+                    "memory_kind": "prefer_channel",
+                    "pattern_key": task_move_bucket({"title": adjusted_text, "why_now": "", "task_type": ""}),
+                    "signal_value": preferred_channel,
+                    "weight": 1.0,
+                    "source_feedback_id": feedback_id,
+                }
+            )
+    return rows
 
 
 def task_move_bucket(task: dict[str, Any]) -> str:
