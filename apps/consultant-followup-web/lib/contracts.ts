@@ -81,6 +81,7 @@ export const recommendedTaskSchema = z.object({
   target_segment: z.string().min(1).optional(),
   mechanism: z.string().min(1).optional(),
   done_definition: z.string().min(1).optional(),
+  execution_steps: z.array(z.string().min(1)).optional(),
   supporting_source_refs: z.array(z.string().min(1)).optional(),
   strongest_evidence_excerpt: z.string().min(1).optional(),
 });

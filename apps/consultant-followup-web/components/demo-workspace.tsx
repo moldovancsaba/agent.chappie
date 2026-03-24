@@ -319,6 +319,9 @@ function buildConsequenceOfInaction(task: RecommendedTask) {
 }
 
 function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
+  if (task.execution_steps?.length) {
+    return task.execution_steps;
+  }
   const sourceSummary = sourceLabels.length ? sourceLabels.join(", ") : "the linked source set";
   const targetChannel = task.target_channel ?? "named channel";
   const targetSegment = task.target_segment ?? "buyers";

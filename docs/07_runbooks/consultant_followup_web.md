@@ -205,6 +205,7 @@ Task detail should be evidence-bundle-specific:
 - use task-level supporting source refs when available instead of broad workspace source sets
 - show strongest evidence excerpt when available
 - show target channel, target segment, and done definition when the writer/judge provide them
+- prefer worker-authored execution steps when available instead of frontend-only reconstruction
 - execution steps must be operational, not generic filler
 
 If a rich source is processed but no immediate action is strong enough:

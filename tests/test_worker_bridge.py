@@ -236,6 +236,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("target_segment", top_task)
             self.assertIn("mechanism", top_task)
             self.assertIn("done_definition", top_task)
+            self.assertIn("execution_steps", top_task)
+            self.assertEqual(len(top_task["execution_steps"]), 4)
             self.assertIn("supporting_source_refs", top_task)
             task_types = [task["task_type"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
             self.assertLessEqual(task_types.count("information_request"), 1)
