@@ -57,6 +57,24 @@ def _request_json(
         return int(exc.code), data
 
 
+def _claim_with_retries(
+    api_base: str,
+    secret: str,
+    sleep_seconds: int,
+    max_attempts: int = 5,
+) -> tuple[int, dict | None]:
+    """Transient TLS/network errors should not stall the consumer forever."""
+    last: tuple[int, dict | None] = (0, None)
+    for attempt in range(max_attempts):
+        try:
+            return _request_json(f"{api_base}/api/worker/jobs/claim", "POST", secret, {})
+        except OSError as exc:
+            print(f"[warn] claim network error attempt={attempt + 1}/{max_attempts}: {exc}")
+            last = (0, {"error": str(exc)})
+            time.sleep(min(60, sleep_seconds * (2**attempt)))
+    return last
+
+
 def main() -> None:
     configure_worker_logging()
     api_base = _required_env("APP_QUEUE_BASE_URL").rstrip("/")
@@ -66,7 +84,7 @@ def main() -> None:
 
     print(f"Worker queue consumer started. polling={api_base}/api/worker/jobs/claim")
     while True:
-        status, claimed = _request_json(f"{api_base}/api/worker/jobs/claim", "POST", secret, {})
+        status, claimed = _claim_with_retries(api_base, secret, sleep_seconds)
         if status == 204:
             time.sleep(sleep_seconds)
             continue

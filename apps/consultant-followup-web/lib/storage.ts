@@ -349,6 +349,53 @@ export async function getQueuedJob(jobId: string): Promise<QueuedJobRecord | nul
   return rows[0] ?? null;
 }
 
+export type PendingQueueJobRow = {
+  job_id: string;
+  status: "queued" | "processing";
+  source_package: QueuedSourcePackage;
+  created_at: string;
+};
+
+/** Jobs waiting on the private worker (for workspace synthesis when snapshots/results are empty). */
+export async function listPendingQueueJobsForProject(projectId: string): Promise<PendingQueueJobRow[]> {
+  if (!canUseNeon()) {
+    const rows = [...memoryState().queue.values()].filter(
+      (q) => q.project_id === projectId && (q.status === "queued" || q.status === "processing"),
+    );
+    rows.sort((a, b) => {
+      const ta = a.job_request?.submitted_at ?? "";
+      const tb = b.job_request?.submitted_at ?? "";
+      return ta.localeCompare(tb);
+    });
+    return rows.map((q) => ({
+      job_id: q.job_id,
+      status: q.status as "queued" | "processing",
+      source_package: q.source_package,
+      created_at: q.job_request?.submitted_at ?? new Date().toISOString(),
+    }));
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  const rows = (await sql`
+    select job_id, status, source_package, created_at
+    from demo_job_queue
+    where project_id = ${projectId}
+      and status in ('queued', 'processing')
+    order by created_at asc
+  `) as Array<{
+    job_id: string;
+    status: string;
+    source_package: QueuedSourcePackage;
+    created_at: Date | string;
+  }>;
+  return rows.map((r) => ({
+    job_id: r.job_id,
+    status: r.status as "queued" | "processing",
+    source_package: r.source_package,
+    created_at: typeof r.created_at === "string" ? r.created_at : (r.created_at as Date).toISOString(),
+  }));
+}
+
 export async function claimNextQueuedJob(): Promise<QueuedJobRecord | null> {
   if (!canUseNeon()) {
     const queued = [...memoryState().queue.values()].find((q) => q.status === "queued") ?? null;

@@ -1616,6 +1616,9 @@ export function DemoWorkspace() {
       : activeView === "know-more"
         ? `${workspace?.fact_chips.length ?? 0} flashcards · ${filteredKnowledgeCards.length} cards`
         : `${workspace?.source_cards.length ?? 0} monitored sources`;
+  const hasPendingWorkerQueue = (workspace?.source_cards ?? []).some(
+    (s) => s.status === "queued_for_worker" || s.status === "processing_on_worker",
+  );
 
   return (
     <section className="decision-shell">
@@ -1708,6 +1711,18 @@ export function DemoWorkspace() {
             </div>
           </div>
         </section>
+
+        {hasPendingWorkerQueue ? (
+          <div className="panel notice" style={{ marginBottom: "1rem" }}>
+            <strong>Processing queue</strong>
+            <p>
+              Submitted sources are in the cloud job queue waiting for the private Mac worker (
+              <code>worker_queue_consumer.py</code> / launchd <code>com.agentchappie.queue_consumer</code>). Until it
+              runs with <code>APP_QUEUE_BASE_URL</code> and <code>WORKER_QUEUE_SHARED_SECRET</code>, you will not get Know
+              More flashcards or three ranked tasks. The Sources tab still lists each pending submission.
+            </p>
+          </div>
+        ) : null}
 
         {activeView === "checklist" ? (
         <section className="content-grid">
@@ -2087,6 +2102,15 @@ export function DemoWorkspace() {
         {activeView === "know-more" ? (
         <section className="content-grid single">
           <div className="primary-column">
+            {hasPendingWorkerQueue && !visibleFlashcards.length && !(workspace?.fact_chips.length ?? 0) ? (
+              <div className="panel notice" style={{ marginBottom: "1rem" }}>
+                <strong>No flashcards yet</strong>
+                <p>
+                  Intelligence cards are produced on the Mac after the queue consumer runs the full pipeline. Finish
+                  setup per the notice above; then refresh this page.
+                </p>
+              </div>
+            ) : null}
             <section className="panel section-card intelligence-layout">
               <div className="section-head">
                 <div>

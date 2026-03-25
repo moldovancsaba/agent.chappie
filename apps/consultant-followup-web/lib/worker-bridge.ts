@@ -2,10 +2,12 @@ import type { Feedback, JobRequest, JobResult, RecommendedTask } from "@/lib/con
 import { jobResultSchema } from "@/lib/contracts";
 import { createDemoRecommendation } from "@/lib/demo-worker";
 import { describeDirectWorkerBlock, env, isDirectWorkerEnabled } from "@/lib/env";
+import type { PendingQueueJobRow } from "@/lib/storage";
 import {
   filterWorkspaceHiddenFactChips,
   getLatestJobResultForProject,
   getWorkspaceSnapshot,
+  listPendingQueueJobsForProject,
 } from "@/lib/storage";
 
 export class DirectWorkerUnavailableError extends Error {
@@ -355,6 +357,77 @@ function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult):
   });
 }
 
+function synthesizeWorkspaceFromPendingQueueJobs(
+  projectId: string,
+  pending: PendingQueueJobRow[],
+): WorkerWorkspacePayload {
+  if (!pending.length) {
+    return normalizeWorkerWorkspacePayload({ project_id: projectId });
+  }
+  const source_cards = pending.map((row) => {
+    const pkg = row.source_package;
+    const label =
+      pkg.file_name?.trim() ||
+      (pkg.raw_text?.trim().length
+        ? pkg.raw_text.trim().length > 72
+          ? `${pkg.raw_text.trim().slice(0, 69)}…`
+          : pkg.raw_text.trim()
+        : pkg.source_ref);
+    const preview =
+      pkg.source_kind === "uploaded_file" && pkg.file_name
+        ? `Queued upload: ${pkg.file_name}`
+        : (pkg.raw_text || "").slice(0, 220);
+    const processing_summary =
+      row.status === "processing"
+        ? "The worker claimed this job. Full intelligence cards and three tasks appear when processing finishes."
+        : "Waiting for the private Mac worker to claim this job from the cloud queue. On the Mac: run scripts/install_services.sh (launchd) or zsh scripts/run_queue_consumer.sh with APP_QUEUE_BASE_URL and WORKER_QUEUE_SHARED_SECRET in .env.queue.";
+    return {
+      source_ref: `queue_job:${row.job_id}`,
+      label,
+      source_kind: pkg.source_kind,
+      status: row.status === "processing" ? "processing_on_worker" : "queued_for_worker",
+      processing_summary,
+      last_used_in_checklist: false,
+      signal_count: 0,
+      key_takeaway: `Job ${row.job_id.slice(0, 8)}… is ${row.status === "processing" ? "running on the worker" : "in the queue"}.`,
+      business_impact: "No competitive tasks or Know More flashcards until the worker completes this job.",
+      linked_tasks: [],
+      confidence: 0.5,
+      created_at: row.created_at,
+      preview: preview || label,
+    };
+  });
+  const recent_sources = pending.map((row) => {
+    const pkg = row.source_package;
+    const preview =
+      pkg.source_kind === "uploaded_file" && pkg.file_name
+        ? `Queued file: ${pkg.file_name}`
+        : (pkg.raw_text || "").slice(0, 120);
+    return {
+      source_ref: `queue_job:${row.job_id}`,
+      source_kind: pkg.source_kind,
+      created_at: row.created_at,
+      preview: preview || row.job_id,
+    };
+  });
+  const recent_activity = pending.map((row) => ({
+    signal_id: `queue_wait:${row.job_id}`,
+    signal_type: row.status === "processing" ? "worker_processing" : "queue_waiting",
+    summary:
+      row.status === "processing"
+        ? `Worker processing job ${row.job_id.slice(0, 8)}…`
+        : `Source submitted; job ${row.job_id.slice(0, 8)}… waiting for worker to claim.`,
+    observed_at: row.created_at,
+    source_ref: `queue_job:${row.job_id}`,
+  }));
+  return normalizeWorkerWorkspacePayload({
+    project_id: projectId,
+    source_cards,
+    recent_sources,
+    recent_activity,
+  });
+}
+
 export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspacePayload> & { project_id: string }): WorkerWorkspacePayload {
   return {
     project_id: payload.project_id,
@@ -468,7 +541,14 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
     }
     const stored = await getLatestJobResultForProject(projectId);
     if (stored) {
-      return applyHiddenFacts(synthesizeWorkspaceFromJobResult(projectId, stored));
+      const fromJob = synthesizeWorkspaceFromJobResult(projectId, stored);
+      if (workspaceSnapshotHasRenderableData(fromJob)) {
+        return applyHiddenFacts(fromJob);
+      }
+    }
+    const pending = await listPendingQueueJobsForProject(projectId);
+    if (pending.length) {
+      return applyHiddenFacts(synthesizeWorkspaceFromPendingQueueJobs(projectId, pending));
     }
     return applyHiddenFacts(
       normalizeWorkerWorkspacePayload({
