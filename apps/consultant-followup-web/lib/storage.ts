@@ -69,8 +69,19 @@ function memoryState(): MemoryState {
   return globalThis.__agentChappieDemoState__;
 }
 
-function canUseNeon() {
-  return env.demoStorageMode === "neon" && Boolean(env.databaseUrl);
+/** True when job queue, results, and workspace snapshots should use Neon (not in-process memory). */
+export function canUseNeon() {
+  if (!env.databaseUrl?.trim()) {
+    return false;
+  }
+  if (env.demoStorageMode === "neon") {
+    return true;
+  }
+  // Hosted queue mode is expected to persist with DATABASE_URL even if DEMO_STORAGE_MODE was left unset.
+  if (env.agentBridgeMode === "queue") {
+    return true;
+  }
+  return false;
 }
 
 function sqlClient() {
@@ -357,6 +368,30 @@ export type PendingQueueJobRow = {
 };
 
 /** Jobs waiting on the private worker (for workspace synthesis when snapshots/results are empty). */
+/**
+ * Remove a pending queue job (`queue_job:*` in the UI) and its demo_jobs row when no result exists yet.
+ * Does not delete completed jobs (those have demo_job_results and no longer appear as pending sources).
+ */
+export async function removeQueuedJobById(projectId: string, jobId: string): Promise<void> {
+  if (!canUseNeon()) {
+    const row = memoryState().queue.get(jobId);
+    if (!row || row.project_id !== projectId) {
+      return;
+    }
+    memoryState().queue.delete(jobId);
+    memoryState().jobs.delete(jobId);
+    return;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  await sql`
+    delete from demo_jobs
+    where job_id = ${jobId}
+      and project_id = ${projectId}
+      and not exists (select 1 from demo_job_results r where r.job_id = ${jobId})
+  `;
+}
+
 export async function listPendingQueueJobsForProject(projectId: string): Promise<PendingQueueJobRow[]> {
   if (!canUseNeon()) {
     const rows = [...memoryState().queue.values()].filter(

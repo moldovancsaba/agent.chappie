@@ -4,10 +4,12 @@ import { createDemoRecommendation } from "@/lib/demo-worker";
 import { describeDirectWorkerBlock, env, isDirectWorkerEnabled } from "@/lib/env";
 import type { PendingQueueJobRow } from "@/lib/storage";
 import {
+  canUseNeon,
   filterWorkspaceHiddenFactChips,
   getLatestJobResultForProject,
   getWorkspaceSnapshot,
   listPendingQueueJobsForProject,
+  removeQueuedJobById,
   saveResult,
   saveWorkspaceSnapshot,
 } from "@/lib/storage";
@@ -774,7 +776,31 @@ function applyIngestedSourceRemovalToSnapshot(payload: Record<string, unknown>, 
   }
 }
 
-async function deleteIngestedSourceHostedNeon(projectId: string, sourceRef: string): Promise<WorkerWorkspacePayload> {
+const QUEUE_JOB_SOURCE_PREFIX = "queue_job:";
+
+function taskReferencesIngestedSource(task: RecommendedTask, sourceRef: string): boolean {
+  if ((task.supporting_source_refs ?? []).includes(sourceRef)) {
+    return true;
+  }
+  if ((task.evidence_refs ?? []).includes(sourceRef)) {
+    return true;
+  }
+  return (task.supporting_source_scores ?? []).some((row) => row.source_ref === sourceRef);
+}
+
+async function deleteIngestedSourceHosted(projectId: string, sourceRef: string): Promise<WorkerWorkspacePayload> {
+  if (sourceRef.startsWith(QUEUE_JOB_SOURCE_PREFIX)) {
+    const jobId = sourceRef.slice(QUEUE_JOB_SOURCE_PREFIX.length);
+    await removeQueuedJobById(projectId, jobId);
+    const snapQueued = await getWorkspaceSnapshot(projectId);
+    if (snapQueued && typeof snapQueued === "object") {
+      const copy = { ...(snapQueued as Record<string, unknown>) };
+      applyIngestedSourceRemovalToSnapshot(copy, sourceRef);
+      await saveWorkspaceSnapshot(projectId, copy);
+    }
+    return fetchWorkerWorkspace(projectId);
+  }
+
   const latest = await getLatestJobResultForProject(projectId);
   if (
     latest &&
@@ -786,10 +812,7 @@ async function deleteIngestedSourceHostedNeon(projectId: string, sourceRef: stri
     const rp = latest.result_payload as Record<string, unknown> & { recommended_tasks: RecommendedTask[] };
     const tasks = rp.recommended_tasks;
     if (Array.isArray(tasks)) {
-      const filtered = tasks.filter(
-        (t) =>
-          !(t.supporting_source_refs ?? []).includes(sourceRef) && !(t.evidence_refs ?? []).includes(sourceRef)
-      );
+      const filtered = tasks.filter((t) => !taskReferencesIngestedSource(t, sourceRef));
       if (filtered.length !== tasks.length) {
         await saveResult({
           ...latest,
@@ -814,12 +837,12 @@ export async function deleteWorkerIngestedSource(
   sourceRef: string
 ): Promise<Record<string, unknown>> {
   if (!isDirectWorkerEnabled()) {
-    if (env.demoStorageMode !== "neon" || !env.databaseUrl?.trim()) {
+    if (!canUseNeon()) {
       throw new Error(
-        "Removing a source in queue mode needs DATABASE_URL (Neon). Alternatively use AGENT_BRIDGE_MODE=worker with AGENT_API_BASE_URL so the Mac can delete from the brain database."
+        "Removing a source in queue mode needs DATABASE_URL (Neon) with AGENT_BRIDGE_MODE=queue (or set DEMO_STORAGE_MODE=neon). Alternatively use AGENT_BRIDGE_MODE=worker with AGENT_API_BASE_URL so the Mac can delete from the brain database."
       );
     }
-    return deleteIngestedSourceHostedNeon(projectId, sourceRef) as unknown as Record<string, unknown>;
+    return deleteIngestedSourceHosted(projectId, sourceRef) as unknown as Record<string, unknown>;
   }
   return sendWorkerManagementRequest(
     `/projects/${encodeURIComponent(projectId)}/sources/ingested/${encodeURIComponent(sourceRef)}`,

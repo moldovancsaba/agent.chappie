@@ -2,12 +2,21 @@ import { NextResponse } from "next/server";
 
 import { deleteWorkerIngestedSource, updateWorkerIngestedSource } from "@/lib/worker-bridge";
 
+function decodeSourceRefParam(sourceRef: string): string {
+  try {
+    return decodeURIComponent(sourceRef);
+  } catch {
+    return sourceRef;
+  }
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ projectId: string; sourceRef: string }> }
 ) {
   try {
-    const { projectId, sourceRef } = await context.params;
+    const { projectId, sourceRef: rawRef } = await context.params;
+    const sourceRef = decodeSourceRefParam(rawRef);
     const payload = await request.json();
     const response = await updateWorkerIngestedSource(projectId, sourceRef, payload);
     return NextResponse.json(response);
@@ -27,7 +36,8 @@ export async function DELETE(
   context: { params: Promise<{ projectId: string; sourceRef: string }> }
 ) {
   try {
-    const { projectId, sourceRef } = await context.params;
+    const { projectId, sourceRef: rawRef } = await context.params;
+    const sourceRef = decodeSourceRefParam(rawRef);
     const response = await deleteWorkerIngestedSource(projectId, sourceRef);
     return NextResponse.json(response);
   } catch (error) {
