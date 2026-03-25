@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Fraunces, IBM_Plex_Sans } from "next/font/google";
 
+import { SiteFooter } from "@/components/site-footer";
+
 import "./globals.css";
 
 const display = Fraunces({
@@ -22,7 +24,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${display.variable} ${body.variable}`}>{children}</body>
+      <body className={`${display.variable} ${body.variable}`}>
+        <div className="app-root">
+          {children}
+          <SiteFooter />
+        </div>
+      </body>
     </html>
   );
 }

@@ -2454,7 +2454,7 @@ export function DemoWorkspace() {
 
               <div className="monitoring-actions">
                 <button
-                  className="button-primary"
+                  className="button-primary wide"
                   type="button"
                   onClick={() => {
                     setShowSourceComposer((current) => !current);
