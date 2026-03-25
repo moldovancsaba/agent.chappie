@@ -11,6 +11,9 @@ const sourceRequestSchema = z.object({
   label: z.string().min(1),
   source_kind: z.enum(["url", "manual_text", "uploaded_file"]),
   content_text: z.string().min(1),
+  file_name: z.string().min(1).optional(),
+  content_type: z.string().min(1).optional(),
+  content_base64: z.string().min(1).optional(),
 });
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
@@ -49,6 +52,9 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         project_summary: "managed_on_worker",
         raw_text: parsed.content_text,
         source_ref: `managed_source_${generateId("src")}`,
+        file_name: parsed.file_name,
+        content_type: parsed.content_type,
+        content_base64: parsed.content_base64,
       });
       return NextResponse.json({
         status: "queued",

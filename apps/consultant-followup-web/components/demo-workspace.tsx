@@ -616,6 +616,7 @@ export function DemoWorkspace() {
     sourceKind: "url",
     contentText: "",
   });
+  const [sourceUploadFile, setSourceUploadFile] = useState<File | null>(null);
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
   const [jobForm, setJobForm] = useState<JobFormState>({
     name: "",
@@ -935,9 +936,36 @@ export function DemoWorkspace() {
 
   async function handleCreateSource() {
     const resolvedLabel = sourceForm.label.trim() || inferSourceLabel(sourceForm.sourceKind, sourceForm.contentText);
-    if (!projectId || !sourceForm.contentText.trim()) {
+    if (!projectId) {
       setManagementStatus({ tone: "error", message: "Add the source you want monitored first." });
       return;
+    }
+    if (sourceForm.sourceKind === "uploaded_file" && !sourceUploadFile && !editingSourceId) {
+      setManagementStatus({ tone: "error", message: "Choose a document file first." });
+      return;
+    }
+    if (sourceForm.sourceKind !== "uploaded_file" && !sourceForm.contentText.trim()) {
+      setManagementStatus({ tone: "error", message: "Add the source you want monitored first." });
+      return;
+    }
+    const contentText =
+      sourceForm.sourceKind === "uploaded_file"
+        ? sourceUploadFile?.name ?? sourceForm.contentText.trim()
+        : sourceForm.contentText.trim();
+    let contentBase64: string | undefined;
+    let contentType: string | undefined;
+    let fileName: string | undefined;
+    if (sourceForm.sourceKind === "uploaded_file" && sourceUploadFile) {
+      const bytes = new Uint8Array(await sourceUploadFile.arrayBuffer());
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.subarray(index, index + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      contentBase64 = btoa(binary);
+      contentType = sourceUploadFile.type || "application/octet-stream";
+      fileName = sourceUploadFile.name;
     }
     const response = editingSourceId
       ? await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(editingSourceId)}`, {
@@ -946,7 +974,7 @@ export function DemoWorkspace() {
           body: JSON.stringify({
             label: resolvedLabel,
             source_kind: sourceForm.sourceKind,
-            content_text: sourceForm.contentText.trim(),
+            content_text: contentText,
           }),
         })
       : await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources`, {
@@ -956,7 +984,10 @@ export function DemoWorkspace() {
             source_id: generateId("source_cfg"),
             label: resolvedLabel,
             source_kind: sourceForm.sourceKind,
-            content_text: sourceForm.contentText.trim(),
+            content_text: contentText,
+            file_name: fileName,
+            content_type: contentType,
+            content_base64: contentBase64,
             status: "active",
           }),
         });
@@ -967,6 +998,7 @@ export function DemoWorkspace() {
     }
     setWorkspace((current) => (current ? { ...current, managed_sources: body.sources ?? [] } : current));
     setSourceForm({ label: "", sourceKind: "url", contentText: "" });
+    setSourceUploadFile(null);
     setEditingSourceId(null);
     setShowSourceComposer(false);
     setManagementStatus({ tone: "success", message: editingSourceId ? "Source updated." : "Source saved." });
@@ -2420,13 +2452,31 @@ export function DemoWorkspace() {
                     <p>What do you want to monitor?</p>
                   </div>
                   <div className="guided-actions">
-                    <button className={`mode-chip ${sourceForm.sourceKind === "url" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "url" }))}>
+                    <button
+                      className={`mode-chip ${sourceForm.sourceKind === "url" ? "active" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setSourceForm((current) => ({ ...current, sourceKind: "url" }));
+                        setSourceUploadFile(null);
+                      }}
+                    >
                       Competitor page
                     </button>
-                    <button className={`mode-chip ${sourceForm.sourceKind === "manual_text" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "manual_text" }))}>
+                    <button
+                      className={`mode-chip ${sourceForm.sourceKind === "manual_text" ? "active" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setSourceForm((current) => ({ ...current, sourceKind: "manual_text" }));
+                        setSourceUploadFile(null);
+                      }}
+                    >
                       Notes
                     </button>
-                    <button className={`mode-chip ${sourceForm.sourceKind === "uploaded_file" ? "active" : ""}`} type="button" onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "uploaded_file" }))}>
+                    <button
+                      className={`mode-chip ${sourceForm.sourceKind === "uploaded_file" ? "active" : ""}`}
+                      type="button"
+                      onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "uploaded_file" }))}
+                    >
                       Document
                     </button>
                   </div>
@@ -2434,19 +2484,38 @@ export function DemoWorkspace() {
                   <div className="management-form compact-form">
                     <div className="task-block">
                       <span>Step 2</span>
-                      <p>{sourceForm.sourceKind === "url" ? "Paste the page you want monitored." : sourceForm.sourceKind === "manual_text" ? "Paste the notes or copied source text." : "Paste the extracted document text or source reference."}</p>
-                    </div>
-                    <textarea
-                      value={sourceForm.contentText}
-                      onChange={(event) => setSourceForm((current) => ({ ...current, contentText: event.target.value }))}
-                      placeholder={
-                        sourceForm.sourceKind === "url"
-                          ? "https://competitor.example/pricing"
+                      <p>
+                        {sourceForm.sourceKind === "url"
+                          ? "Paste the page you want monitored."
                           : sourceForm.sourceKind === "manual_text"
-                            ? "Paste the source text you want us to monitor"
-                            : "Paste extracted document text or the source reference"
-                      }
-                    />
+                            ? "Paste the notes or copied source text."
+                            : "Upload a document. We will queue it for local processing."}
+                      </p>
+                    </div>
+                    {sourceForm.sourceKind === "uploaded_file" ? (
+                      <input
+                        type="file"
+                        accept=".txt,.md,.rtf,.pdf,.doc,.docx,application/pdf,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] ?? null;
+                          setSourceUploadFile(file);
+                          setSourceForm((current) => ({
+                            ...current,
+                            contentText: file?.name ?? "",
+                          }));
+                        }}
+                      />
+                    ) : (
+                      <textarea
+                        value={sourceForm.contentText}
+                        onChange={(event) => setSourceForm((current) => ({ ...current, contentText: event.target.value }))}
+                        placeholder={
+                          sourceForm.sourceKind === "url"
+                            ? "https://competitor.example/pricing"
+                            : "Paste the source text you want us to monitor"
+                        }
+                      />
+                    )}
                     <details className="optional-fields">
                       <summary>Add a source label (optional)</summary>
                       <input
@@ -2466,6 +2535,7 @@ export function DemoWorkspace() {
                           setEditingSourceId(null);
                           setShowSourceComposer(false);
                           setSourceForm({ label: "", sourceKind: "url", contentText: "" });
+                          setSourceUploadFile(null);
                         }}
                       >
                         Close
