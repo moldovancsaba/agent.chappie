@@ -34,7 +34,8 @@ const sourceRequestSchema = z
 
 async function enqueueQueuedSource(
   projectId: string,
-  parsed: z.infer<typeof sourceRequestSchema>
+  parsed: z.infer<typeof sourceRequestSchema>,
+  browserSessionId?: string | null
 ) {
   const submittedAt = new Date().toISOString();
   const jobId = generateId("job");
@@ -54,9 +55,10 @@ async function enqueueQueuedSource(
     requested_by: "anonymous:queue_sources",
     policy_tags: ["public-demo", "no-auth", env.agentBridgeMode, "source_management_queue"],
   });
+  const sessionKey = browserSessionId?.trim() || "queue_sources";
   await saveProject({
     projectId,
-    sessionId: "queue_sources",
+    sessionId: sessionKey,
     summary: "managed_on_worker",
     createdAt: submittedAt,
   });
@@ -125,7 +127,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
           content_type: mimeType,
           content_base64: contentBase64,
         });
-        const { jobId } = await enqueueQueuedSource(projectId, parsed);
+        const browserSessionId = String(form.get("browser_session_id") ?? "").trim() || null;
+        const { jobId } = await enqueueQueuedSource(projectId, parsed, browserSessionId);
         return NextResponse.json({
           status: "queued",
           detail: "Source received and queued for local worker processing.",
@@ -136,7 +139,9 @@ export async function POST(request: Request, context: { params: Promise<{ projec
 
       const payload = await request.json();
       const parsed = sourceRequestSchema.parse(payload);
-      const { jobId } = await enqueueQueuedSource(projectId, parsed);
+      const browserSessionId =
+        typeof payload.browser_session_id === "string" ? payload.browser_session_id.trim() || null : null;
+      const { jobId } = await enqueueQueuedSource(projectId, parsed, browserSessionId);
       return NextResponse.json({
         status: "queued",
         detail: "Source received and queued for local worker processing.",

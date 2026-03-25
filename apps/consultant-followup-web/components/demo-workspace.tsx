@@ -1022,10 +1022,6 @@ export function DemoWorkspace() {
 
   async function handleCreateSource() {
     const resolvedLabel = sourceForm.label.trim() || inferSourceLabel(sourceForm, sourceUploadFile);
-    if (!projectId) {
-      setManagementStatus({ tone: "error", message: "Add the source you want monitored first." });
-      return;
-    }
     const hasAnyInput =
       Boolean(sourceUploadFile) ||
       Boolean(sourceForm.url.trim()) ||
@@ -1033,9 +1029,17 @@ export function DemoWorkspace() {
       Boolean(sourceForm.description.trim()) ||
       Boolean(sourceForm.hashtags.trim());
     if (!hasAnyInput) {
-      setManagementStatus({ tone: "error", message: "Add the source you want monitored first." });
+      setManagementStatus({
+        tone: "error",
+        message: "Add a file, URL, notes, description, or hashtags.",
+      });
       return;
     }
+    const effectiveProjectId = projectId.trim() || generateId("demo_project");
+    if (!projectId.trim()) {
+      setProjectId(effectiveProjectId);
+    }
+    const browserSessionId = readOrCreateSessionId();
     const sourceKind: "url" | "manual_text" | "uploaded_file" = sourceUploadFile
       ? "uploaded_file"
       : sourceForm.url.trim()
@@ -1065,7 +1069,7 @@ export function DemoWorkspace() {
       fileName = sourceUploadFile.name;
     }
     const response = editingSourceId
-      ? await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(editingSourceId)}`, {
+      ? await fetch(`/api/projects/${encodeURIComponent(effectiveProjectId)}/sources/${encodeURIComponent(editingSourceId)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1080,7 +1084,7 @@ export function DemoWorkspace() {
           }),
         })
       : sourceKind === "uploaded_file" && sourceUploadFile
-        ? await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources`, {
+        ? await fetch(`/api/projects/${encodeURIComponent(effectiveProjectId)}/sources`, {
             method: "POST",
             body: (() => {
               const form = new FormData();
@@ -1093,11 +1097,12 @@ export function DemoWorkspace() {
               form.set("label", resolvedLabel);
               form.set("content_text", contentText);
               form.set("repeat_anchor_at", new Date().toISOString());
+              form.set("browser_session_id", browserSessionId);
               form.set("file", sourceUploadFile);
               return form;
             })(),
           })
-        : await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources`, {
+        : await fetch(`/api/projects/${encodeURIComponent(effectiveProjectId)}/sources`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1114,6 +1119,7 @@ export function DemoWorkspace() {
               file_name: fileName,
               content_type: contentType,
               content_base64: contentBase64,
+              browser_session_id: browserSessionId,
               status: "active",
             }),
           });
