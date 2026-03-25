@@ -2442,19 +2442,20 @@ export function DemoWorkspace() {
         {activeView === "sources-jobs" ? (
         <section className="content-grid">
           <div className="primary-column">
-            <section className="panel section-card">
-              <div className="section-head">
+            <section className="panel section-card sources-section-card">
+              <div className="sources-primary-stack">
+              <header className="section-head sources-section-head">
                 <div>
                   <span className="section-kicker">Sources</span>
                   <h2>Monitor your market and capture signals automatically.</h2>
                   <p className="section-subcopy">Add one source with its repeat cadence. We will watch it, synthesize what changed, and surface actions when a strong move emerges.</p>
                 </div>
                 <span className="section-count-badge">{workspace?.source_cards.length ?? 0} sources</span>
-              </div>
+              </header>
 
-              <div className="monitoring-actions">
+              <div className="sources-toolbar">
                 <button
-                  className="button-primary wide"
+                  className="button-primary sources-add-button"
                   type="button"
                   onClick={() => {
                     setShowSourceComposer((current) => !current);
@@ -2465,24 +2466,24 @@ export function DemoWorkspace() {
               </div>
 
               {workspace ? (
-                <div className="compact-meta">
-                  <div className="summary-row">
-                    <span>Ingested sources in this workspace</span>
-                    <strong>{workspace.source_cards.length}</strong>
+                <section className="sources-stat-grid" aria-label="Ingestion summary">
+                  <div className="sources-stat-row">
+                    <span className="sources-stat-label">Ingested sources in this workspace</span>
+                    <span className="sources-stat-value">{workspace.source_cards.length}</span>
                   </div>
-                  <div className="summary-row">
-                    <span>Recent signals available</span>
-                    <strong>{workspace.recent_activity.length}</strong>
+                  <div className="sources-stat-row">
+                    <span className="sources-stat-label">Recent signals available</span>
+                    <span className="sources-stat-value">{workspace.recent_activity.length}</span>
                   </div>
-                </div>
+                </section>
               ) : projectId ? (
-                <div className="notice">
+                <div className="notice sources-panel-notice">
                   <p>Loading the current workspace…</p>
                 </div>
               ) : null}
 
               {showSourceComposer || editingSourceId ? (
-                <div className="operator-composer">
+                <div className="operator-composer sources-form-composer">
                   <div className="management-form compact-form">
                     <label>
                       Relation
@@ -2568,7 +2569,7 @@ export function DemoWorkspace() {
                         placeholder="https://example.com/page"
                       />
                     </label>
-                    <div className="task-actions compact-actions">
+                    <div className="task-actions compact-actions sources-form-actions">
                       <button className="button-primary" type="button" onClick={() => void handleCreateSource()}>
                         {editingSourceId ? "Save source" : "Add source"}
                       </button>
@@ -2651,7 +2652,7 @@ export function DemoWorkspace() {
               ) : null}
 
               {managementStatus ? (
-                <div className={`notice ${managementStatus.tone}`}>
+                <div className={`notice sources-panel-notice ${managementStatus.tone}`}>
                   <p>{managementStatus.message}</p>
                 </div>
               ) : null}
@@ -2816,63 +2817,14 @@ export function DemoWorkspace() {
                     </article>
                   ))
                 ) : (
-                  <article className="source-asset empty-asset">
+                  <article className="source-asset empty-asset sources-empty-card">
                     <strong>No sources yet</strong>
+                    <p>Use the Add source button above to add a document, URL, or notes. Counts update after the worker ingests them.</p>
                   </article>
                 )}
               </div>
 
-              {false ? (
-                <div className="monitoring-secondary">
-                  <div className="section-head compact">
-                    <div>
-                      <span className="section-kicker">Monitoring</span>
-                      <h3>Jobs</h3>
-                    </div>
-                  </div>
-                  <div className="secondary-assets">
-                    {workspace?.managed_jobs.length ? (
-                      workspace?.managed_jobs.map((job) => (
-                        <article className="job-item" key={job.managed_job_id}>
-                          <strong>{job.name}</strong>
-                          <span>
-                            {titleCaseWords(job.trigger_type)} · {job.status}
-                            {job.schedule_text ? ` · ${job.schedule_text}` : ""}
-                          </span>
-                          <p>{job.last_action_summary ?? "No action generated yet."}</p>
-                          <div className="task-actions compact-actions">
-                            <button
-                              className="decision-button adjust"
-                              type="button"
-                              onClick={() => {
-                                setEditingJobId(job.managed_job_id);
-                                setShowJobComposer(true);
-                                setJobForm({ name: job.name, triggerType: job.trigger_type as JobFormState["triggerType"], scheduleText: job.schedule_text ?? "", sourceId: job.source_id ?? "" });
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button className="decision-button" type="button" onClick={() => void updateJob(job.managed_job_id, { status: job.status === "active" ? "paused" : "active" })}>
-                              {job.status === "active" ? "Pause" : "Resume"}
-                            </button>
-                            <button className="decision-button reject" type="button" onClick={() => void deleteJob(job.managed_job_id)}>
-                              Delete
-                            </button>
-                          </div>
-                        </article>
-                      ))
-                    ) : (
-                      workspace?.monitor_jobs.map((job) => (
-                        <article className="job-item" key={job.job_name}>
-                          <strong>{job.job_name}</strong>
-                          <span>Status: {job.status}</span>
-                          <p>Last run: {formatTimestamp(job.last_run_at)} · last source: {humanSourceLabel(job.last_source_ref)}</p>
-                        </article>
-                      ))
-                    )}
-                  </div>
-                </div>
-              ) : null}
+              </div>
             </section>
           </div>
 

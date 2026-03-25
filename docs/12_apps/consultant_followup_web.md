@@ -54,6 +54,18 @@ The adoption is style-level, not product-level. The current app keeps Agent.Chap
 - command-center framing without reintroducing dashboard clutter
 - checklist meta should use compact neutral status chips; do not let priority/confidence/NBA expand into oversized promotional pills or full-width banners
 
+### Sources panel layout (spacing contract)
+
+The **Sources** primary column uses a single vertical stack (`.sources-primary-stack`) with a **fixed 20px gap** between major blocks so the header, primary CTA, ingestion stats, optional composer, flash notices, and the source list do not collapse or crowd each other.
+
+- **Ingestion summary** uses `.sources-stat-grid` / `.sources-stat-row`: a **CSS grid** with `label | value` columns (not the generic `.summary-row` flex pattern used elsewhere). This keeps long labels wrapping cleanly and numeric counts right-aligned without uneven vertical rhythm between rows.
+- **Add source** is `.sources-add-button`: full width of the column, **min-height 48px**, separated from stats only by the stack gap (no ad-hoc negative margins).
+- **Composer actions** (Save / Close) use `.sources-form-actions`: **12px row/column gap** between buttons and a **top border** separating them from fields so they never visually merge with the last input.
+- **Empty list** uses `.sources-empty-card`: dashed border, short helper copy under the title, same outer spacing as ingested source cards via the shared `.sources-workspace` grid (**16px** row gap).
+- **Compact action rows** on cards (`.task-actions.compact-actions`) use **12–14px** gaps; flashcards override with `.flashcard-actions` so NBA/knowledge layouts stay unchanged.
+
+Global footer: version string and **Terms** / **Privacy** links live in `SiteFooter` (`components/site-footer.tsx`); legal stubs are `/terms` and `/privacy`.
+
 This visual direction must not weaken the product rules:
 
 - exactly 3 ranked task cards
