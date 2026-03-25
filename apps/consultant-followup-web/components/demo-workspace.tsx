@@ -1461,25 +1461,7 @@ export function DemoWorkspace() {
   const visibleFlashcards =
     workspace && workspace.visible_intelligence_cards.length
       ? workspace.visible_intelligence_cards
-      : (workspace?.fact_chips ?? []).map((chip) => ({
-          card_id: chip.fact_id,
-          project_id: workspace?.project_id ?? "",
-          insight: `${humanizeFactCategory(chip.category)}: ${chip.label}`,
-          implication: "This fact currently contributes to recommendation weighting.",
-          potential_moves: [],
-          fact_refs: [chip.fact_id],
-          source_refs: chip.source_refs,
-          segment: chip.category,
-          competitor: null,
-          channel: "pricing page",
-          state: "active",
-          expires_at: null,
-          confidence: chip.confidence,
-          impact_score: 50,
-          freshness_score: 0.5,
-          evidence_strength: 0.5,
-          rank_score: chip.confidence,
-        }));
+      : [];
   const taskScopedSourceRefs = selectedTask?.supporting_source_refs ?? [];
   const selectedTaskEvidence = selectedTask
     ? workspace?.recent_activity.filter(

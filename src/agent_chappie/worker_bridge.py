@@ -3229,6 +3229,31 @@ def build_atomic_facts(
             }
         )
 
+    def is_low_quality_entity(value: str) -> bool:
+        normalized = clean_entity(value)
+        if not normalized:
+            return True
+        lowered = normalized.lower()
+        blocked = {
+            "non",
+            "none",
+            "uploaded file",
+            "region unknown",
+            "unknown",
+            "market",
+            "offer",
+            "pricing",
+            "proof",
+            "positioning",
+        }
+        if lowered in blocked:
+            return True
+        if len(normalized) < 3:
+            return True
+        if normalized.endswith(".docx") or normalized.endswith(".pdf"):
+            return True
+        return False
+
     # 1) Atomic signal facts (traceable to one observation row)
     for row in observation_rows:
         add_fact(
@@ -3251,7 +3276,7 @@ def build_atomic_facts(
         text = str(row.get("raw_text") or "")
         for entity in extract_named_entities(text):
             normalized = clean_entity(entity)
-            if normalized:
+            if normalized and not is_low_quality_entity(normalized):
                 competitors.add((normalized, str(row.get("source_ref") or "")))
     for row in knowledge_rows:
         competitor = clean_entity(str(row.get("competitor") or ""))
@@ -3342,6 +3367,21 @@ def build_flashcards_from_atomic_facts(
             }
         )
 
+    def looks_generic_text(value: str) -> bool:
+        lowered = value.lower()
+        generic_fragments = (
+            "region unknown",
+            "uploaded file",
+            "non changed pricing",
+            "this fact currently contributes",
+            "market:",
+            "offer:",
+            "pricing:",
+            "proof:",
+            "positioning:",
+        )
+        return any(fragment in lowered for fragment in generic_fragments)
+
     competitor_count_fact = next(
         (
             fact
@@ -3366,7 +3406,12 @@ def build_flashcards_from_atomic_facts(
 
     if competitor_count_fact:
         value = int((competitor_count_fact.get("fact_value") or {}).get("value") or 0)
+        competitor_items = (competitor_count_fact.get("fact_value") or {}).get("items") or []
+        top_examples = [item for item in competitor_items[:4] if isinstance(item, str) and item.strip()]
+        examples_text = f" Top detected names: {', '.join(top_examples)}." if top_examples else ""
         insight = f"{value} competitors/entities are currently represented in your market evidence set."
+        if examples_text:
+            insight = f"{insight}{examples_text}"
         implication = (
             "The comparison field is crowded; differentiation and channel-specific proof need to be explicit."
             if value >= 10
@@ -3418,6 +3463,8 @@ def build_flashcards_from_atomic_facts(
         if count <= 0:
             continue
         insight = f"{count} {signal_type.replace('_', ' ')} signal(s) were detected in the latest source set."
+        if looks_generic_text(insight):
+            continue
         implication = (
             f"{signal_type.replace('_', ' ').title()} pressure is active now and can affect near-term conversion decisions."
         )
@@ -3438,7 +3485,7 @@ def build_flashcards_from_atomic_facts(
         fallback_refs = [fact["fact_id"] for fact in atomic_facts[:3]]
         fallback_source_refs = [fact.get("source_ref") or "" for fact in atomic_facts[:3]]
         card(
-            insight=f"Atomic extraction ran for project context: {kyc_context[:120] or 'project'}",
+            insight=f"Atomic extraction completed for your project context: {kyc_context[:120] or 'project'}",
             implication="The source is stored, but more explicit business evidence is needed for higher-impact decisions.",
             potential_moves=[
                 "Add one denser source with concrete commercial details.",
