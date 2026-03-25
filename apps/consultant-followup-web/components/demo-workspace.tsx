@@ -1149,7 +1149,7 @@ export function DemoWorkspace() {
       message: editingSourceId
         ? "Source updated."
         : queuedOk
-          ? `Queued (job ${body.job_id ?? ""}). Local worker will process and sync Know More.`
+          ? `Queued Job (${body.job_id ?? ""}).`
           : "Source saved.",
     });
   }
@@ -1598,7 +1598,7 @@ export function DemoWorkspace() {
     : [];
   const navigationItems: Array<{ view: AppView; label: string; description: string }> = [
     { view: "checklist", label: "Checklist", description: "Your next three moves" },
-    { view: "know-more", label: "Know More", description: "What we learned and why" },
+    { view: "know-more", label: "{knowmore}", description: "What we learned and why" },
     { view: "sources-jobs", label: "Sources", description: "What we monitor for you" },
   ];
   const activeNavigationItem = navigationItems.find((item) => item.view === activeView) ?? navigationItems[0];
@@ -1870,7 +1870,7 @@ export function DemoWorkspace() {
                   ) : null}
                   <p>
                     We still processed the source. We are monitoring pricing shifts, competitor positioning, and offer
-                    changes from it. Open Know More to review the current intelligence, or add another source if you
+                    changes from it. Open {"{knowmore}"} to review the current intelligence, or add another source if you
                     want us to push toward a checklist move.
                   </p>
                   <div className="guided-actions">
@@ -1879,7 +1879,7 @@ export function DemoWorkspace() {
                       type="button"
                       onClick={() => setActiveView("know-more")}
                     >
-                      Open Know More
+                      Open {"{knowmore}"}
                     </button>
                     <button
                       className="button-secondary"
@@ -2070,9 +2070,9 @@ export function DemoWorkspace() {
             <section className="panel section-card intelligence-layout">
               <div className="section-head">
                 <div>
-                  <span className="section-kicker">Know More</span>
+                  <span className="section-kicker">{"{knowmore}"}</span>
                   <h2>Structured knowledge flashcards from the sources</h2>
-                  <p className="section-subcopy">Know More is useful even when the checklist is blocked.</p>
+                  <p className="section-subcopy">{"{knowmore}"} is useful even when the checklist is blocked.</p>
                 </div>
                 <span className="section-count-badge">
                   {workspace?.fact_chips.length ?? 0} flashcards · {filteredKnowledgeCards.length} cards

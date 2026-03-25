@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { jobRequestSchema } from "@/lib/contracts";
 import { env, isDirectWorkerEnabled } from "@/lib/env";
-import { generateId } from "@/lib/ids";
+import { generateId, randomUuid } from "@/lib/ids";
 import { enqueueJobForWorker, saveJob, saveProject } from "@/lib/storage";
 import { createWorkerSource } from "@/lib/worker-bridge";
 
@@ -38,7 +38,7 @@ async function enqueueQueuedSource(
   browserSessionId?: string | null
 ) {
   const submittedAt = new Date().toISOString();
-  const jobId = generateId("job");
+  const jobId = randomUuid();
   const jobRequest = jobRequestSchema.parse({
     job_id: jobId,
     app_id: env.appId,

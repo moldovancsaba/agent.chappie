@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { demoJobSubmissionSchema, jobRequestSchema } from "@/lib/contracts";
 import { env } from "@/lib/env";
-import { generateId } from "@/lib/ids";
+import { generateId, randomUuid } from "@/lib/ids";
 import { enqueueJobForWorker, saveJob, saveProject } from "@/lib/storage";
 
 export async function POST(request: Request) {
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     }
 
     const projectId = payload.projectId ?? generateId("demo_project");
-    const jobId = generateId("job");
+    const jobId = randomUuid();
     const submittedAt = new Date().toISOString();
     const requestedBy = `anonymous:${payload.sessionId}`;
 

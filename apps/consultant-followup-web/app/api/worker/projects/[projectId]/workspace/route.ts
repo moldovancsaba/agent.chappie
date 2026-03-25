@@ -16,7 +16,7 @@ function isAuthorized(request: Request) {
 
 /**
  * Worker callback: push the latest project workspace snapshot
- * so hosted queue mode can render Know More / Sources views.
+ * so hosted queue mode can render {knowmore} / Sources views.
  */
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
   if (!isAuthorized(request)) {
