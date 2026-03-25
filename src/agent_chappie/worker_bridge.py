@@ -3594,7 +3594,7 @@ def build_nba_tasks_from_cards(cards: list[dict[str, Any]], top_n: int = 3) -> l
             {
                 "rank": rank,
                 "title": title,
-                "why_now": implication,
+                "why_now": f"We detected a concrete signal change in stored intelligence: {implication}",
                 "expected_advantage": f"Weighted by confidence {card.get('confidence', 0):.2f}, impact {card.get('impact_score', 0):.0f}, and urgency.",
                 "evidence_refs": unique_values(evidence_refs)[:8] or [f"card::{card.get('card_id')}"],
                 "best_before": str(card.get("expires_at") or ""),
