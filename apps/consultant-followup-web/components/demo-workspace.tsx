@@ -15,9 +15,12 @@ type TaskDecision = {
 };
 type SourceFormState = {
   label: string;
-  sourceKind: "url" | "manual_text" | "uploaded_file";
+  relation: "general" | "industry" | "competitors" | "my_business";
   repeatInterval: "never" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
-  contentText: string;
+  url: string;
+  contentNotes: string;
+  description: string;
+  hashtags: string;
 };
 type JobFormState = {
   name: string;
@@ -572,23 +575,25 @@ function findTaskSourceRef(task: RecommendedTask) {
   return task.supporting_source_refs?.find((sourceRef) => sourceRef && !sourceRef.startsWith("feedback::")) ?? null;
 }
 
-function inferSourceLabel(sourceKind: SourceFormState["sourceKind"], contentText: string) {
-  const trimmed = contentText.trim();
-  if (!trimmed) {
-    return "";
+function inferSourceLabel(source: SourceFormState, uploadFile: File | null) {
+  if (uploadFile?.name?.trim()) {
+    return uploadFile.name.trim();
   }
-  if (sourceKind === "url") {
+  if (source.url.trim()) {
     try {
-      const host = new URL(trimmed).hostname.replace(/^www\./, "");
-      return host || "Competitor page";
+      const host = new URL(source.url.trim()).hostname.replace(/^www\./, "");
+      return host || "Source";
     } catch {
-      return "Competitor page";
+      return "Source";
     }
   }
-  if (sourceKind === "uploaded_file") {
-    return "Document source";
+  if (source.description.trim()) {
+    return source.description.trim().slice(0, 80);
   }
-  return "Source note";
+  if (source.contentNotes.trim()) {
+    return source.contentNotes.trim().slice(0, 80);
+  }
+  return "Source";
 }
 
 function fallbackSourceLabel(sourceRef: string) {
@@ -634,11 +639,11 @@ function normalizeWorkspaceSnapshot(payload: Partial<WorkspaceSnapshot> & { proj
       offer_signals: 0,
     },
     competitive_snapshot: payload.competitive_snapshot ?? {
-      pricing_position: "Still forming",
-      acquisition_strategy_comparison: "Still forming",
+      pricing_position: "",
+      acquisition_strategy_comparison: "",
       active_threats: [],
       immediate_opportunities: [],
-      reference_competitor: "Comparison set still forming",
+      reference_competitor: "",
     },
     knowledge_summary: payload.knowledge_summary ?? [],
     monitor_jobs: payload.monitor_jobs ?? [],
@@ -666,9 +671,12 @@ export function DemoWorkspace() {
   const [workspaceError, setWorkspaceError] = useState("");
   const [sourceForm, setSourceForm] = useState<SourceFormState>({
     label: "",
-    sourceKind: "url",
+    relation: "general",
     repeatInterval: "never",
-    contentText: "",
+    url: "",
+    contentNotes: "",
+    description: "",
+    hashtags: "",
   });
   const [sourceUploadFile, setSourceUploadFile] = useState<File | null>(null);
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
@@ -1013,27 +1021,38 @@ export function DemoWorkspace() {
   }
 
   async function handleCreateSource() {
-    const resolvedLabel = sourceForm.label.trim() || inferSourceLabel(sourceForm.sourceKind, sourceForm.contentText);
+    const resolvedLabel = sourceForm.label.trim() || inferSourceLabel(sourceForm, sourceUploadFile);
     if (!projectId) {
       setManagementStatus({ tone: "error", message: "Add the source you want monitored first." });
       return;
     }
-    if (sourceForm.sourceKind === "uploaded_file" && !sourceUploadFile && !editingSourceId) {
-      setManagementStatus({ tone: "error", message: "Choose a document file first." });
-      return;
-    }
-    if (sourceForm.sourceKind !== "uploaded_file" && !sourceForm.contentText.trim()) {
+    const hasAnyInput =
+      Boolean(sourceUploadFile) ||
+      Boolean(sourceForm.url.trim()) ||
+      Boolean(sourceForm.contentNotes.trim()) ||
+      Boolean(sourceForm.description.trim()) ||
+      Boolean(sourceForm.hashtags.trim());
+    if (!hasAnyInput) {
       setManagementStatus({ tone: "error", message: "Add the source you want monitored first." });
       return;
     }
-    const contentText =
-      sourceForm.sourceKind === "uploaded_file"
-        ? sourceUploadFile?.name ?? sourceForm.contentText.trim()
-        : sourceForm.contentText.trim();
+    const sourceKind: "url" | "manual_text" | "uploaded_file" = sourceUploadFile
+      ? "uploaded_file"
+      : sourceForm.url.trim()
+        ? "url"
+        : "manual_text";
+    const contentParts = [
+      sourceForm.url.trim() ? `URL: ${sourceForm.url.trim()}` : "",
+      sourceForm.description.trim() ? `Description: ${sourceForm.description.trim()}` : "",
+      sourceForm.hashtags.trim() ? `Hashtags: ${sourceForm.hashtags.trim()}` : "",
+      sourceForm.contentNotes.trim() ? `Content / Notes: ${sourceForm.contentNotes.trim()}` : "",
+      `Relation: ${sourceForm.relation}`,
+    ].filter(Boolean);
+    const contentText = sourceKind === "uploaded_file" ? sourceUploadFile?.name ?? resolvedLabel : contentParts.join("\n");
     let contentBase64: string | undefined;
     let contentType: string | undefined;
     let fileName: string | undefined;
-    if (sourceForm.sourceKind === "uploaded_file" && sourceUploadFile) {
+    if (sourceKind === "uploaded_file" && sourceUploadFile) {
       const bytes = new Uint8Array(await sourceUploadFile.arrayBuffer());
       let binary = "";
       const chunkSize = 0x8000;
@@ -1051,17 +1070,25 @@ export function DemoWorkspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             label: resolvedLabel,
-            source_kind: sourceForm.sourceKind,
+            source_kind: sourceKind,
+            relation: sourceForm.relation,
+            description: sourceForm.description.trim() || undefined,
+            hashtags: sourceForm.hashtags.trim() || undefined,
+            url: sourceForm.url.trim() || undefined,
             repeat_interval: sourceForm.repeatInterval,
             content_text: contentText,
           }),
         })
-      : sourceForm.sourceKind === "uploaded_file" && sourceUploadFile
+      : sourceKind === "uploaded_file" && sourceUploadFile
         ? await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources`, {
             method: "POST",
             body: (() => {
               const form = new FormData();
-              form.set("source_kind", sourceForm.sourceKind);
+              form.set("source_kind", sourceKind);
+              form.set("relation", sourceForm.relation);
+              form.set("description", sourceForm.description.trim());
+              form.set("hashtags", sourceForm.hashtags.trim());
+              form.set("url", sourceForm.url.trim());
               form.set("repeat_interval", sourceForm.repeatInterval);
               form.set("label", resolvedLabel);
               form.set("content_text", contentText);
@@ -1076,7 +1103,11 @@ export function DemoWorkspace() {
             body: JSON.stringify({
               source_id: generateId("source_cfg"),
               label: resolvedLabel,
-              source_kind: sourceForm.sourceKind,
+              source_kind: sourceKind,
+              relation: sourceForm.relation,
+              description: sourceForm.description.trim() || undefined,
+              hashtags: sourceForm.hashtags.trim() || undefined,
+              url: sourceForm.url.trim() || undefined,
               repeat_interval: sourceForm.repeatInterval,
               repeat_anchor_at: new Date().toISOString(),
               content_text: contentText,
@@ -1094,7 +1125,15 @@ export function DemoWorkspace() {
     setWorkspace((current) =>
       current && Array.isArray(body.sources) ? { ...current, managed_sources: body.sources } : current
     );
-    setSourceForm({ label: "", sourceKind: "url", repeatInterval: "never", contentText: "" });
+    setSourceForm({
+      label: "",
+      relation: "general",
+      repeatInterval: "never",
+      url: "",
+      contentNotes: "",
+      description: "",
+      hashtags: "",
+    });
     setSourceUploadFile(null);
     setEditingSourceId(null);
     setShowSourceComposer(false);
@@ -1438,6 +1477,15 @@ export function DemoWorkspace() {
       !hasPlaceholderTaskText(task.why_now) &&
       !hasPlaceholderTaskText(task.expected_advantage)
   );
+  const hasCompetitiveSnapshotData = Boolean(
+    workspace?.competitive_snapshot.reference_competitor ||
+      workspace?.competitive_snapshot.pricing_position ||
+      workspace?.competitive_snapshot.acquisition_strategy_comparison ||
+      workspace?.competitive_snapshot.current_weakness ||
+      workspace?.competitive_snapshot.risk_level ||
+      (workspace?.competitive_snapshot.active_threats?.length ?? 0) > 0 ||
+      (workspace?.competitive_snapshot.immediate_opportunities?.length ?? 0) > 0
+  );
   const sourceLabelByRef = new Map<string, string>();
   for (const source of workspace?.source_cards ?? []) {
     sourceLabelByRef.set(source.source_ref, source.label);
@@ -1590,6 +1638,8 @@ export function DemoWorkspace() {
           <div className="status-stack">
             <span className="status-label">Project</span>
             <strong>{projectLabel}</strong>
+            <small>{activeView === "checklist" ? "Decision mode" : activeView === "know-more" ? "Intelligence mode" : "Monitoring mode"}</small>
+            <small>{tasks.find((task) => task.is_next_best_action)?.title ?? "Waiting for the next strong move"}</small>
           </div>
           <div className="status-stack">
             <span className="status-label">Confidence</span>
@@ -1616,23 +1666,6 @@ export function DemoWorkspace() {
               Drop one source. Agent.Chappie extracts signals, builds market intelligence, and surfaces actions you can
               execute this week when a strong advantage appears.
             </p>
-          </div>
-
-          <div className="project-status">
-            <div className="status-stack">
-              <span className="status-label">Workspace</span>
-              <strong>{projectLabel}</strong>
-            </div>
-            <div className="status-stack">
-              <span className="status-label">Operating mode</span>
-              <strong>{activeView === "checklist" ? "Decision mode" : activeView === "know-more" ? "Intelligence mode" : "Monitoring mode"}</strong>
-            </div>
-            <div className="status-stack">
-              <span className="status-label">Next best action</span>
-              <strong>
-                {tasks.find((task) => task.is_next_best_action)?.title ?? "Waiting for the next strong move"}
-              </strong>
-            </div>
           </div>
         </header>
 
@@ -2075,29 +2108,39 @@ export function DemoWorkspace() {
                 </div>
               ) : null}
 
+              {hasCompetitiveSnapshotData ? (
               <article className="intel-card snapshot-card">
                 <div className="operator-head">
                   <h3>Competitive Position Snapshot</h3>
-                  <span>{workspace?.competitive_snapshot.reference_competitor ?? "Comparison set still forming"}</span>
+                  <span>{workspace?.competitive_snapshot.reference_competitor ?? ""}</span>
                 </div>
                 <div className="summary-stack">
+                  {workspace?.competitive_snapshot.pricing_position ? (
                   <div className="summary-row">
                     <span>Pricing position</span>
-                    <strong>{workspace?.competitive_snapshot.pricing_position ?? "Still forming"}</strong>
+                    <strong>{workspace?.competitive_snapshot.pricing_position}</strong>
                   </div>
+                  ) : null}
+                  {workspace?.competitive_snapshot.acquisition_strategy_comparison ? (
                   <div className="summary-row">
                     <span>Acquisition comparison</span>
-                    <strong>{workspace?.competitive_snapshot.acquisition_strategy_comparison ?? "Still forming"}</strong>
+                    <strong>{workspace?.competitive_snapshot.acquisition_strategy_comparison}</strong>
                   </div>
+                  ) : null}
+                  {workspace?.competitive_snapshot.current_weakness ? (
                   <div className="summary-row">
                     <span>Current weakness</span>
-                    <strong>{workspace?.competitive_snapshot.current_weakness ?? "Still forming"}</strong>
+                    <strong>{workspace?.competitive_snapshot.current_weakness}</strong>
                   </div>
+                  ) : null}
+                  {workspace?.competitive_snapshot.risk_level ? (
                   <div className="summary-row">
                     <span>Risk level</span>
-                    <strong>{titleCaseWords(workspace?.competitive_snapshot.risk_level ?? "medium")}</strong>
+                    <strong>{titleCaseWords(workspace?.competitive_snapshot.risk_level)}</strong>
                   </div>
+                  ) : null}
                 </div>
+                {(workspace?.competitive_snapshot.active_threats ?? []).length ? (
                 <div className="task-block">
                   <span>Active threats</span>
                   <ul>
@@ -2106,6 +2149,8 @@ export function DemoWorkspace() {
                     ))}
                   </ul>
                 </div>
+                ) : null}
+                {(workspace?.competitive_snapshot.immediate_opportunities ?? []).length ? (
                 <div className="task-block">
                   <span>Immediate opportunities</span>
                   <ul>
@@ -2114,7 +2159,9 @@ export function DemoWorkspace() {
                     ))}
                   </ul>
                 </div>
+                ) : null}
               </article>
+              ) : null}
 
               {visibleFlashcards.length ? (
                 <article className="intel-card">
@@ -2528,75 +2575,48 @@ export function DemoWorkspace() {
 
               {showSourceComposer || editingSourceId ? (
                 <div className="operator-composer">
-                  <div className="task-block">
-                    <span>Step 1</span>
-                    <p>What do you want to monitor?</p>
-                  </div>
-                  <div className="guided-actions">
-                    <button
-                      className={`mode-chip ${sourceForm.sourceKind === "url" ? "active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        setSourceForm((current) => ({ ...current, sourceKind: "url" }));
-                        setSourceUploadFile(null);
-                      }}
-                    >
-                      Competitor page
-                    </button>
-                    <button
-                      className={`mode-chip ${sourceForm.sourceKind === "manual_text" ? "active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        setSourceForm((current) => ({ ...current, sourceKind: "manual_text" }));
-                        setSourceUploadFile(null);
-                      }}
-                    >
-                      Notes
-                    </button>
-                    <button
-                      className={`mode-chip ${sourceForm.sourceKind === "uploaded_file" ? "active" : ""}`}
-                      type="button"
-                      onClick={() => setSourceForm((current) => ({ ...current, sourceKind: "uploaded_file" }))}
-                    >
-                      Document
-                    </button>
-                  </div>
-
                   <div className="management-form compact-form">
-                    <div className="task-block">
-                      <span>Step 2</span>
-                      <p>
-                        {sourceForm.sourceKind === "url"
-                          ? "Paste the page you want monitored."
-                          : sourceForm.sourceKind === "manual_text"
-                            ? "Paste the notes or copied source text."
-                            : "Upload a document. We will queue it for local processing."}
-                      </p>
-                    </div>
-                    {sourceForm.sourceKind === "uploaded_file" ? (
+                    <label>
+                      Relation
+                      <select
+                        value={sourceForm.relation}
+                        onChange={(event) =>
+                          setSourceForm((current) => ({
+                            ...current,
+                            relation: event.target.value as SourceFormState["relation"],
+                          }))
+                        }
+                      >
+                        <option value="general">General</option>
+                        <option value="industry">Industry</option>
+                        <option value="competitors">Competitors</option>
+                        <option value="my_business">My business</option>
+                      </select>
+                    </label>
+                    <label>
+                      Upload a document
                       <input
                         type="file"
                         accept=".txt,.md,.rtf,.pdf,.doc,.docx,application/pdf,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        onChange={(event) => {
-                          const file = event.target.files?.[0] ?? null;
-                          setSourceUploadFile(file);
-                          setSourceForm((current) => ({
-                            ...current,
-                            contentText: file?.name ?? "",
-                          }));
-                        }}
+                        onChange={(event) => setSourceUploadFile(event.target.files?.[0] ?? null)}
                       />
-                    ) : (
-                      <textarea
-                        value={sourceForm.contentText}
-                        onChange={(event) => setSourceForm((current) => ({ ...current, contentText: event.target.value }))}
-                        placeholder={
-                          sourceForm.sourceKind === "url"
-                            ? "https://competitor.example/pricing"
-                            : "Paste the source text you want us to monitor"
-                        }
+                    </label>
+                    <label>
+                      Description
+                      <input
+                        value={sourceForm.description}
+                        onChange={(event) => setSourceForm((current) => ({ ...current, description: event.target.value }))}
+                        placeholder="Optional context for this source"
                       />
-                    )}
+                    </label>
+                    <label>
+                      Hashtags
+                      <input
+                        value={sourceForm.hashtags}
+                        onChange={(event) => setSourceForm((current) => ({ ...current, hashtags: event.target.value }))}
+                        placeholder="#pricing #offer #churn"
+                      />
+                    </label>
                     <details className="optional-fields">
                       <summary>Add a source label (optional)</summary>
                       <input
@@ -2624,6 +2644,22 @@ export function DemoWorkspace() {
                         <option value="yearly">Yearly</option>
                       </select>
                     </label>
+                    <label>
+                      Content / Notes
+                      <textarea
+                        value={sourceForm.contentNotes}
+                        onChange={(event) => setSourceForm((current) => ({ ...current, contentNotes: event.target.value }))}
+                        placeholder="Paste context notes or copied source text"
+                      />
+                    </label>
+                    <label>
+                      URL
+                      <input
+                        value={sourceForm.url}
+                        onChange={(event) => setSourceForm((current) => ({ ...current, url: event.target.value }))}
+                        placeholder="https://example.com/page"
+                      />
+                    </label>
                     <div className="task-actions compact-actions">
                       <button className="button-primary" type="button" onClick={() => void handleCreateSource()}>
                         {editingSourceId ? "Save source" : "Add source"}
@@ -2634,7 +2670,15 @@ export function DemoWorkspace() {
                         onClick={() => {
                           setEditingSourceId(null);
                           setShowSourceComposer(false);
-                          setSourceForm({ label: "", sourceKind: "url", repeatInterval: "never", contentText: "" });
+                          setSourceForm({
+                            label: "",
+                            relation: "general",
+                            repeatInterval: "never",
+                            url: "",
+                            contentNotes: "",
+                            description: "",
+                            hashtags: "",
+                          });
                           setSourceUploadFile(null);
                         }}
                       >
@@ -2731,9 +2775,12 @@ export function DemoWorkspace() {
                                 setShowSourceComposer(true);
                                 setSourceForm({
                                   label: source.label,
-                                  sourceKind: source.source_kind as SourceFormState["sourceKind"],
+                                  relation: "general",
                                   repeatInterval: source.repeat_interval ?? "never",
-                                  contentText: source.content_text,
+                                  url: source.source_kind === "url" ? source.content_text : "",
+                                  contentNotes: source.source_kind === "manual_text" ? source.content_text : "",
+                                  description: "",
+                                  hashtags: "",
                                 });
                               }}
                             >
@@ -2863,13 +2910,8 @@ export function DemoWorkspace() {
                 ) : (
                   <article className="source-asset empty-asset">
                     <strong>No sources in this workspace yet</strong>
-                    <span>This page only shows sources linked to the current loaded project.</span>
-                    <p>Add one competitor page or document here, or return to the browser session that created the earlier sources if you expected existing cards.</p>
-                    <ul>
-                      <li>pricing page</li>
-                      <li>offer page</li>
-                      <li>landing page</li>
-                    </ul>
+                    <span>This view only shows sources linked to the active project.</span>
+                    <p>Add a source to start analysis for this project.</p>
                   </article>
                 )}
               </div>

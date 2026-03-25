@@ -11,6 +11,10 @@ const sourceRequestSchema = z
   .object({
     label: z.string().min(1),
     source_kind: z.enum(["url", "manual_text", "uploaded_file"]),
+    relation: z.enum(["general", "industry", "competitors", "my_business"]).optional(),
+    description: z.string().optional(),
+    hashtags: z.string().optional(),
+    url: z.string().optional(),
     repeat_interval: z.enum(["never", "daily", "weekly", "monthly", "quarterly", "yearly"]).default("never"),
     repeat_anchor_at: z.string().min(1).optional(),
     content_text: z.string().min(1),
@@ -110,6 +114,10 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         const parsed = sourceRequestSchema.parse({
           label,
           source_kind: sourceKind,
+          relation: String(form.get("relation") ?? "").trim() || undefined,
+          description: String(form.get("description") ?? "").trim() || undefined,
+          hashtags: String(form.get("hashtags") ?? "").trim() || undefined,
+          url: String(form.get("url") ?? "").trim() || undefined,
           repeat_interval: repeatInterval,
           repeat_anchor_at: String(form.get("repeat_anchor_at") ?? "").trim() || undefined,
           content_text: contentText || label,

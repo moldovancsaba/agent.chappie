@@ -3966,7 +3966,7 @@ def build_competitive_snapshot(
 ) -> dict[str, Any]:
     competitor = next((unit["competitor"] for unit in evidence_units if clean_entity(str(unit.get("competitor") or ""))), None)
     if not competitor:
-        competitor = next((row["competitor"] for row in knowledge_rows if clean_entity(row["competitor"])), "Comparison set still forming")
+        competitor = next((row["competitor"] for row in knowledge_rows if clean_entity(row["competitor"])), None)
     pricing_observation = next((row for row in observation_rows if row["signal_type"] == "pricing_change"), None)
     offer_observation = next((row for row in observation_rows if row["signal_type"] == "offer"), None)
     closure_observation = next((row for row in observation_rows if row["signal_type"] == "closure"), None)
@@ -3981,7 +3981,7 @@ def build_competitive_snapshot(
     top_offer_cluster = pick_best_action_cluster(offer_units)
     top_proof_cluster = pick_best_action_cluster(proof_units)
 
-    pricing_position = "No pricing pressure detected yet."
+    pricing_position = ""
     if pricing_observation:
         pricing_position = (
             f"{pricing_observation['competitor']} is resetting buyer price expectations in "
@@ -3991,10 +3991,10 @@ def build_competitive_snapshot(
         pricing_position = summarize_snapshot_cluster_pressure(
             cluster=top_pricing_cluster,
             fallback_competitor=competitor,
-            fallback="Pricing pressure is visible in the comparison set.",
+            fallback="",
         )
 
-    acquisition_strategy = "No competitor is clearly winning on low-friction acquisition yet."
+    acquisition_strategy = ""
     if offer_observation:
         acquisition_strategy = (
             f"{offer_observation['competitor']} is lowering switching friction in "
@@ -4008,10 +4008,10 @@ def build_competitive_snapshot(
         acquisition_strategy = summarize_snapshot_cluster_pressure(
             cluster=top_offer_cluster,
             fallback_competitor=competitor,
-            fallback="Offer or positioning pressure is shaping low-friction acquisition.",
+            fallback="",
         )
 
-    active_threats = [summarize_observation_threat(row) for row in observation_rows[:3]] or ["No immediate competitive threats are strongly evidenced yet."]
+    active_threats = [summarize_observation_threat(row) for row in observation_rows[:3]]
     cluster_threats = build_snapshot_cluster_threats(pricing_clusters, offer_clusters, proof_clusters, competitor)
     if cluster_threats:
         active_threats = unique_values(cluster_threats + active_threats)[:3]
@@ -4027,10 +4027,8 @@ def build_competitive_snapshot(
     open_questions_card = next((card for card in knowledge_cards if card["knowledge_id"] == "open_questions"), None)
     if open_questions_card and len(immediate_opportunities) < 3:
         immediate_opportunities.extend(open_questions_card["potential_moves"][: 3 - len(immediate_opportunities)])
-    if not immediate_opportunities:
-        immediate_opportunities.append("Add one more source to sharpen the next recommendation cycle.")
 
-    current_weakness = "No dominant weakness is strongly evidenced yet."
+    current_weakness = ""
     if offer_observation:
         current_weakness = "Weakness: no lower-friction entry offer is visible while a competitor is using offer-led acquisition."
     elif pricing_observation:
@@ -4038,7 +4036,7 @@ def build_competitive_snapshot(
     elif top_proof_cluster:
         current_weakness = summarize_snapshot_weakness(top_proof_cluster, competitor)
 
-    risk_level = "low"
+    risk_level = ""
     if closure_observation or (pricing_observation and offer_observation):
         risk_level = "high"
     elif pricing_observation or offer_observation or asset_sale_observation:
