@@ -78,6 +78,7 @@ from agent_chappie.observation_engine import (
     SourcePackage,
     build_source_hash,
     clean_entity,
+    clause_matches_keyword,
     deduplicate_observations,
     extract_action_detail,
     extract_clauses,
@@ -89,11 +90,51 @@ from agent_chappie.observation_engine import (
     generate_recommended_tasks,
     host_to_entity,
     humanize_region,
+    is_legal_or_evidentiary_context,
+    is_non_commercial_research_context,
     normalize_source_package,
     recover_source_context,
     repair_recommended_tasks,
     utc_now_iso,
 )
+
+
+def _word_boundary_any(lowered: str, words: tuple[str, ...]) -> bool:
+    return any(re.search(rf"\b{re.escape(w)}\b", lowered) for w in words)
+
+
+def _commercial_offer_tokens_in_text(lowered: str) -> bool:
+    """True for B2B-style offer language; false for 'offering screenings' in research/clinical copy."""
+    if is_non_commercial_research_context(lowered):
+        return False
+    if is_legal_or_evidentiary_context(lowered):
+        return False
+    if re.search(r"\b(offers?|offering)\b", lowered):
+        return True
+    if _word_boundary_any(lowered, ("discount", "voucher")):
+        return True
+    if "free onboarding" in lowered:
+        return True
+    if re.search(r"\btrial\b", lowered) and not re.search(r"\bclinical\s+trial\b", lowered):
+        if re.search(
+            r"\b(jury|bench|criminal|civil|appellate|mistrial|retrial|speedy)\s+trial\b",
+            lowered,
+        ) or re.search(r"\btrial\s+(court|attorney|lawyer|judge|date|hearing|day)\b", lowered):
+            return False
+        return True
+    if _word_boundary_any(lowered, ("scholarship",)):
+        return True
+    return False
+
+
+def _commercial_pricing_tokens_in_text(lowered: str) -> bool:
+    if is_non_commercial_research_context(lowered):
+        return False
+    if _word_boundary_any(lowered, ("price", "pricing", "package", "bundle", "margin", "cost", "revenue")):
+        return True
+    if _word_boundary_any(lowered, ("onboarding",)) and "patient" not in lowered:
+        return True
+    return False
 from agent_chappie.validation import (
     ValidationError,
     validate_job_request,
@@ -453,6 +494,13 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
                 _validate_task_quality(_task)
         except ValidationError:
             nba_ok = False
+        if nba_ok:
+            # If intel cards collapse into duplicate move buckets (e.g. all homepage/comparison copy),
+            # prefer the segment checklist so operators still see pricing vs proof vs messaging variety.
+            sample = nba_tasks[:3]
+            distinct_buckets = {str(t.get("move_bucket") or task_move_bucket(t)) for t in sample}
+            if len(sample) >= 3 and len(distinct_buckets) < 3:
+                nba_ok = False
         if nba_ok:
             result_payload = {
                 "summary": (
@@ -2003,10 +2051,10 @@ def segment_to_task(
         for observation in observations
         if observation.get("signal_id") in supporting_signal_refs
     ]
-    has_proof_signal = any(token in lowered for token in ("proof", "testimonial", "integration", "trust"))
-    has_offer_signal = any(token in lowered for token in ("trial", "offer", "discount", "positioning", "message"))
+    has_proof_signal = _word_boundary_any(lowered, ("proof", "testimonial", "integration", "trust"))
+    has_offer_signal = _commercial_offer_tokens_in_text(lowered)
 
-    if segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(token in lowered for token in ("price", "pricing", "package", "bundle", "onboarding")):
+    if segment["segment_kind"] in {"pricing", "pricing_packaging"} or _commercial_pricing_tokens_in_text(lowered):
         competitor_name = competitor or fallback_competitor_reference(
             strongest_excerpt=strongest_excerpt,
             explicit_claim=explicit_claim,
@@ -2162,7 +2210,11 @@ def segment_to_task(
             "supporting_source_scores": supporting_source_bundle,
             "strongest_evidence_excerpt": strongest_excerpt,
         }
-    if segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(token in lowered for token in ("trial", "offer", "discount", "positioning", "message")):
+    if (
+        segment["segment_kind"] in {"offer", "offer_positioning", "positioning"}
+        or has_offer_signal
+        or _word_boundary_any(lowered, ("homepage", "hero", "comparison"))
+    ):
         competitor_name = competitor or fallback_competitor_reference(
             strongest_excerpt=strongest_excerpt,
             explicit_claim=explicit_claim,
@@ -2545,8 +2597,8 @@ def build_missing_information_tasks(
                 task_type="information_request",
                 channel="same workspace",
             )
-        elif segment["segment_kind"] == "proof" or any(
-            token in lowered_segment for token in ("proof", "testimonial", "integration", "trust")
+        elif segment["segment_kind"] == "proof" or _word_boundary_any(
+            lowered_segment, ("proof", "testimonial", "integration", "trust")
         ):
             append_from_segment(
                 segment=segment,
@@ -2554,8 +2606,8 @@ def build_missing_information_tasks(
                 task_type="general_business_value",
                 channel=infer_proof_channel(domain, lowered_segment),
             )
-        elif segment["segment_kind"] in {"pricing", "pricing_packaging"} or any(
-            token in lowered_segment for token in ("pricing", "price", "package", "bundle", "onboarding")
+        elif segment["segment_kind"] in {"pricing", "pricing_packaging"} or _commercial_pricing_tokens_in_text(
+            lowered_segment
         ):
             append_from_segment(
                 segment=segment,
@@ -2563,8 +2615,9 @@ def build_missing_information_tasks(
                 task_type="direct_competitive_move",
                 channel=infer_primary_channel(domain, lowered_segment),
             )
-        elif segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or any(
-            token in lowered_segment for token in ("trial", "offer", "positioning", "message", "homepage", "hero", "comparison")
+        elif segment["segment_kind"] in {"offer", "offer_positioning", "positioning"} or (
+            _commercial_offer_tokens_in_text(lowered_segment)
+            or _word_boundary_any(lowered_segment, ("positioning", "message", "homepage", "hero", "comparison"))
         ):
             append_from_segment(
                 segment=segment,
@@ -3176,7 +3229,17 @@ def task_priority_score(task: dict[str, Any], generation_memory_rows: list[dict[
         score += 1
     if "this week" in title or "this week" in why:
         score += 3
-    if any(token in title or token in why for token in ("before", "closure", "capture", "pricing", "trial", "offer")):
+    if any(token in title or token in why for token in ("before", "closure", "capture", "pricing")):
+        score += 3
+    if re.search(r"\btrial\b", title) or re.search(r"\btrial\b", why):
+        score += 3
+    # Title embeds move=pricing_or_offer_move (underscore breaks \boffer\b); avoid substring "offer" in "offered".
+    if (
+        "pricing_or_offer_move" in title
+        or "pricing_or_offer_move" in why
+        or re.search(r"\boffer\b", title)
+        or re.search(r"\boffer\b", why)
+    ):
         score += 3
     score += generation_memory_adjustment(task, generation_memory_rows or [])
     return score
@@ -3277,7 +3340,7 @@ def task_move_bucket(task: dict[str, Any]) -> str:
         return "operator_corrected"
 
     text = f"{task.get('title', '')} {task.get('why_now', '')}".lower()
-    if any(token in text for token in ("pricing", "price", "offer", "trial", "discount", "onboarding")):
+    if _commercial_pricing_tokens_in_text(text) or _commercial_offer_tokens_in_text(text):
         return "pricing_or_offer_move"
     if any(token in text for token in ("capture", "asset", "closure", "staff", "distribution")):
         return "intercept_or_capture_move"
@@ -3986,16 +4049,18 @@ def apply_visibility_top_percent(
 
 
 def infer_segment_kind_for_intel_card(lowered: str) -> str:
-    if any(
-        token in lowered
-        for token in ("price", "pricing", "package", "bundle", "onboarding", "margin", "cost", "revenue")
-    ):
+    if is_non_commercial_research_context(lowered):
+        if _word_boundary_any(lowered, ("proof", "testimonial", "trust", "credential", "integration")):
+            return "proof"
+        return "positioning"
+    if _commercial_pricing_tokens_in_text(lowered):
         return "pricing"
-    if any(token in lowered for token in ("proof", "testimonial", "trust", "credential", "integration")):
+    if _word_boundary_any(lowered, ("proof", "testimonial", "trust", "credential", "integration")):
         return "proof"
     if any(token in lowered for token in ("closure", "sell-off", "asset", "acquisition", "distress")):
         return "opportunity"
-    if any(token in lowered for token in ("trial", "offer", "discount", "positioning", "message", "homepage", "hero")):
+    # Homepage/hero/comparison copy is positioning, not commercial "offer" unless real offer tokens match.
+    if _commercial_offer_tokens_in_text(lowered):
         return "offer"
     return "positioning"
 
@@ -4401,7 +4466,7 @@ def build_fact_chips(
             add_chip("competitor", competitor_label, 0.74, [row["source_ref"] for row in source_rows[:4]])
 
     clause_sets = [
-        ("pricing", ("price", "pricing", "fee", "plan", "package", "packaging", "bundle", "subscription", "onboarding")),
+        ("pricing", ("price", "prices", "pricing", "fee", "plan", "package", "packaging", "bundle", "subscription", "onboarding")),
         ("offer", ("offer", "trial", "discount", "voucher", "scholarship", "free onboarding")),
         ("positioning", ("no engineering", "no-code", "speed", "faster", "implementation", "ai", "automation", "position")),
         ("proof", ("testimonial", "logo", "proof", "case study", "integration", "customer")),
@@ -4415,7 +4480,8 @@ def build_fact_chips(
 
     if any(token in all_text.lower() for token in ("pricing", "bundle", "packaging", "subscription", "onboarding")):
         add_chip("pricing", "Pricing bundles, packaging terms, or onboarding friction appear in the source set.", 0.59, [row["source_ref"] for row in source_rows[:4]])
-    if any(token in all_text.lower() for token in ("trial", "discount", "offer", "voucher", "scholarship")):
+    lowered_all = all_text.lower()
+    if _commercial_offer_tokens_in_text(lowered_all):
         add_chip("offer", "Offer-led acquisition pressure appears in the source set.", 0.59, [row["source_ref"] for row in source_rows[:4]])
     if any(token in all_text.lower() for token in ("testimonial", "case study", "customer", "integration", "logo")):
         add_chip("proof", "Proof language appears in the source set and may shape buyer trust.", 0.59, [row["source_ref"] for row in source_rows[:4]])
@@ -4492,9 +4558,14 @@ def clause_to_fact_label(category: str, clause: str) -> str:
             return "Onboarding terms are part of the commercial comparison set."
         return normalized
     if category == "offer":
-        if "trial" in normalized.lower():
-            return "Trial-based acquisition pressure is visible in the source set."
-        if any(token in normalized.lower() for token in ("discount", "voucher", "scholarship")):
+        nl = normalized.lower()
+        if re.search(r"\btrial\b", nl) and not re.search(r"\bclinical\s+trial\b", nl):
+            if not (
+                re.search(r"\b(jury|bench|criminal|civil|appellate|mistrial|retrial|speedy)\s+trial\b", nl)
+                or re.search(r"\btrial\s+(court|attorney|lawyer|judge|date|hearing|day)\b", nl)
+            ):
+                return "Trial-based acquisition pressure is visible in the source set."
+        if any(token in nl for token in ("discount", "voucher", "scholarship")):
             return "Discount-led acquisition pressure is visible in the source set."
         return normalized
     if category == "positioning":
@@ -5267,9 +5338,17 @@ def missing_evidence_categories(units: list[dict[str, Any]]) -> list[str]:
 
 def strongest_offer_hint(text: str) -> str | None:
     lowered = text.lower()
-    if "trial" in lowered:
-        return "trial"
-    if "discount" in lowered:
+    if is_legal_or_evidentiary_context(lowered) or is_non_commercial_research_context(lowered):
+        return None
+    if re.search(r"\btrial\b", lowered) and not re.search(r"\bclinical\s+trial\b", lowered):
+        if re.search(
+            r"\b(jury|bench|criminal|civil|appellate|mistrial|retrial|speedy)\s+trial\b",
+            lowered,
+        ) or re.search(r"\btrial\s+(court|attorney|lawyer|judge|date|hearing|day)\b", lowered):
+            pass
+        else:
+            return "trial"
+    if re.search(r"\bdiscount\b", lowered):
         return "discount"
     if "testimonial" in lowered or "proof" in lowered:
         return "proof"
@@ -5279,11 +5358,15 @@ def strongest_offer_hint(text: str) -> str | None:
 
 
 def infer_task_move_bucket(segment_kind: str, lowered_text: str) -> str:
-    if segment_kind in {"pricing", "pricing_packaging"} or any(token in lowered_text for token in ("price", "pricing", "package", "bundle", "onboarding")):
+    if segment_kind in {"pricing", "pricing_packaging"} or _commercial_pricing_tokens_in_text(lowered_text):
         return "pricing_or_offer_move"
-    if segment_kind in {"proof"} or any(token in lowered_text for token in ("proof", "testimonial", "integration", "trust")):
+    if segment_kind in {"proof"} or _word_boundary_any(lowered_text, ("proof", "testimonial", "integration", "trust")):
         return "proof_or_trust_move"
-    if segment_kind in {"offer", "offer_positioning", "positioning"} or any(token in lowered_text for token in ("trial", "offer", "discount", "positioning", "message")):
+    if (
+        segment_kind in {"offer", "offer_positioning", "positioning"}
+        or _commercial_offer_tokens_in_text(lowered_text)
+        or _word_boundary_any(lowered_text, ("positioning", "message"))
+    ):
         return "messaging_or_positioning_move"
     if segment_kind in {"opportunity", "closure", "asset_sale"} or any(token in lowered_text for token in ("closure", "sell-off", "asset", "opportunity", "distress")):
         return "intercept_or_capture_move"
@@ -5703,11 +5786,15 @@ def synthesize_done_definition(
 
 
 def filter_clauses(clauses: list[str], tokens: tuple[str, ...]) -> list[str]:
-    return [
-        clause
-        for clause in clauses
-        if not is_technical_residue(clause) and any(token in clause.lower() for token in tokens)
-    ]
+    """Match tokens with word boundaries / offer-trial rules (avoids 'trial' ⊂ 'testimonial', 'offer' ⊂ 'offered')."""
+    matched: list[str] = []
+    for clause in clauses:
+        if is_technical_residue(clause):
+            continue
+        normalized = " ".join(clause.lower().split())
+        if any(clause_matches_keyword(normalized, token) for token in tokens):
+            matched.append(clause)
+    return matched
 
 
 def source_refs_for_items(items: list[str], source_rows: list[dict[str, Any]]) -> list[str]:
@@ -5743,7 +5830,7 @@ def derive_topic_items(text: str) -> list[str]:
         items.append("AI or intelligence claims are central to the current narrative.")
     if any(token in normalized for token in ("pricing", "package", "plan", "subscription")):
         items.append("Commercial packaging language is present and should be reviewed for buyer pressure.")
-    if any(token in normalized for token in ("trial", "discount", "offer")):
+    if _commercial_offer_tokens_in_text(normalized):
         items.append("Offer-led conversion pressure is visible in the current source material.")
     return items
 

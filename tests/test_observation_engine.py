@@ -68,6 +68,21 @@ class ObservationEngineTests(unittest.TestCase):
         self.assertTrue(any("raised U14 prices by 15%" in summary for summary in summaries))
         self.assertTrue(any("free-trial campaign" in summary for summary in summaries))
 
+    def test_extract_observations_skips_offer_for_legal_hearsay_copy(self) -> None:
+        source = SourcePackage(
+            project_id="project_law",
+            source_kind="manual_text",
+            project_summary="Competitive memo",
+            raw_text=(
+                "Hearsay is defined as an out of court statement offered in court to prove "
+                "the truth of the matter asserted in the statement."
+            ),
+            source_ref="source_law",
+        )
+        observations = extract_observations(source)
+        signal_types = {observation["signal_type"] for observation in observations}
+        self.assertNotIn("offer", signal_types)
+
     def test_extract_observations_ignores_negated_signal_clauses(self) -> None:
         source = SourcePackage(
             project_id="project_negated",

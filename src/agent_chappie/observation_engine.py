@@ -40,7 +40,12 @@ class TaskCandidate:
 
 
 SIGNAL_RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
-    ("pricing_change", ("price", "pricing", "fee", "fees", "raised pricing", "discount", "voucher"), "high", "high"),
+    (
+        "pricing_change",
+        ("price", "prices", "pricing", "fee", "fees", "raised pricing", "discount", "voucher"),
+        "high",
+        "high",
+    ),
     ("opening", ("open", "opening", "opened", "new school", "new academy"), "medium", "high"),
     ("closure", ("close", "closure", "shut down", "for sale", "sale of school"), "high", "high"),
     ("staffing", ("coach", "staff", "hiring", "academy director"), "low", "medium"),
@@ -167,6 +172,103 @@ NEGATION_PATTERNS = (
     "lacking",
     "absence of",
 )
+
+# Health / research / civic "offering screenings at no cost" is not B2B pricing pressure.
+_NON_COMMERCIAL_RESEARCH_MARKERS: tuple[str, ...] = (
+    "research program",
+    "clinical trial",
+    "clinical study",
+    "research study",
+    "screening",
+    "screenings",
+    "screened",
+    "patient",
+    "patients",
+    "pediatric",
+    "kids",
+    "children",
+    "autoimmune",
+    "autoimmunity",
+    "enrollment",
+    "enrol",
+    "healthy volunteers",
+    "volunteer",
+    "irb",
+    "hipaa",
+    "at no cost",
+    "no cost",
+    "free screening",
+    "grant-funded",
+    "nonprofit",
+    "non-profit",
+    "501(c)",
+    "public health",
+    "study site",
+    "biospecimen",
+)
+
+
+def is_non_commercial_research_context(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _NON_COMMERCIAL_RESEARCH_MARKERS)
+
+
+# Law blogs / evidence rules — not B2B "offer" or product "trial" signals.
+_LEGAL_EVIDENTIARY_MARKERS: tuple[str, ...] = (
+    "hearsay",
+    "out of court",
+    "matter asserted",
+    "offered in court",
+    "offer of evidence",
+    "offer of proof",
+    "rule 801",
+    "rule 802",
+    "rule 803",
+    "fed. r. evid",
+    "federal rules of evidence",
+    "nontestimonial",
+    "non-testimonial",
+    "declarant",
+    "proffer",
+    "deposition",
+    "affidavit",
+)
+
+
+def is_legal_or_evidentiary_context(text: str) -> bool:
+    lowered = text.lower()
+    if any(marker in lowered for marker in _LEGAL_EVIDENTIARY_MARKERS):
+        return True
+    # Court "trial" / procedure (not SaaS free trial)
+    if re.search(
+        r"\b(jury|bench|criminal|civil|appellate|mistrial|retrial|speedy)\s+trial\b",
+        lowered,
+    ) or re.search(r"\btrial\s+(court|attorney|lawyer|judge|date|hearing|day)\b", lowered):
+        return True
+    return False
+
+
+def clause_matches_keyword(normalized_clause: str, keyword: str) -> bool:
+    """
+    Match signal keywords without treating the substring 'offer' inside 'offering' as a commercial offer,
+    and skip clinical/research clauses for B2B offer-style signals.
+    """
+    if keyword == "offer":
+        if is_non_commercial_research_context(normalized_clause):
+            return False
+        if is_legal_or_evidentiary_context(normalized_clause):
+            return False
+        return bool(re.search(r"\b(offers?|offering)\b", normalized_clause))
+    if keyword in {"trial", "scholarship", "discount", "voucher", "free onboarding"}:
+        if is_non_commercial_research_context(normalized_clause):
+            return False
+        if is_legal_or_evidentiary_context(normalized_clause):
+            return False
+        if keyword == "trial" and re.search(r"\bclinical\s+trial\b", normalized_clause):
+            return False
+    if " " in keyword:
+        return keyword in normalized_clause
+    return bool(re.search(rf"\b{re.escape(keyword)}\b", normalized_clause))
 
 
 def extract_observations(source: SourcePackage, observed_at: str | None = None) -> list[dict[str, Any]]:
@@ -888,7 +990,7 @@ def extract_clauses(raw_text: str) -> list[str]:
 def first_matching_clause(clauses: list[str], keywords: tuple[str, ...]) -> str | None:
     for clause in clauses:
         normalized = clause.lower()
-        if any(keyword in normalized for keyword in keywords):
+        if any(clause_matches_keyword(normalized, keyword) for keyword in keywords):
             return clause
     return None
 
@@ -897,14 +999,14 @@ def matching_clauses(clauses: list[str], keywords: tuple[str, ...]) -> list[str]
     matches: list[str] = []
     for clause in clauses:
         normalized = clause.lower()
-        if any(keyword in normalized for keyword in keywords):
+        if any(clause_matches_keyword(normalized, keyword) for keyword in keywords):
             matches.append(clause)
     return matches
 
 
 def is_negated_signal_clause(clause: str, keywords: tuple[str, ...]) -> bool:
     normalized = " ".join(clause.lower().split())
-    if not any(keyword in normalized for keyword in keywords):
+    if not any(clause_matches_keyword(normalized, keyword) for keyword in keywords):
         return False
     for keyword in keywords:
         escaped = re.escape(keyword)
