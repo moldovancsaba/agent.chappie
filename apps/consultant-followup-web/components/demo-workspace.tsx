@@ -878,6 +878,7 @@ export function DemoWorkspace() {
         user_action: fallbackAction,
         feedback_payload: feedbackPayload,
         task_feedback_items: buildTaskFeedbackItems([task], { [task.rank]: decision }),
+        current_tasks: isCompleteResultWithTasks(jobResult) ? jobResult.result_payload.recommended_tasks : undefined,
         actor_id: `anonymous:${sessionId}`,
         linked_result_status: jobResult.status,
       });

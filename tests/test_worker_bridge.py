@@ -665,6 +665,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 "project_feedback_regen",
                 {
                     "job_id": "job_feedback_regen",
+                    "current_tasks": first_tasks,
                     "task_feedback_items": [
                         {
                             "feedback_id": "task_feedback_1",
@@ -681,6 +682,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             regenerated = feedback_response["job_result"]["result_payload"]["recommended_tasks"]
             self.assertEqual(len(regenerated), 3)
             self.assertNotEqual(regenerated[0]["title"], first_tasks[0]["title"])
+            self.assertIn(first_tasks[1]["title"], [t["title"] for t in regenerated])
+            self.assertIn(first_tasks[2]["title"], [t["title"] for t in regenerated])
             stored_feedback = list_task_feedback_rows("project_feedback_regen", path=db_path)
             self.assertEqual(stored_feedback[0]["feedback_comment"], "Too generic.")
             memory_rows = list_generation_memory_rows("project_feedback_regen", path=db_path)
@@ -724,6 +727,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 "project_feedback_comment",
                 {
                     "job_id": "job_feedback_comment",
+                    "current_tasks": first_tasks,
                     "task_feedback_items": [
                         {
                             "feedback_id": "task_feedback_comment_1",
@@ -740,6 +744,8 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             regenerated = response["job_result"]["result_payload"]["recommended_tasks"]
             self.assertEqual(len(regenerated), 3)
             self.assertNotIn(first_tasks[2]["title"], [task["title"] for task in regenerated])
+            self.assertIn(first_tasks[0]["title"], [t["title"] for t in regenerated])
+            self.assertIn(first_tasks[1]["title"], [t["title"] for t in regenerated])
             memory_rows = list_generation_memory_rows("project_feedback_comment", path=db_path)
             self.assertTrue(any(row["memory_kind"] == "avoid_bucket" for row in memory_rows))
 
@@ -780,6 +786,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 "project_feedback_edit",
                 {
                     "job_id": "job_feedback_edit",
+                    "current_tasks": first["job_result"]["result_payload"]["recommended_tasks"],
                     "task_feedback_items": [
                         {
                             "feedback_id": "task_feedback_edit_1",
@@ -794,8 +801,12 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 },
                 WorkerBridgeConfig(local_db_path=db_path),
             )
-            regenerated_titles = [task["title"] for task in response["job_result"]["result_payload"]["recommended_tasks"]]
+            regenerated = response["job_result"]["result_payload"]["recommended_tasks"]
+            regenerated_titles = [task["title"] for task in regenerated]
+            self.assertEqual(len(regenerated), 3)
             self.assertIn("Rewrite the pricing page hero this week to answer the strongest proof and trial pressure before buyers default to Fortitude AI", regenerated_titles)
+            self.assertIn(first["job_result"]["result_payload"]["recommended_tasks"][0]["title"], regenerated_titles)
+            self.assertIn(first["job_result"]["result_payload"]["recommended_tasks"][2]["title"], regenerated_titles)
             memory_rows = list_generation_memory_rows("project_feedback_edit", path=db_path)
             self.assertTrue(any(row["memory_kind"] == "prefer_channel" for row in memory_rows))
 
@@ -837,6 +848,7 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 "project_feedback_delete_hold",
                 {
                     "job_id": "job_feedback_delete_hold",
+                    "current_tasks": first_tasks,
                     "task_feedback_items": [
                         {
                             "feedback_id": "task_feedback_delete_hold_1",
@@ -858,9 +870,12 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
                 },
                 WorkerBridgeConfig(local_db_path=db_path),
             )
-            regenerated_titles = [task["title"] for task in response["job_result"]["result_payload"]["recommended_tasks"]]
+            regenerated = response["job_result"]["result_payload"]["recommended_tasks"]
+            regenerated_titles = [task["title"] for task in regenerated]
+            self.assertEqual(len(regenerated), 3)
             self.assertNotIn(first_tasks[0]["title"], regenerated_titles)
             self.assertNotIn(first_tasks[1]["title"], regenerated_titles)
+            self.assertIn(first_tasks[2]["title"], regenerated_titles)
             memory_rows = list_generation_memory_rows("project_feedback_delete_hold", path=db_path)
             self.assertTrue(any(row["memory_kind"] == "avoid_title" for row in memory_rows))
 

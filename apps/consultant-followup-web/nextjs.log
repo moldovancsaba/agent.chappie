@@ -1,0 +1,10 @@
+
+> consultant-followup-web@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.1 (Turbopack)
+- Local:         http://localhost:3010
+- Network:       http://192.168.100.152:3010
+✓ Ready in 176ms
+
+ POST /api/feedback 200 in 169ms (next.js: 126ms, application-code: 42ms)

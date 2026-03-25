@@ -1300,3 +1300,145 @@ def list_generation_memory_rows(project_id: str, limit: int = 200, path: str | N
             (project_id, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def delete_generation_memory_row(memory_id: str, project_id: str, path: str | None = None) -> bool:
+    """Remove a single learned signal. Returns True if a row was deleted."""
+    with _connect(path) as connection:
+        cursor = connection.execute(
+            "delete from generation_memory where memory_id = ? and project_id = ?",
+            (memory_id, project_id),
+        )
+    return cursor.rowcount > 0
+
+
+def clear_generation_memory(project_id: str, path: str | None = None) -> int:
+    """Wipe all learned signals for a project. Returns the count of rows removed."""
+    with _connect(path) as connection:
+        cursor = connection.execute(
+            "delete from generation_memory where project_id = ?",
+            (project_id,),
+        )
+    return cursor.rowcount
+
+
+def decay_generation_memory(project_id: str, path: str | None = None) -> None:
+    """
+    Called whenever generation_memory rows are loaded for generation.
+    - Increments use_count for all rows used.
+    - Halves weight when use_count reaches multiples of 10.
+    - Removes rows where weight drops below 0.1.
+    - Caps cumulative avoid_bucket/avoid_channel weight per project at 5.0 total.
+    """
+    with _connect(path) as connection:
+        # Ensure use_count column exists (migration guard)
+        _ensure_column(connection, "generation_memory", "use_count", "integer not null default 0")
+        # Increment use_count for all rows belonging to this project
+        connection.execute(
+            "update generation_memory set use_count = use_count + 1 where project_id = ?",
+            (project_id,),
+        )
+        # Halve weight when use_count is a multiple of 10
+        connection.execute(
+            """
+            update generation_memory
+            set weight = weight * 0.5,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            where project_id = ?
+              and use_count > 0
+              and (use_count % 10) = 0
+            """,
+            (project_id,),
+        )
+        # Remove fully decayed rows
+        connection.execute(
+            "delete from generation_memory where project_id = ? and weight < 0.1",
+            (project_id,),
+        )
+        # Cap cumulative avoid weight: if sum of avoid_bucket + avoid_channel weight > 5.0,
+        # scale all down proportionally.
+        avoid_rows = connection.execute(
+            """
+            select memory_id, weight
+            from generation_memory
+            where project_id = ?
+              and memory_kind in ('avoid_bucket', 'avoid_channel', 'avoid_phrase')
+            order by weight desc
+            """,
+            (project_id,),
+        ).fetchall()
+        total_avoid_weight = sum(r["weight"] for r in avoid_rows)
+        if total_avoid_weight > 5.0:
+            scale = 5.0 / total_avoid_weight
+            for row in avoid_rows:
+                new_weight = row["weight"] * scale
+                if new_weight < 0.1:
+                    connection.execute(
+                        "delete from generation_memory where memory_id = ?",
+                        (row["memory_id"],),
+                    )
+                else:
+                    connection.execute(
+                        "update generation_memory set weight = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where memory_id = ?",
+                        (new_weight, row["memory_id"]),
+                    )
+
+
+def initialize_held_tasks_table(connection: sqlite3.Connection) -> None:
+    """Ensure the held_tasks table exists (called from initialize_local_store)."""
+    connection.execute(
+        """
+        create table if not exists held_tasks (
+          held_task_id text primary key,
+          project_id text not null,
+          original_title text not null,
+          original_rank integer,
+          held_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          status text not null default 'held'
+        )
+        """
+    )
+
+
+def save_held_task(
+    project_id: str,
+    held_task_id: str,
+    title: str,
+    rank: int | None = None,
+    path: str | None = None,
+) -> None:
+    with _connect(path) as connection:
+        initialize_held_tasks_table(connection)
+        connection.execute(
+            """
+            insert into held_tasks (held_task_id, project_id, original_title, original_rank, status)
+            values (?, ?, ?, ?, 'held')
+            on conflict(held_task_id) do nothing
+            """,
+            (held_task_id, project_id, title, rank),
+        )
+
+
+def list_held_tasks(project_id: str, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        initialize_held_tasks_table(connection)
+        rows = connection.execute(
+            """
+            select held_task_id, project_id, original_title, original_rank, held_at, status
+            from held_tasks
+            where project_id = ? and status = 'held'
+            order by held_at desc
+            """,
+            (project_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def restore_held_task(held_task_id: str, project_id: str, path: str | None = None) -> bool:
+    with _connect(path) as connection:
+        initialize_held_tasks_table(connection)
+        cursor = connection.execute(
+            "update held_tasks set status = 'restored' where held_task_id = ? and project_id = ?",
+            (held_task_id, project_id),
+        )
+    return cursor.rowcount > 0

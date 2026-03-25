@@ -15,8 +15,11 @@ from pathlib import Path
 from typing import Any
 
 from agent_chappie.local_store import (
+    clear_generation_memory,
     create_managed_job,
     create_managed_source,
+    decay_generation_memory,
+    delete_generation_memory_row,
     delete_source_snapshot,
     delete_managed_job,
     delete_managed_source,
@@ -29,6 +32,7 @@ from agent_chappie.local_store import (
     list_draft_segments,
     list_evidence_units,
     list_generation_memory_rows,
+    list_held_tasks,
     list_task_feedback_rows,
     list_observations_for_source,
     list_managed_jobs,
@@ -38,6 +42,8 @@ from agent_chappie.local_store import (
     list_recent_source_snapshots,
     replace_draft_segments,
     replace_evidence_units,
+    restore_held_task,
+    save_held_task,
     save_source_snapshot,
     save_generation_memory_rows,
     save_replacement_history,
@@ -76,7 +82,7 @@ from agent_chappie.validation import ValidationError, validate_job_request, vali
 @dataclass
 class WorkerBridgeConfig:
     host: str = "127.0.0.1"
-    port: int = 8787
+    port: int = 9999
     shared_secret: str = "change-me"
     queue_dir: str = "runtime_status/observation_queue"
     local_db_path: str = "runtime_status/agent_brain.sqlite3"
@@ -320,7 +326,8 @@ def process_management_request(
     payload: dict[str, Any],
     config: WorkerBridgeConfig,
 ) -> tuple[dict[str, Any], HTTPStatus]:
-    parts = path.strip("/").split("/")
+    parts = [p for p in path.strip("/").split("/") if p]
+    print(f"DEBUG PATH: {path} -> PARTS: {parts}")
     if len(parts) < 3 or parts[0] != "projects":
         return {"error": "not_found"}, HTTPStatus.NOT_FOUND
 
@@ -436,6 +443,39 @@ def process_management_request(
         app_id = str(payload.get("app_id") or "consultant_followup_web")
         result_document = regenerate_project_checklist(project_id, config, job_id=job_id, app_id=app_id)
         return {"job_result": result_document, "workspace": build_workspace_payload(project_id, config)}, HTTPStatus.OK
+
+    # --- Generation Memory Management ---
+    if resource == "generation-memory" and method == "GET" and len(parts) == 3:
+        rows = list_generation_memory_rows(project_id, path=config.local_db_path)
+        return {"generation_memory": rows, "count": len(rows)}, HTTPStatus.OK
+
+    if resource == "generation-memory" and method == "DELETE" and len(parts) == 4:
+        deleted = delete_generation_memory_row(
+            memory_id=parts[3], project_id=project_id, path=config.local_db_path
+        )
+        return {
+            "deleted": deleted,
+            "memory_id": parts[3],
+        }, (HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+
+    if resource == "generation-memory" and method == "DELETE" and len(parts) == 3:
+        count = clear_generation_memory(project_id=project_id, path=config.local_db_path)
+        return {"cleared": True, "rows_removed": count}, HTTPStatus.OK
+
+    # --- Held Tasks Management ---
+    if resource == "held-tasks" and method == "GET" and len(parts) == 3:
+        tasks = list_held_tasks(project_id=project_id, path=config.local_db_path)
+        return {"held_tasks": tasks, "count": len(tasks)}, HTTPStatus.OK
+
+    if resource == "held-tasks" and method == "POST" and len(parts) == 4 and parts[3] == "restore":
+        # POST /projects/{id}/held-tasks/{held_task_id}/restore
+        held_task_id = payload.get("held_task_id") or (parts[3] if len(parts) > 4 else "")
+        restored = restore_held_task(
+            held_task_id=str(held_task_id),
+            project_id=project_id,
+            path=config.local_db_path,
+        )
+        return {"restored": restored}, (HTTPStatus.OK if restored else HTTPStatus.NOT_FOUND)
 
     return {"error": "not_found"}, HTTPStatus.NOT_FOUND
 
@@ -812,6 +852,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
 def process_task_feedback(project_id: str, payload: dict[str, Any], config: WorkerBridgeConfig) -> dict[str, Any]:
     job_id = str(payload.get("job_id") or "")
     feedback_items = payload.get("task_feedback_items") or []
+    current_tasks = payload.get("current_tasks") or []
     if not job_id or not isinstance(feedback_items, list) or not feedback_items:
         raise ValueError("Task feedback requires a job id and at least one feedback item.")
 
@@ -832,7 +873,36 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
             }
         )
     save_task_feedback_rows(project_id, job_id, rows, path=config.local_db_path)
-    save_generation_memory_rows(project_id, build_generation_memory_rows(rows), path=config.local_db_path)
+    # Only write to generation_memory for feedback types that carry intent signals.
+    # delete_only (deleted_silent) must NOT write to generation_memory — it is a silent action.
+    memory_eligible_rows = [
+        row for row in rows
+        if row["feedback_type"] != "deleted_silent"
+    ]
+    if memory_eligible_rows:
+        save_generation_memory_rows(project_id, build_generation_memory_rows(memory_eligible_rows), path=config.local_db_path)
+
+    # Hold-for-later: save to held_tasks table
+    for row in rows:
+        if row["feedback_type"] == "held_for_later":
+            save_held_task(
+                project_id=project_id,
+                held_task_id=str(row.get("feedback_id") or f"held_{project_id}_{int(time.time() * 1000)}"),
+                title=str(row.get("original_title") or ""),
+                rank=int(row["task_id"]) if row.get("task_id") and str(row.get("task_id")).isdigit() else None,
+                path=config.local_db_path,
+            )
+
+    interacted_titles = {str(item.get("original_title") or "") for item in rows}
+    retained_tasks = [task for task in current_tasks if task.get("title") not in interacted_titles]
+    
+    for item in rows:
+        if item.get("feedback_type") == "edited":
+            original_task = next((t for t in current_tasks if t.get("title") == item.get("original_title")), None)
+            if original_task:
+                edited_task = dict(original_task)
+                edited_task["title"] = str(item.get("adjusted_text") or original_task.get("title") or "")
+                retained_tasks.append(edited_task)
 
     result_document = regenerate_project_checklist(
         project_id,
@@ -840,6 +910,7 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
         job_id=job_id,
         app_id="consultant_followup_web",
         confidence=0.74,
+        retained_tasks=retained_tasks,
     )
     declined_rows = [
         row
@@ -864,6 +935,7 @@ def regenerate_project_checklist(
     job_id: str,
     app_id: str,
     confidence: float = 0.78,
+    retained_tasks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
 
     source_rows = list_recent_source_snapshots(project_id, path=config.local_db_path)
@@ -899,6 +971,10 @@ def regenerate_project_checklist(
     )
     feedback_rows = list_task_feedback_rows(project_id, path=config.local_db_path)
     generation_memory_rows = list_generation_memory_rows(project_id, path=config.local_db_path)
+    # Decay memory influence before each generation cycle
+    if generation_memory_rows:
+        decay_generation_memory(project_id, path=config.local_db_path)
+        generation_memory_rows = list_generation_memory_rows(project_id, path=config.local_db_path)
     result_payload = generate_learning_checklist(
         seed_source,
         observation_rows,
@@ -908,6 +984,7 @@ def regenerate_project_checklist(
         evidence_units,
         feedback_rows,
         generation_memory_rows,
+        retained_tasks=retained_tasks,
     )
     result_document = validate_job_result(
         {
@@ -2289,6 +2366,7 @@ def generate_learning_checklist(
     evidence_units: list[dict[str, Any]],
     feedback_rows: list[dict[str, Any]],
     generation_memory_rows: list[dict[str, Any]],
+    retained_tasks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     segment_payload = write_tasks_from_segments(
         source_package,
@@ -2323,20 +2401,132 @@ def generate_learning_checklist(
         except ValidationError:
             continue
 
+    chosen_payload = None
     if candidate_payloads:
         candidate_payloads.sort(
             key=lambda item: (task_payload_specificity_score(item[1]), 1 if item[0] == "segment" else 0),
             reverse=True,
         )
-        return candidate_payloads[0][1]
+        chosen_payload = candidate_payloads[0][1]
+    else:
+        chosen_payload = generate_guaranteed_task_triplet(
+            source_package,
+            observations,
+            draft_segments,
+            feedback_rows,
+            generation_memory_rows,
+        )
 
-    return generate_guaranteed_task_triplet(
-        source_package,
-        observations,
-        draft_segments,
-        feedback_rows,
-        generation_memory_rows,
-    )
+    retained_tasks = retained_tasks or []
+    if not retained_tasks:
+        return chosen_payload
+
+    # Find the declined task's move bucket to prefer a different bucket for replacements
+    declined_buckets: set[str] = set()
+    for t in retained_tasks:
+        # Retained tasks are those NOT declined; check what was removed by examining
+        # whether the chosen_payload contains the same bucket already
+        pass
+    # Get buckets already in retained tasks — prefer those NOT present for replacements
+    retained_task_buckets = {task_move_bucket(t) for t in retained_tasks}
+
+    merged_tasks = []
+    retained_titles: set[str] = set()
+    for t in retained_tasks:
+        merged_tasks.append(dict(t))
+        retained_titles.add(normalize_task_key(t.get("title", "")))
+
+    for t in chosen_payload.get("recommended_tasks", []):
+        if len(merged_tasks) >= 3:
+            break
+        key = normalize_task_key(t.get("title", ""))
+        candidate_bucket = task_move_bucket(t)
+
+        # Semantic duplicate guard (Jaccard 60%)
+        is_duplicate = False
+        tw = set(key.split())
+        for rt in retained_titles:
+            rw = set(rt.split())
+            if len(tw | rw) > 0 and len(tw & rw) / len(tw | rw) > 0.6:
+                is_duplicate = True
+                break
+        if is_duplicate:
+            continue
+
+        # Post-generation quality gate:
+        # 1. Skip tasks with synthetic doubled competitor name pattern
+        title = str(t.get("title") or "")
+        if re.search(r"the competitor using .{5,40} \1", title, re.IGNORECASE):
+            t["quality_class"] = "rejected_phrasing"
+            continue
+        # 2. Cap title length at 20 words
+        title_words = title.split()
+        if len(title_words) > 20:
+            t["title"] = " ".join(title_words[:20])
+
+        # 3. Mark exploratory tasks explicitly — do NOT give them urgency framing
+        is_exploratory = any(
+            title.lower().startswith(prefix)
+            for prefix in ("explore ", "request one", "gather ", "ask for", "find out", "research ")
+        )
+        if is_exploratory:
+            t["quality_class"] = "exploratory"
+            t["priority_label"] = "exploratory"
+            # Force exploratory tasks to come after strong-action tasks
+            if len(merged_tasks) < 2 and len(retained_task_buckets) > 0:
+                # Skip for first 2 slots — prefer a different strong move
+                continue
+
+        # 4. Prefer a different move bucket than retained tasks for first replacement
+        if candidate_bucket in retained_task_buckets and len(merged_tasks) < len(retained_tasks) + 1:
+            # Deprioritize — put at end by not adding now, but allow below after loop
+            declined_buckets.add(candidate_bucket)
+            continue
+
+        merged_tasks.append(dict(t))
+        retained_titles.add(key)
+
+    # Second pass: allow same-bucket tasks if we still need more tasks
+    if len(merged_tasks) < 3:
+        for t in chosen_payload.get("recommended_tasks", []):
+            if len(merged_tasks) >= 3:
+                break
+            key = normalize_task_key(t.get("title", ""))
+            if key in retained_titles:
+                continue
+            is_duplicate = False
+            tw = set(key.split())
+            for rt in retained_titles:
+                rw = set(rt.split())
+                if len(tw | rw) > 0 and len(tw & rw) / len(tw | rw) > 0.6:
+                    is_duplicate = True
+                    break
+            if is_duplicate:
+                continue
+            merged_tasks.append(dict(t))
+            retained_titles.add(key)
+
+    if len(merged_tasks) < 3:
+        fallback_triplet = generate_guaranteed_task_triplet(
+            source_package, observations, draft_segments, feedback_rows, generation_memory_rows
+        )
+        for ft in fallback_triplet.get("recommended_tasks", []):
+            if len(merged_tasks) >= 3:
+                break
+            key = normalize_task_key(ft.get("title", ""))
+            if key not in retained_titles:
+                merged_tasks.append(dict(ft))
+                retained_titles.add(key)
+
+    for i, t in enumerate(merged_tasks[:3]):
+        t["rank"] = i + 1
+        t["is_next_best_action"] = (i == 0)
+        t["priority_label"] = "critical" if i == 0 else "high" if i == 1 else "normal"
+
+    return {
+        "recommended_tasks": merged_tasks[:3],
+        "summary": "Merged retained tasks with generated replacements.",
+    }
 
 
 def validate_result_payload(project_id: str, payload: dict[str, Any], *, run_id: str) -> None:
@@ -2424,17 +2614,186 @@ def generation_memory_adjustment(task: dict[str, Any], generation_memory_rows: l
         pattern_key = str(row.get("pattern_key") or "")
         signal_value = str(row.get("signal_value") or "")
         weight = int(round(float(row.get("weight") or 0)))
-        if kind == "avoid_title" and pattern_key == normalized_title:
-            adjustment -= max(3, weight)
+        if kind == "avoid_title":
+            if pattern_key == normalized_title:
+                adjustment -= max(5, weight * 2)
+            else:
+                # Semantic near-duplicate guard for rejected tasks
+                pw = set(pattern_key.split())
+                tw = set(normalized_title.split())
+                if len(pw | tw) > 0 and len(pw & tw) / len(pw | tw) > 0.6:
+                    adjustment -= max(5, weight * 2)
         elif kind == "avoid_phrase" and signal_value and signal_value in task.get("title", "").lower():
-            adjustment -= max(2, weight)
+            adjustment -= max(3, weight)
         elif kind == "avoid_bucket" and pattern_key == bucket:
             adjustment -= max(1, weight)
         elif kind == "prefer_channel" and signal_value and signal_value == channel:
             adjustment += max(2, weight)
+        elif kind == "prefer_bucket" and pattern_key == bucket:
+            adjustment += max(3, weight)
         elif kind == "prefer_phrase" and signal_value and signal_value in task.get("title", "").lower():
             adjustment += max(2, weight)
     return adjustment
+
+
+
+def _extract_comment_signals(comment: str, feedback_id: str) -> list[dict[str, Any]]:
+    """
+    Parse a free-text operator comment into structured generation_memory signals.
+    Handles channel, segment, competitor, move-type, specificity preferences.
+    """
+    signals: list[dict[str, Any]] = []
+    c = comment.strip().lower()
+
+    # ---- CHANNEL preferences ----
+    CHANNEL_PREFER: list[tuple[list[str], str]] = [
+        (["pricing page", "on the pricing page", "about the pricing page", "price page"], "pricing_page"),
+        (["landing page", "on the landing page"], "landing_page"),
+        (["homepage", "on the homepage"], "homepage"),
+        (["email", "onboarding email", "email campaign", "via email"], "email"),
+        (["linkedin", "linkedin post"], "linkedin"),
+        (["sales call", "call the", "phone call"], "sales_call"),
+        (["in the app", "in-app", "app notification"], "in_app"),
+        (["blog", "blog post", "article"], "blog"),
+        (["webinar", "event", "live session"], "event"),
+        (["case study", "case studies"], "case_study"),
+        (["comparison page", "comparison section", "comparison block"], "comparison_page"),
+        (["onboarding", "onboarding flow", "onboarding sequence"], "onboarding"),
+    ]
+    CHANNEL_AVOID: list[tuple[list[str], str]] = [
+        (["not email", "no email", "avoid email"], "email"),
+        (["not homepage", "not the homepage", "avoid homepage"], "homepage"),
+        (["not pricing", "not a pricing", "away from pricing"], "pricing_page"),
+        (["not onboarding", "not about onboarding"], "onboarding"),
+        (["not linkedin", "avoid linkedin"], "linkedin"),
+    ]
+    for phrases, channel in CHANNEL_PREFER:
+        if any(phrase in c for phrase in phrases):
+            signals.append({
+                "memory_kind": "prefer_channel",
+                "pattern_key": "",
+                "signal_value": channel,
+                "weight": 5.0,
+                "source_feedback_id": feedback_id,
+            })
+    for phrases, channel in CHANNEL_AVOID:
+        if any(phrase in c for phrase in phrases):
+            signals.append({
+                "memory_kind": "avoid_channel",
+                "pattern_key": channel,
+                "signal_value": channel,
+                "weight": 5.0,
+                "source_feedback_id": feedback_id,
+            })
+
+    # ---- SEGMENT preferences ----
+    SEGMENT_PREFER: list[tuple[list[str], str]] = [
+        (["trial users", "free trial users", "people on trial"], "trial_users"),
+        (["buyers", "active buyers", "paying buyers"], "buyers"),
+        (["onboarders", "new users", "new signups", "people who just joined"], "new_users"),
+        (["decision makers", "cto", "vp ", "executive", "c-suite"], "decision_makers"),
+        (["enterprise", "large accounts", "enterprise buyers"], "enterprise"),
+        (["smb", "small business", "small teams"], "smb"),
+        (["churned", "lost customers", "at risk accounts"], "at_risk_accounts"),
+        (["leads", "prospects", "top of funnel", "potential buyers"], "prospects"),
+    ]
+    SEGMENT_AVOID: list[tuple[list[str], str]] = [
+        (["wrong audience", "not the right audience", "not our audience", "different audience"], "wrong_audience"),
+        (["not enterprise", "not for enterprise"], "enterprise"),
+        (["not smb", "not small business"], "smb"),
+    ]
+    for phrases, segment in SEGMENT_PREFER:
+        if any(phrase in c for phrase in phrases):
+            signals.append({
+                "memory_kind": "prefer_segment",
+                "pattern_key": segment,
+                "signal_value": segment,
+                "weight": 4.0,
+                "source_feedback_id": feedback_id,
+            })
+    for phrases, segment in SEGMENT_AVOID:
+        if any(phrase in c for phrase in phrases):
+            signals.append({
+                "memory_kind": "avoid_phrase",
+                "pattern_key": segment,
+                "signal_value": segment,
+                "weight": 5.0,
+                "source_feedback_id": feedback_id,
+            })
+
+    # ---- COMPETITOR preferences ----
+    COMPETITOR_SIGNALS = [
+        "answer ", "vs ", "versus ", "beat ", "respond to ", "called out by ",
+        "mentioned by ", "benchmark against ",
+    ]
+    for sig in COMPETITOR_SIGNALS:
+        idx = c.find(sig)
+        if idx != -1:
+            fragment = c[idx + len(sig):idx + len(sig) + 30].strip()
+            competitor_name = fragment.split()[0].strip(".,\"'") if fragment.split() else ""
+            if competitor_name and len(competitor_name) > 2:
+                signals.append({
+                    "memory_kind": "prefer_competitor",
+                    "pattern_key": competitor_name,
+                    "signal_value": competitor_name,
+                    "weight": 4.0,
+                    "source_feedback_id": feedback_id,
+                })
+                break
+
+    # ---- MOVE TYPE preferences ----
+    MOVE_PREFER: list[tuple[list[str], str]] = [
+        (["trust move", "proof move", "we need a trust", "we need proof", "social proof", "concrete asset", "credibility"], "proof_or_trust_move"),
+        (["pricing move", "offer move", "commercial response", "pricing response", "lower price", "better offer"], "pricing_or_offer_move"),
+        (["capture move", "close the deal", "close this account", "win back", "intercept"], "intercept_or_capture_move"),
+        (["messaging move", "positioning move", "reframe", "reposition", "messaging response"], "messaging_or_positioning_move"),
+        (["partnership", "partner move", "referral move", "channel partner"], "partnership_or_distribution_move"),
+    ]
+    MOVE_AVOID: list[tuple[list[str], str]] = [
+        (["not a messaging", "not messaging", "not a positioning", "not about messaging"], "messaging_or_positioning_move"),
+        (["not a trust", "not about trust", "not a proof move"], "proof_or_trust_move"),
+        (["not a pricing", "not a commercial", "not about pricing", "not an offer"], "pricing_or_offer_move"),
+    ]
+    for phrases, bucket in MOVE_PREFER:
+        if any(phrase in c for phrase in phrases):
+            signals.append({
+                "memory_kind": "prefer_bucket",
+                "pattern_key": bucket,
+                "signal_value": bucket,
+                "weight": 5.0,
+                "source_feedback_id": feedback_id,
+            })
+    for phrases, bucket in MOVE_AVOID:
+        if any(phrase in c for phrase in phrases):
+            signals.append({
+                "memory_kind": "avoid_bucket",
+                "pattern_key": bucket,
+                "signal_value": bucket,
+                "weight": 5.0,
+                "source_feedback_id": feedback_id,
+            })
+
+    # ---- SPECIFICITY preferences ----
+    if any(token in c for token in ("too vague", "too broad", "too generic", "not specific enough", "be more specific", "needs specificity", "more precise")):
+        signals.append({
+            "memory_kind": "prefer_specificity",
+            "pattern_key": "high_specificity",
+            "signal_value": "high",
+            "weight": 3.0,
+            "source_feedback_id": feedback_id,
+        })
+
+    # ---- PHRASE avoidance (overlap/duplicate signals) ----
+    if any(token in c for token in ("overlap", "duplicate", "same idea", "repeated idea", "too similar")):
+        signals.append({
+            "memory_kind": "avoid_phrase",
+            "pattern_key": "duplicate_idea",
+            "signal_value": "duplicate",
+            "weight": 2.0,
+            "source_feedback_id": feedback_id,
+        })
+
+    return signals
 
 
 def build_generation_memory_rows(feedback_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2444,65 +2803,45 @@ def build_generation_memory_rows(feedback_rows: list[dict[str, Any]]) -> list[di
         feedback_type = str(row.get("feedback_type") or "")
         original_title = str(row.get("original_title") or "")
         normalized_title = normalize_task_key(original_title)
-        title_lower = original_title.lower()
-        comment = str(row.get("feedback_comment") or "").strip().lower()
         adjusted_text = str(row.get("adjusted_text") or "").strip()
+        comment = str(row.get("feedback_comment") or "").strip().lower()
 
+        # Penalize the declined/deleted task title
         if feedback_type in {"declined", "commented", "deleted_with_annotation", "held_for_later"} and normalized_title:
-            rows.append(
-                {
-                    "memory_kind": "avoid_title",
-                    "pattern_key": normalized_title,
-                    "signal_value": original_title,
-                    "weight": 3.0 if feedback_type in {"declined", "deleted_with_annotation"} else 2.0 if feedback_type == "commented" else 1.0,
-                    "source_feedback_id": feedback_id,
-                }
-            )
-        if any(token in comment for token in ("generic", "vague", "broad", "weak", "fuzzy")):
-            for phrase in ("buyer-facing response", "operator response", "sharper source", "request one sharper source"):
-                if phrase in title_lower:
-                    rows.append(
-                        {
-                            "memory_kind": "avoid_phrase",
-                            "pattern_key": normalize_task_key(original_title),
-                            "signal_value": phrase,
-                            "weight": 2.0,
-                            "source_feedback_id": feedback_id,
-                        }
-                    )
-        if any(token in comment for token in ("overlap", "duplicate", "same", "similar")):
-            rows.append(
-                {
-                    "memory_kind": "avoid_bucket",
-                    "pattern_key": task_move_bucket({"title": original_title, "why_now": "", "task_type": ""}),
-                    "signal_value": original_title,
-                    "weight": 1.0,
-                    "source_feedback_id": feedback_id,
-                }
-            )
+            weight = 3.0 if feedback_type in {"declined", "deleted_with_annotation"} else 2.0 if feedback_type == "commented" else 1.0
+            rows.append({
+                "memory_kind": "avoid_title",
+                "pattern_key": normalized_title,
+                "signal_value": original_title,
+                "weight": weight,
+                "source_feedback_id": feedback_id,
+            })
+
+        # Parse structured signals from comment using the full comment parser
+        if comment:
+            rows.extend(_extract_comment_signals(comment, feedback_id))
+
+        # Positive signals from edited task text
         if adjusted_text:
             adjusted_lower = adjusted_text.lower()
-            rows.append(
-                {
-                    "memory_kind": "prefer_phrase",
-                    "pattern_key": normalize_task_key(adjusted_text),
-                    "signal_value": adjusted_lower,
-                    "weight": 2.0,
-                    "source_feedback_id": feedback_id,
-                }
+            rows.append({
+                "memory_kind": "prefer_phrase",
+                "pattern_key": normalize_task_key(adjusted_text),
+                "signal_value": adjusted_lower,
+                "weight": 2.0,
+                "source_feedback_id": feedback_id,
+            })
+            preferred_channel = infer_primary_channel(
+                "academy" if "enrollment" in adjusted_lower else "general", adjusted_lower
             )
-            preferred_channel = infer_primary_channel("academy" if "enrollment" in adjusted_lower else "general", adjusted_lower)
-            rows.append(
-                {
-                    "memory_kind": "prefer_channel",
-                    "pattern_key": task_move_bucket({"title": adjusted_text, "why_now": "", "task_type": ""}),
-                    "signal_value": preferred_channel,
-                    "weight": 1.0,
-                    "source_feedback_id": feedback_id,
-                }
-            )
+            rows.append({
+                "memory_kind": "prefer_channel",
+                "pattern_key": task_move_bucket({"title": adjusted_text, "why_now": "", "task_type": ""}),
+                "signal_value": preferred_channel,
+                "weight": 1.0,
+                "source_feedback_id": feedback_id,
+            })
     return rows
-
 
 def task_move_bucket(task: dict[str, Any]) -> str:
     bucket = str(task.get("move_bucket") or "").strip()
@@ -3927,10 +4266,15 @@ def synthesize_task_title(
         explicit_asset=explicit_asset,
         explicit_section=explicit_section,
     )
+    if competitor_phrase.lower().startswith("the competitor"):
+        subject_and_claim = competitor_phrase
+    else:
+        subject_and_claim = f"{competitor_phrase} {competitor_claim}"
+
     if move_bucket == "pricing_or_offer_move":
-        return f"Add {title_asset} {timing_window} before {competitor_phrase} {competitor_claim} sets expectations for {audience_phrase}"
+        return f"Add {title_asset} {timing_window} before {subject_and_claim} sets expectations for {audience_phrase}"
     if move_bucket == "messaging_or_positioning_move":
-        return f"Rewrite {title_asset} {timing_window} to answer {competitor_phrase} {competitor_claim} before {audience_phrase} default to it"
+        return f"Rewrite {title_asset} {timing_window} to answer {subject_and_claim} before {audience_phrase} default to it"
     if move_bucket == "intercept_or_capture_move":
         return f"Contact {competitor} {timing_window} and secure first access to customers, staff, assets, or distribution before the window closes"
     if move_bucket == "proof_or_trust_move":
@@ -4286,3 +4630,6 @@ def serve() -> None:
     observer.start()
     server = create_server(config)
     server.serve_forever()
+
+if __name__ == "__main__":
+    serve()

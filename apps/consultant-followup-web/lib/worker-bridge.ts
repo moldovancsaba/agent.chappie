@@ -299,8 +299,8 @@ export async function regenerateWorkerChecklist(input: {
 
 async function sendWorkerManagementRequest(
   path: string,
-  method: "POST" | "PATCH" | "DELETE",
-  payload: Record<string, unknown>
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  payload: Record<string, unknown> = {}
 ) {
   if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
     throw new Error("Worker management is unavailable in demo mode.");
@@ -437,4 +437,82 @@ export async function submitWorkerTaskFeedback(projectId: string, payload: Feedb
     "POST",
     payload as unknown as Record<string, unknown>
   );
+}
+
+// ── Generation Memory Management ────────────────────────────────────────────
+
+export type GenerationMemoryRow = {
+  memory_id: string;
+  project_id: string;
+  memory_kind: string;
+  pattern_key: string;
+  signal_value: string | null;
+  weight: number;
+  source_feedback_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getWorkerGenerationMemory(
+  projectId: string
+): Promise<{ generation_memory: GenerationMemoryRow[]; count: number }> {
+  const result = await sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/generation-memory`,
+    "GET"
+  );
+  return result as { generation_memory: GenerationMemoryRow[]; count: number };
+}
+
+export async function deleteWorkerGenerationMemoryRow(
+  projectId: string,
+  memoryId: string
+): Promise<{ deleted: boolean; memory_id: string }> {
+  const result = await sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/generation-memory/${encodeURIComponent(memoryId)}`,
+    "DELETE"
+  );
+  return result as { deleted: boolean; memory_id: string };
+}
+
+export async function clearWorkerGenerationMemory(
+  projectId: string
+): Promise<{ cleared: boolean; rows_removed: number }> {
+  const result = await sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/generation-memory`,
+    "DELETE"
+  );
+  return result as { cleared: boolean; rows_removed: number };
+}
+
+// ── Held Tasks Management ────────────────────────────────────────────────────
+
+export type HeldTask = {
+  held_task_id: string;
+  project_id: string;
+  original_title: string;
+  original_rank: number | null;
+  held_at: string;
+  status: string;
+};
+
+export async function getWorkerHeldTasks(
+  projectId: string
+): Promise<{ held_tasks: HeldTask[]; count: number }> {
+  const result = await sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/held-tasks`,
+    "GET"
+  );
+  return result as { held_tasks: HeldTask[]; count: number };
+}
+
+export async function restoreWorkerHeldTask(
+  projectId: string,
+  heldTaskId: string
+): Promise<{ restored: boolean }> {
+  const result = await sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/held-tasks/restore`,
+    "POST",
+    { held_task_id: heldTaskId }
+  );
+  return result as { restored: boolean };
 }

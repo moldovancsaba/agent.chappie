@@ -112,3 +112,6 @@ This coding environment cannot open loopback network connections to `127.0.0.1`,
 The public test app intentionally defers auth in Phase 4 and uses demo-safe anonymous identifiers until a later auth phase is introduced.
 
 Phase 5 adds a private worker bridge plus a continuous observation layer. The app remains thin, while the Mac mini worker ingests market signals, stores hidden system observations, and returns only ranked user-facing actions.
+
+## Agent Work Rule
+When you are done with a bucket of tasks, always provide a full plain text summary that can be easily copied and pasted for the Architect to review.

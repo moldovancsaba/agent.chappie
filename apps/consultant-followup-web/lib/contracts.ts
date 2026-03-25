@@ -187,6 +187,7 @@ export const feedbackSchema = z.object({
   user_action: z.enum(["done", "edited", "declined", "commented", "deleted_silent", "deleted_with_annotation", "held_for_later"]),
   feedback_payload: feedbackPayloadSchema,
   task_feedback_items: z.array(taskFeedbackItemSchema).optional(),
+  current_tasks: z.array(recommendedTaskSchema).optional(),
   actor_id: z.string().min(1).optional(),
   linked_result_status: resultStatusSchema.optional(),
 });
