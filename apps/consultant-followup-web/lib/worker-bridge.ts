@@ -275,6 +275,19 @@ export type WorkerWorkspacePayload = {
   }>;
 };
 
+function workspaceSnapshotHasRenderableData(payload: WorkerWorkspacePayload): boolean {
+  return (
+    (payload.fact_chips?.length ?? 0) > 0 ||
+    (payload.source_cards?.length ?? 0) > 0 ||
+    (payload.visible_intelligence_cards?.length ?? 0) > 0 ||
+    (payload.intelligence_cards?.length ?? 0) > 0 ||
+    (payload.knowledge_cards?.length ?? 0) > 0 ||
+    (payload.recent_sources?.length ?? 0) > 0 ||
+    (payload.recent_activity?.length ?? 0) > 0 ||
+    (payload.draft_segments?.length ?? 0) > 0
+  );
+}
+
 function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult): WorkerWorkspacePayload {
   const base = normalizeWorkerWorkspacePayload({ project_id: projectId });
   if (
@@ -300,6 +313,9 @@ function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult):
     for (const ref of task.evidence_refs ?? []) {
       refs.add(ref);
     }
+    for (const ref of task.supporting_source_refs ?? []) {
+      refs.add(ref);
+    }
   }
   const recent_sources = [...refs].slice(0, 12).map((source_ref) => ({
     source_ref,
@@ -307,10 +323,35 @@ function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult):
     created_at: result.completed_at,
     preview: source_ref.length > 80 ? `${source_ref.slice(0, 77)}…` : source_ref,
   }));
+  const linkedTaskTitles = tasks.map((t) => t.title);
+  const source_cards = recent_sources.map((rs) => ({
+    source_ref: rs.source_ref,
+    label: rs.preview.length > 100 ? `${rs.preview.slice(0, 97)}…` : rs.preview,
+    source_kind: rs.source_kind,
+    status: "referenced",
+    processing_summary: "Linked from the latest checklist as supporting evidence.",
+    last_used_in_checklist: true,
+    signal_count: 0,
+    key_takeaway: "This source was cited when drafting the recommended moves.",
+    business_impact: "It shaped the current checklist recommendations.",
+    linked_tasks: linkedTaskTitles,
+    confidence: 0.65,
+    created_at: rs.created_at,
+    preview: rs.preview,
+  }));
+  const recent_activity = tasks.slice(0, 6).map((task) => ({
+    signal_id: `checklist_task_${task.rank}`,
+    signal_type: "checklist_support",
+    summary: task.title.length > 120 ? `${task.title.slice(0, 117)}…` : task.title,
+    observed_at: result.completed_at,
+    source_ref: (task.evidence_refs ?? [])[0] ?? (task.supporting_source_refs ?? [])[0] ?? "synthetic",
+  }));
   return normalizeWorkerWorkspacePayload({
     project_id: projectId,
     fact_chips: factChips,
     recent_sources,
+    source_cards,
+    recent_activity,
   });
 }
 
@@ -416,12 +457,14 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
       filterWorkspaceHiddenFactChips(projectId, payload);
     const syncedWorkspace = await getWorkspaceSnapshot(projectId);
     if (syncedWorkspace && typeof syncedWorkspace === "object") {
-      const normalized = normalizeWorkerWorkspacePayload(
-        syncedWorkspace as Partial<WorkerWorkspacePayload> & {
-          project_id: string;
-        }
-      );
-      return applyHiddenFacts(normalized);
+      const raw = syncedWorkspace as Record<string, unknown>;
+      const normalized = normalizeWorkerWorkspacePayload({
+        ...(syncedWorkspace as Partial<WorkerWorkspacePayload>),
+        project_id: String(raw.project_id ?? projectId),
+      });
+      if (workspaceSnapshotHasRenderableData(normalized)) {
+        return applyHiddenFacts(normalized);
+      }
     }
     const stored = await getLatestJobResultForProject(projectId);
     if (stored) {

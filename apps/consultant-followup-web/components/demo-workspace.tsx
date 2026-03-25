@@ -1614,7 +1614,7 @@ export function DemoWorkspace() {
     activeView === "checklist"
       ? `${tasks.length} ranked moves`
       : activeView === "know-more"
-        ? `${visibleFlashcards.length} flashcards · ${filteredKnowledgeCards.length} cards`
+        ? `${workspace?.fact_chips.length ?? 0} flashcards · ${filteredKnowledgeCards.length} cards`
         : `${workspace?.source_cards.length ?? 0} monitored sources`;
 
   return (
