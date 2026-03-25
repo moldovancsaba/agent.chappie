@@ -857,7 +857,7 @@ def is_relevant_auto_research_result(
     content = str(fetched.get("content") or "")
     haystack = f"{title} {content}".lower()
     host = urllib.parse.urlparse(url).netloc.lower()
-    competitor_lc = competitor.lower()
+    competitor_lc = (competitor or "").lower()
     competitor_tokens = [token for token in re.findall(r"[a-z0-9]+", competitor_lc) if len(token) >= 3]
     matched_competitor_tokens = sum(1 for token in competitor_tokens if token in haystack or token in host)
     host_entity = host_to_entity(host)
@@ -2465,7 +2465,10 @@ def build_missing_information_tasks(
 
     if has_actionable_candidates and len(candidates) < 3:
         anchor_segment = strongest[0] if strongest else None
-        anchor_text = (anchor_segment["segment_text"] if anchor_segment else source.raw_text).lower()
+        anchor_raw = (
+            (anchor_segment.get("segment_text") if anchor_segment else None) or source.raw_text or ""
+        )
+        anchor_text = str(anchor_raw).lower()
         channel = infer_primary_channel(domain, anchor_text)
         fallback_actions = [
             {

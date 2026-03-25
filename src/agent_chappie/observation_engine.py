@@ -156,7 +156,12 @@ def extract_observations(source: SourcePackage, observed_at: str | None = None) 
             if is_negated_signal_clause(clause, keywords):
                 continue
             clause_context = infer_context(clause, source.project_summary)
-            clause_competitor = source.competitor or clause_context["competitor"] or competitor
+            clause_competitor = (
+                source.competitor
+                or clause_context.get("competitor")
+                or competitor
+                or "regional_competitor_unknown"
+            )
             clause_region = source.region or clause_context["region"] or region
             summary = build_summary(signal_type, clause)
             dedupe_key = (signal_type, clause_competitor.lower(), summary.lower())
