@@ -5,6 +5,9 @@ import { jobResultSchema } from "@/lib/contracts";
 import { env } from "@/lib/env";
 import { saveResult } from "@/lib/storage";
 
+/** Large job_result JSON + Neon write; avoid Vercel default short limit cutting off the worker upload. */
+export const maxDuration = 300;
+
 const payloadSchema = z.object({
   job_result: jobResultSchema,
 });

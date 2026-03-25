@@ -112,10 +112,10 @@ class ObservationEngineTests(unittest.TestCase):
         self.assertEqual(result_payload["recommended_tasks"][0]["rank"], 1)
         self.assertEqual(len(result_payload["recommended_tasks"]), 3)
         titles = [task["title"].lower() for task in result_payload["recommended_tasks"]]
-        self.assertTrue(any("launch a 7-day comparison offer" in title for title in titles))
-        self.assertTrue(any("first access" in title or "bundled offer" in title for title in titles))
-        self.assertTrue(any("enrollment" in task["expected_advantage"].lower() for task in result_payload["recommended_tasks"]))
-        self.assertTrue(any("raised prices" in task["why_now"].lower() for task in result_payload["recommended_tasks"]))
+        self.assertTrue(any("type=pricing_change" in title or "window=this_week" in title for title in titles))
+        self.assertTrue(any("bundle=closure_plus_asset_sale" in t or "type=closure" in t for t in titles))
+        self.assertTrue(any("conversion" in task["expected_advantage"].lower() for task in result_payload["recommended_tasks"]))
+        self.assertTrue(any("summary=" in task["why_now"].lower() for task in result_payload["recommended_tasks"]))
         self.assertTrue(all("improve " not in title for title in titles))
 
     def test_generate_recommended_tasks_combines_multi_signal_pricing_and_offer(self) -> None:
@@ -134,10 +134,10 @@ class ObservationEngineTests(unittest.TestCase):
         top_task = result_payload["recommended_tasks"][0]
         self.assertEqual(len(result_payload["recommended_tasks"]), 3)
         self.assertGreaterEqual(len(top_task["evidence_refs"]), 2)
-        self.assertIn("switch", top_task["title"].lower())
+        self.assertIn("bundle=pricing_plus_offer", top_task["title"].lower())
         self.assertIn("flowops", top_task["why_now"].lower())
         self.assertIn("essex county club", top_task["why_now"].lower())
-        self.assertIn("next intake closes", top_task["expected_advantage"].lower())
+        self.assertIn("measurable_axes", top_task["expected_advantage"].lower())
 
     def test_infer_context_recovers_competitor_and_region_for_fresh_project(self) -> None:
         inferred = infer_context(

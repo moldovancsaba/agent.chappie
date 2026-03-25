@@ -4,6 +4,8 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { markQueuedJobFailed } from "@/lib/storage";
 
+export const maxDuration = 60;
+
 const payloadSchema = z.object({
   error_detail: z.string().min(1),
 });

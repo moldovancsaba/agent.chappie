@@ -409,6 +409,17 @@ export async function claimNextQueuedJob(): Promise<QueuedJobRecord | null> {
   }
   await ensureQueueSchema();
   const sql = sqlClient();
+  // If a worker dies mid-job, rows stay "processing" forever. Re-queue after a quiet window.
+  await sql`
+    update demo_job_queue
+    set status = ${"queued"},
+        claimed_at = null,
+        error_detail = null,
+        updated_at = now()
+    where status = ${"processing"}
+      and claimed_at is not null
+      and claimed_at < now() - interval '5 minutes'
+  `;
   const rows = (await sql`
     with next_job as (
       select job_id

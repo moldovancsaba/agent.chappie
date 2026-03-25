@@ -13,6 +13,8 @@ from agent_chappie.local_store import (
     initialize_local_store,
     list_generation_memory_rows,
     list_task_feedback_rows,
+    record_card_action,
+    upsert_intelligence_cards,
 )
 from agent_chappie.worker_bridge import (
     WorkerBridgeConfig,
@@ -208,6 +210,52 @@ class FeedbackV2ApiTests(unittest.TestCase):
             )
             self.assertIn("tasks", out)
             self.assertEqual(len(out["tasks"]), 3)
+
+
+class IntelCardDeleteAndTeachMemoryTests(unittest.TestCase):
+    def test_writes_avoid_title_and_parsed_comment_like_task_feedback(self) -> None:
+        project_id = "project_intel_card_teach_mem"
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "brain.sqlite3")
+            initialize_local_store(db_path)
+            upsert_intelligence_cards(
+                project_id,
+                [
+                    {
+                        "card_id": "card_alpha",
+                        "insight": "Competitor launched aggressive trial bundles for mid-market teams.",
+                        "implication": "Your pipeline will face shorter evaluation cycles this quarter.",
+                        "potential_moves": ["Shorten trial to 14 days with a guided checklist"],
+                        "segment": "market",
+                        "competitor": "RivalCo",
+                        "channel": "web",
+                        "fact_refs": [],
+                        "source_refs": [],
+                        "state": "active",
+                    }
+                ],
+                [],
+                path=db_path,
+            )
+            record_card_action(
+                project_id,
+                "card_alpha",
+                "delete_and_teach",
+                note="Focus on the pricing page; avoid email for this motion.",
+                path=db_path,
+            )
+            rows = list_generation_memory_rows(project_id, path=db_path)
+            kinds = {r["memory_kind"] for r in rows}
+            self.assertIn("avoid_intel_card", kinds)
+            self.assertIn("avoid_title", kinds)
+            self.assertTrue(
+                any(
+                    str(r.get("memory_id") or "").startswith("avoid_title_intel::") for r in rows if r["memory_kind"] == "avoid_title"
+                ),
+                msg=f"expected avoid_title_intel memory_id, got {[r for r in rows if r['memory_kind']=='avoid_title']}",
+            )
+            self.assertTrue(any(r["memory_kind"] == "prefer_channel" for r in rows), msg="comment should parse prefer_channel")
+            self.assertTrue(any(str(r.get("memory_id") or "").startswith("card_teach::") for r in rows))
 
 
 if __name__ == "__main__":

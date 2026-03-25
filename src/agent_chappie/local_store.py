@@ -9,6 +9,12 @@ from contextlib import contextmanager
 from collections.abc import Iterator
 from typing import Any
 
+from agent_chappie.feedback_memory import (
+    extract_comment_signals,
+    intel_card_text_fingerprint,
+    normalize_task_key,
+)
+
 
 def local_db_path() -> str:
     return os.environ.get("AGENT_LOCAL_DB_PATH", "runtime_status/agent_brain.sqlite3")
@@ -1432,39 +1438,45 @@ def save_replacement_history(
         )
 
 
+def _persist_generation_memory_rows(connection: sqlite3.Connection, project_id: str, rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        memory_id = row.get("memory_id") or f"memory_{project_id}_{abs(hash((row['memory_kind'], row['pattern_key'], row.get('signal_value'))))}"
+        connection.execute(
+            """
+            insert into generation_memory (
+              memory_id,
+              project_id,
+              memory_kind,
+              pattern_key,
+              signal_value,
+              weight,
+              source_feedback_id
+            )
+            values (?, ?, ?, ?, ?, ?, ?)
+            on conflict(memory_id) do update set
+              pattern_key = excluded.pattern_key,
+              signal_value = excluded.signal_value,
+              weight = excluded.weight,
+              source_feedback_id = excluded.source_feedback_id,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            """,
+            (
+                memory_id,
+                project_id,
+                row["memory_kind"],
+                row["pattern_key"],
+                row.get("signal_value"),
+                float(row.get("weight") or 1.0),
+                row.get("source_feedback_id"),
+            ),
+        )
+
+
 def save_generation_memory_rows(project_id: str, rows: list[dict[str, Any]], path: str | None = None) -> None:
     if not rows:
         return
     with _connect(path) as connection:
-        for row in rows:
-            memory_id = row.get("memory_id") or f"memory_{project_id}_{abs(hash((row['memory_kind'], row['pattern_key'], row.get('signal_value'))))}"
-            connection.execute(
-                """
-                insert into generation_memory (
-                  memory_id,
-                  project_id,
-                  memory_kind,
-                  pattern_key,
-                  signal_value,
-                  weight,
-                  source_feedback_id
-                )
-                values (?, ?, ?, ?, ?, ?, ?)
-                on conflict(memory_id) do update set
-                  weight = excluded.weight,
-                  source_feedback_id = excluded.source_feedback_id,
-                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                """,
-                (
-                    memory_id,
-                    project_id,
-                    row["memory_kind"],
-                    row["pattern_key"],
-                    row.get("signal_value"),
-                    float(row.get("weight") or 1.0),
-                    row.get("source_feedback_id"),
-                ),
-            )
+        _persist_generation_memory_rows(connection, project_id, rows)
 
 
 def list_generation_memory_rows(project_id: str, limit: int = 200, path: str | None = None) -> list[dict[str, Any]]:
@@ -1913,6 +1925,65 @@ def record_card_action(
                 "update intelligence_cards set state = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where card_id = ? and project_id = ?",
                 (new_state, card_id, project_id),
             )
+        if action_type == "delete_and_teach":
+            row = connection.execute(
+                """
+                select segment, insight, implication, potential_moves_json
+                from intelligence_cards where card_id = ? and project_id = ?
+                """,
+                (card_id, project_id),
+            ).fetchone()
+            segment = str(row["segment"] or "market") if row else "market"
+            suffix = ""
+            if ":heuristic:" in card_id:
+                suffix = card_id.split(":heuristic:", 1)[-1]
+            pattern_key = suffix if suffix else f"segment:{segment}"
+            memory_id = f"avoid_intel::{project_id}::{card_id}"
+            teach_note = (note or "").strip()[:4000]
+            connection.execute(
+                """
+                insert into generation_memory (
+                  memory_id, project_id, memory_kind, pattern_key, signal_value, weight
+                )
+                values (?, ?, ?, ?, ?, ?)
+                on conflict(memory_id) do update set
+                  pattern_key = excluded.pattern_key,
+                  signal_value = excluded.signal_value,
+                  weight = excluded.weight,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                """,
+                (memory_id, project_id, "avoid_intel_card", pattern_key, teach_note, 1.5),
+            )
+            moves_raw: list[Any] = []
+            if row and row["potential_moves_json"]:
+                try:
+                    moves_raw = json.loads(row["potential_moves_json"] or "[]")
+                except json.JSONDecodeError:
+                    moves_raw = []
+            insight_s = str(row["insight"] or "") if row else ""
+            impl_s = str(row["implication"] or "") if row else ""
+            fp = intel_card_text_fingerprint(insight_s, impl_s, moves_raw)
+            nk = normalize_task_key(fp)
+            gm_extra: list[dict[str, Any]] = []
+            if nk:
+                gm_extra.append(
+                    {
+                        "memory_id": f"avoid_title_intel::{project_id}::{card_id}",
+                        "memory_kind": "avoid_title",
+                        "pattern_key": nk,
+                        "signal_value": fp[:4000],
+                        "weight": 3.0,
+                        "source_feedback_id": action_id,
+                    }
+                )
+            note_stripped = (note or "").strip()
+            if note_stripped:
+                for i, sig in enumerate(extract_comment_signals(note_stripped, action_id)):
+                    merged = dict(sig)
+                    merged["memory_id"] = f"card_teach::{project_id}::{action_id}:{i}"
+                    gm_extra.append(merged)
+            if gm_extra:
+                _persist_generation_memory_rows(connection, project_id, gm_extra)
 
 
 def upsert_card_weight_profile(

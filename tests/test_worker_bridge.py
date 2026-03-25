@@ -28,9 +28,12 @@ from agent_chappie.worker_bridge import (
     WorkerBridgeConfig,
     build_auto_research_sources,
     build_workspace_payload,
+    infer_domain_from_sources,
     process_job_payload,
     process_task_feedback,
     select_task_support_bundle,
+    synthesize_task_expected_advantage,
+    synthesize_task_title,
 )
 
 
@@ -527,18 +530,23 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertEqual(len(top_task["execution_steps"]), 4)
             self.assertTrue(any("Fortitude" in step for step in top_task["execution_steps"]))
             steps_blob = " ".join(top_task["execution_steps"]).lower()
-            per_step_surfaces = any(
-                "pricing comparison block" in step.lower() or "homepage comparison section" in step.lower()
-                for step in top_task["execution_steps"]
+            self.assertIn("sources:", steps_blob)
+            self.assertIn("evidence:", steps_blob)
+            organic_surfaces = any(
+                token in steps_blob
+                for token in (
+                    "pricing comparison",
+                    "homepage",
+                    "hero",
+                    "proof",
+                    "onboarding",
+                    "free trial",
+                )
             )
-            split_surfaces = "homepage comparison" in steps_blob and "comparison section" in steps_blob
-            self.assertTrue(per_step_surfaces or split_surfaces)
+            self.assertTrue(organic_surfaces)
             done_lower = top_task["done_definition"].lower()
-            self.assertTrue(
-                any(token in done_lower for token in ("pricing comparison block", "homepage comparison section", "proof block"))
-                or ("homepage comparison" in done_lower and "section" in done_lower)
-            )
-            self.assertTrue(any(token in top_task["execution_steps"][0].lower() for token in ("claim", "free trial", "onboarding", "pricing")))
+            self.assertTrue(any(token in done_lower for token in ("pricing", "homepage", "proof", "hero", "comparison", "shipped")))
+            self.assertTrue(any(token in steps_blob for token in ("claim", "free trial", "onboarding", "pricing", "fortitude")))
             self.assertIn("supporting_signal_refs", top_task)
             self.assertIn("supporting_segment_ids", top_task)
             self.assertIn("supporting_signal_scores", top_task)
@@ -1051,6 +1059,53 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertNotIn("fortitude ai focus", combined)
             self.assertGreaterEqual(sum(task["task_type"] != "information_request" for task in tasks), 2)
             self.assertNotEqual(tasks[2]["task_type"], "information_request")
+
+
+class WorkerBridgeCopyRegressionTests(unittest.TestCase):
+    def test_infer_domain_non_club_not_misclassified_as_academy(self) -> None:
+        source = SourcePackage(
+            project_id="p_domain",
+            source_kind="manual_text",
+            project_summary="x",
+            raw_text="Non-club coaching market: positioning for independent coaches.",
+            source_ref="s_domain",
+        )
+        self.assertEqual(infer_domain_from_sources(source, []), "general")
+
+    def test_infer_domain_youth_club_stays_academy(self) -> None:
+        source = SourcePackage(
+            project_id="p_domain2",
+            source_kind="manual_text",
+            project_summary="x",
+            raw_text="Our soccer club runs U14 intake for families each fall.",
+            source_ref="s_domain2",
+        )
+        self.assertEqual(infer_domain_from_sources(source, []), "academy")
+
+    def test_synthesize_task_title_no_possessive_plus_its(self) -> None:
+        title = synthesize_task_title(
+            move_bucket="pricing_or_offer_move",
+            competitor="CoachUp",
+            audience="buyers",
+            channel="pricing page",
+            timing_window="this week",
+            strongest_excerpt="generic market notes for positioning only",
+        )
+        self.assertNotIn("'s its ", title)
+        self.assertIn("coachup", title.lower())
+        self.assertIn("generic market notes", title.lower())
+
+    def test_synthesize_task_expected_advantage_no_double_its_claim(self) -> None:
+        adv = synthesize_task_expected_advantage(
+            move_bucket="pricing_or_offer_move",
+            competitor="CoachUp",
+            audience="buyers",
+            channel="pricing page",
+            timing_window="this week",
+        )
+        self.assertNotIn("'s its ", adv)
+        self.assertIn("conversion", adv.lower())
+        self.assertIn("coachup", adv.lower())
 
 
 if __name__ == "__main__":

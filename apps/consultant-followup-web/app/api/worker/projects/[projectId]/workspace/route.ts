@@ -4,6 +4,8 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { saveWorkspaceSnapshot } from "@/lib/storage";
 
+export const maxDuration = 300;
+
 const payloadSchema = z.object({
   workspace: z.record(z.string(), z.unknown()),
 });

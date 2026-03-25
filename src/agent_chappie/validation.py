@@ -321,7 +321,19 @@ def _validate_task_quality(task: dict[str, Any]) -> None:
         "update",
         "add ",
     )
-    if not any(token in normalized_title for token in required_action_tokens):
+    data_forward_title = (
+        "move=" in normalized_title
+        and " · " in normalized_title
+        and len(title) >= 28
+    )
+    operator_feedback_task = any(
+        str(ref).startswith("feedback::") for ref in (task.get("evidence_refs") or [])
+    )
+    if (
+        not data_forward_title
+        and not operator_feedback_task
+        and not any(token in normalized_title for token in required_action_tokens)
+    ):
         raise ValidationError("recommended_tasks title must describe a concrete executable action")
 
     time_scope_tokens = ("7-day", "this week", "before", "by friday", "next sign-up cycle", "next intake cycle")
