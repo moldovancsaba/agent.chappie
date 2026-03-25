@@ -98,6 +98,32 @@ Status:
 
 - in use for the private worker / 3steps app path (observations, sources, task feedback, generation memory, etc.)
 
+### LLM usage: “drafter / writer / judge” vs consultant worker
+
+These names mean **different things** in different entrypoints. This section is factual from the code.
+
+**A) Governed orchestrator flow** (`src/agent_chappie/orchestrator.py` → `OllamaModelAdapter` in `src/agent_chappie/models.py`)
+
+| Role | What calls it | Tool / runtime | Model selection |
+| --- | --- | --- | --- |
+| **Drafter** | `model_adapter.draft()` | **Ollama** HTTP `POST` to `OLLAMA_URL` (default `http://127.0.0.1:11434/api/generate`) | Env **`DRAFTER_MODEL`**, else **`AGENT_MODEL`** on `OllamaClient` (default `llama3:latest`) |
+| **Writer** | `model_adapter.write()` | Same **Ollama** endpoint | Env **`WRITER_MODEL`**, else same fallback as client default |
+| **Judge** | `model_adapter.judge()` | Same **Ollama** endpoint | Env **`JUDGE_MODEL`**, else same fallback as client default |
+
+The client sends JSON `{ "model", "prompt", "stream": false }` and reads the `response` string (expected JSON for the next validation step).
+
+**B) Consultant follow-up / queue worker** (`process_job_payload` in `src/agent_chappie/worker_bridge.py`)
+
+This path does **not** call `OllamaModelAdapter.draft/write/judge`.
+
+| Concept | Implementation | LLM? |
+| --- | --- | --- |
+| “Draft” knowledge segments | `build_draft_segments` — merges cards, chips, units, clauses | **No** — Python only |
+| Observations from source text | `extract_observations` in `observation_engine.py` — keyword / rule tables | **No** |
+| “Writer” tasks for checklist | `segment_to_task`, `write_tasks_from_segments`, `generate_learning_checklist` — templates and rules | **No** |
+| “Judge” / ranking | `judge_tasks` — filters, `task_priority_score`, diversity selection | **No** — not `ModelAdapter.judge` |
+| Flashcard scores | `score_flashcards` — numeric heuristics | **No** |
+
 ### MLX
 
 Layer:

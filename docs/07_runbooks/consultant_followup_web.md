@@ -34,6 +34,15 @@ Workspace panels in the browser are synthesized from the latest stored `JobResul
 
 **Ready-to-paste env blocks:** [`vercel_mac_queue_env.md`](vercel_mac_queue_env.md).
 
+### Mac watchdog: queue consumer health
+
+LaunchAgent **`com.agentchappie.watchdog`** runs `scripts/watchdog_agent.py` on an interval (see `ops/com.agentchappie.watchdog.plist`). Flags:
+
+- **`--check-queue-consumer`** — counts `worker_queue_consumer.py` PIDs, logs JSON lines to `runtime_status/queue_consumer_health.jsonl`, and appends notable events to `watchdog_log.jsonl`.
+- **`--remediate-duplicate-consumers`** — if **more than one** consumer is running, **SIGTERM** extras and keep the **lowest PID**.
+
+After pulling repo changes to the plist, re-run **`scripts/install_services.sh`**. Exit codes from the script: **4** = no consumer; **5** = duplicate consumers (should clear after remediation). See also [`docs/02_stack.md`](../02_stack.md) for **exact LLM vs non-LLM** roles (orchestrator Ollama drafter/writer/judge vs deterministic consultant worker).
+
 ## Card intelligence pipeline (source -> facts -> cards -> scores -> tasks)
 
 The worker now runs a strict three-layer flow:

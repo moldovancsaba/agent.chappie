@@ -19,6 +19,74 @@ if SRC not in sys.path:
 
 from agent_chappie.runtime import RuntimeStatusStore, parse_iso8601, utc_now_iso
 
+QUEUE_CONSUMER_MARKER = "worker_queue_consumer.py"
+
+
+def _queue_consumer_pids() -> list[int]:
+    completed = subprocess.run(
+        ["pgrep", "-f", QUEUE_CONSUMER_MARKER],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return []
+    pids: list[int] = []
+    for line in (completed.stdout or "").strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pids.append(int(line))
+        except ValueError:
+            continue
+    return sorted(set(pids))
+
+
+def check_queue_consumer_health(
+    store: RuntimeStatusStore,
+    remediate_duplicates: bool,
+) -> tuple[str, list[int]]:
+    """
+    Returns (status, pids) where status is ok | missing | duplicate.
+    When remediate_duplicates and status would be duplicate, SIGTERM extra PIDs first.
+    """
+    pids = _queue_consumer_pids()
+    log_path = os.path.join(store.status_dir, "queue_consumer_health.jsonl")
+    event: dict[str, Any] = {"checked_at": utc_now_iso(), "pids": pids, "count": len(pids)}
+
+    if len(pids) == 0:
+        event["status"] = "missing"
+        _append_jsonl(log_path, event)
+        store.append_watchdog_log({**event, "kind": "queue_consumer"})
+        return "missing", pids
+
+    if len(pids) > 1:
+        event["status"] = "duplicate"
+        if remediate_duplicates:
+            keep = pids[0]
+            kill_list = pids[1:]
+            event["remediated"] = True
+            event["kept_pid"] = keep
+            event["terminated_pids"] = kill_list
+            for pid in kill_list:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+        _append_jsonl(log_path, event)
+        store.append_watchdog_log({**event, "kind": "queue_consumer"})
+        return "duplicate", pids
+
+    event["status"] = "ok"
+    _append_jsonl(log_path, event)
+    return "ok", pids
+
+
+def _append_jsonl(path: str, payload: dict[str, Any]) -> None:
+    line = json.dumps(payload, sort_keys=True) + "\n"
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(line)
+
 
 @dataclass(frozen=True)
 class RestartPolicy:
@@ -34,6 +102,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--check-only", action="store_true", help="Only report health, do not restart")
     parser.add_argument("--max-restarts", type=int, default=3, help="Maximum restarts allowed within the rolling window")
     parser.add_argument("--window-seconds", type=int, default=300, help="Rolling window for restart storm protection")
+    parser.add_argument(
+        "--check-queue-consumer",
+        action="store_true",
+        help="Count worker_queue_consumer.py processes; log to queue_consumer_health.jsonl",
+    )
+    parser.add_argument(
+        "--remediate-duplicate-consumers",
+        action="store_true",
+        help="If more than one queue consumer is running, SIGTERM all but the lowest PID (oldest)",
+    )
     return parser.parse_args()
 
 
@@ -42,10 +120,18 @@ def main() -> int:
     store = RuntimeStatusStore(args.status_dir)
     policy = RestartPolicy(max_restarts=args.max_restarts, window_seconds=args.window_seconds)
 
+    exit_code = 0
+    if args.check_queue_consumer:
+        q_status, _ = check_queue_consumer_health(store, remediate_duplicates=args.remediate_duplicate_consumers)
+        if q_status == "missing":
+            exit_code = max(exit_code, 4)
+        elif q_status == "duplicate":
+            exit_code = max(exit_code, 5)
+
     if not os.path.exists(store.heartbeat_file):
         result = {"status": "missing_heartbeat", "label": args.label, "heartbeat_file": store.heartbeat_file}
         print(json.dumps(result, sort_keys=True))
-        return 3
+        return max(exit_code, 3)
 
     heartbeat = store.read_heartbeat()
     heartbeat_at = parse_iso8601(heartbeat["payload"]["last_heartbeat_at"])
@@ -54,13 +140,15 @@ def main() -> int:
 
     if age_seconds <= args.stale_seconds:
         result = {"status": "healthy", "age_seconds": age_seconds, "label": args.label}
+        if args.check_queue_consumer:
+            result["queue_consumer_exit_hint"] = exit_code
         print(json.dumps(result, sort_keys=True))
-        return 0
+        return exit_code
 
     stale_result = {"status": "stale", "age_seconds": age_seconds, "label": args.label}
     if args.check_only:
         print(json.dumps(stale_result, sort_keys=True))
-        return 1
+        return max(exit_code, 1)
 
     state = store.read_watchdog_state()
     recent_events = _prune_events(state.get("restart_events", []), policy.window_seconds)
@@ -73,7 +161,7 @@ def main() -> int:
         }
         store.append_watchdog_log({**blocked, "logged_at": utc_now_iso()})
         print(json.dumps(blocked, sort_keys=True))
-        return 2
+        return max(exit_code, 2)
 
     pid = heartbeat["payload"].get("pid")
     if isinstance(pid, int):
@@ -95,7 +183,8 @@ def main() -> int:
     store.write_watchdog_state({"restart_events": recent_events})
     store.append_watchdog_log(event)
     print(json.dumps(event, sort_keys=True))
-    return completed.returncode
+    base = completed.returncode
+    return max(exit_code, base)
 
 
 def _prune_events(events: list[dict[str, Any]], window_seconds: int) -> list[dict[str, Any]]:

@@ -17,7 +17,9 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from agent_chappie.runtime import RuntimeStatusStore
-from scripts.watchdog_agent import _prune_events
+from unittest.mock import patch
+
+from scripts.watchdog_agent import _prune_events, check_queue_consumer_health
 
 
 class RuntimeTests(unittest.TestCase):
@@ -49,6 +51,24 @@ class RuntimeTests(unittest.TestCase):
             log_path = Path(store.watchdog_log_file)
             self.assertTrue(log_path.exists())
             self.assertEqual(json.loads(log_path.read_text(encoding="utf-8")), {"status": "healthy"})
+
+    def test_check_queue_consumer_health_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = RuntimeStatusStore(tmpdir)
+            with patch("scripts.watchdog_agent._queue_consumer_pids", return_value=[999]):
+                status, pids = check_queue_consumer_health(store, remediate_duplicates=False)
+            self.assertEqual(status, "ok")
+            self.assertEqual(pids, [999])
+            health_log = Path(tmpdir) / "queue_consumer_health.jsonl"
+            self.assertTrue(health_log.exists())
+
+    def test_check_queue_consumer_health_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = RuntimeStatusStore(tmpdir)
+            with patch("scripts.watchdog_agent._queue_consumer_pids", return_value=[]):
+                status, pids = check_queue_consumer_health(store, remediate_duplicates=False)
+            self.assertEqual(status, "missing")
+            self.assertEqual(pids, [])
 
 
 if __name__ == "__main__":

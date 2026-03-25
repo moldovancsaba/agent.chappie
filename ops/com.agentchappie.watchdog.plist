@@ -19,6 +19,8 @@
     <string>3</string>
     <string>--window-seconds</string>
     <string>300</string>
+    <string>--check-queue-consumer</string>
+    <string>--remediate-duplicate-consumers</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
