@@ -21,6 +21,7 @@ if [[ -f "$ROOT/.env.local" ]]; then
 fi
 
 export PYTHONPATH="${ROOT}/src:${PYTHONPATH:-}"
+export PYTHONUNBUFFERED=1
 PY="${ROOT}/.venv/bin/python"
 if [[ ! -x "$PY" ]]; then
   PY="$(command -v python3)"
