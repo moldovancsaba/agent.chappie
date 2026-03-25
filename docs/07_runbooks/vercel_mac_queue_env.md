@@ -55,6 +55,21 @@ python scripts/worker_queue_consumer.py
 
 `APP_QUEUE_BASE_URL` must be the **origin only** (no trailing path): the script calls `…/api/worker/jobs/claim` and `…/api/worker/jobs/<id>/complete|fail`.
 
+### Production new source → Mac → back online: the three steps
+
+This is the **only** path when the user adds a source on **production** with `AGENT_BRIDGE_MODE=queue` and `DEMO_STORAGE_MODE=neon`. It is implemented in code; there are no alternate hidden channels.
+
+1. **Hosted write (Vercel + Neon)**  
+   The browser calls the Next.js API (e.g. `POST /api/projects/{projectId}/sources`). Because direct worker HTTP is off, the handler **does not** call the Mac. It inserts (or updates) a row in **`demo_job_queue`** with `status = 'queued'`, plus JSON columns **`job_request`** and **`source_package`** (the full payload: text, metadata, and base64 file bytes when applicable). Nothing is written to the Mac yet.
+
+2. **Mac pull, local brain, complete (Python + local SQLite)**  
+   `scripts/worker_queue_consumer.py` loops: **`POST {APP_QUEUE_BASE_URL}/api/worker/jobs/claim`** with header **`x-agent-worker-secret`**. The API returns **204** if no queued row; otherwise it atomically sets the row to **processing** and returns **`job_request`** + **`source_package`**. The script runs **`process_job_payload`** from `worker_bridge.py`, which **reads and writes `AGENT_LOCAL_DB_PATH`** (SQLite): snapshots, observations, facts, cards, checklist result, etc. On success it **`POST`s `/api/worker/jobs/{job_id}/complete`** with **`job_result`**; the server stores **`demo_job_results`** and **deletes** the row from **`demo_job_queue`**. Then it **`POST`s `/api/worker/projects/{project_id}/workspace`** with a built workspace JSON so the hosted app can render state without talking to SQLite.
+
+3. **Hosted read (Vercel + Neon)**  
+   The web app loads workspace / session state from **Neon** (snapshots, results), not from the Mac disk. If step 2 never completes or workspace sync fails, production stays stale even if SQLite on the Mac partially changed.
+
+**Operations:** Run **one** `worker_queue_consumer.py` process per environment. Multiple copies still use `FOR UPDATE SKIP LOCKED`, but they waste CPU and complicate logs.
+
 ---
 
 ## 3. Local Next.js against Neon (optional)

@@ -2750,8 +2750,8 @@ def task_payload_specificity_score(payload: dict[str, Any]) -> int:
 
 
 def task_priority_score(task: dict[str, Any], generation_memory_rows: list[dict[str, Any]] | None = None) -> int:
-    title = task["title"].lower()
-    why = task["why_now"].lower()
+    title = str(task.get("title") or "").lower()
+    why = str(task.get("why_now") or "").lower()
     score = 0
     task_type = task.get("task_type")
     if task_type == "capture_move":
@@ -2778,7 +2778,8 @@ def generation_memory_adjustment(task: dict[str, Any], generation_memory_rows: l
 
     normalized_title = normalize_task_key(task.get("title", ""))
     bucket = task_move_bucket(task)
-    channel = infer_primary_channel("academy" if "enrollment" in task.get("title", "").lower() else "general", task.get("title", "").lower())
+    title_lc = str(task.get("title") or "").lower()
+    channel = infer_primary_channel("academy" if "enrollment" in title_lc else "general", title_lc)
     adjustment = 0
     for row in generation_memory_rows:
         kind = str(row.get("memory_kind") or "")
@@ -2794,7 +2795,7 @@ def generation_memory_adjustment(task: dict[str, Any], generation_memory_rows: l
                 tw = set(normalized_title.split())
                 if len(pw | tw) > 0 and len(pw & tw) / len(pw | tw) > 0.6:
                     adjustment -= max(5, weight * 2)
-        elif kind == "avoid_phrase" and signal_value and signal_value in task.get("title", "").lower():
+        elif kind == "avoid_phrase" and signal_value and signal_value in title_lc:
             adjustment -= max(3, weight)
         elif kind == "avoid_bucket" and pattern_key == bucket:
             adjustment -= max(1, weight)
@@ -2802,7 +2803,7 @@ def generation_memory_adjustment(task: dict[str, Any], generation_memory_rows: l
             adjustment += max(2, weight)
         elif kind == "prefer_bucket" and pattern_key == bucket:
             adjustment += max(3, weight)
-        elif kind == "prefer_phrase" and signal_value and signal_value in task.get("title", "").lower():
+        elif kind == "prefer_phrase" and signal_value and signal_value in title_lc:
             adjustment += max(2, weight)
     return adjustment
 
