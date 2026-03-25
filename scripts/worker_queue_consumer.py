@@ -14,7 +14,12 @@ SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-from agent_chappie.worker_bridge import WorkerBridgeConfig, load_config, process_job_payload
+from agent_chappie.worker_bridge import (
+    WorkerBridgeConfig,
+    build_workspace_payload,
+    load_config,
+    process_job_payload,
+)
 
 
 def _required_env(name: str) -> str:
@@ -71,6 +76,7 @@ def main() -> None:
         job_id = str(claimed.get("job_id") or "")
         print(f"[job] claimed {job_id}")
         try:
+            project_id = str(claimed.get("project_id") or "")
             payload = {
                 "job_request": claimed["job_request"],
                 "source_package": claimed["source_package"],
@@ -86,6 +92,24 @@ def main() -> None:
                 print(f"[warn] complete failed for {job_id}: status={complete_status} payload={complete_payload}")
             else:
                 print(f"[job] completed {job_id}")
+                if project_id:
+                    try:
+                        workspace_payload = build_workspace_payload(project_id, worker_cfg)
+                        sync_status, sync_payload = _request_json(
+                            f"{api_base}/api/worker/projects/{project_id}/workspace",
+                            "POST",
+                            secret,
+                            {"workspace": workspace_payload},
+                        )
+                        if sync_status != 200:
+                            print(
+                                f"[warn] workspace sync failed for {project_id}: "
+                                f"status={sync_status} payload={sync_payload}"
+                            )
+                        else:
+                            print(f"[sync] workspace pushed {project_id}")
+                    except Exception as sync_exc:  # noqa: BLE001
+                        print(f"[warn] workspace build/sync failed for {project_id}: {sync_exc}")
         except Exception as exc:  # noqa: BLE001
             fail_status, fail_payload = _request_json(
                 f"{api_base}/api/worker/jobs/{job_id}/fail",

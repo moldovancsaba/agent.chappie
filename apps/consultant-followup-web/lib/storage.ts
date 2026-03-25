@@ -43,6 +43,7 @@ type MemoryState = {
   results: Map<string, JobResult>;
   feedback: Map<string, Feedback>;
   queue: Map<string, QueuedJobRecord>;
+  workspaces: Map<string, Record<string, unknown>>;
 };
 
 declare global {
@@ -57,6 +58,7 @@ function memoryState(): MemoryState {
       results: new Map(),
       feedback: new Map(),
       queue: new Map(),
+      workspaces: new Map(),
     };
   }
   return globalThis.__agentChappieDemoState__;
@@ -97,6 +99,13 @@ async function ensureQueueSchema() {
   await sql`
     create index if not exists idx_demo_job_queue_status_created
     on demo_job_queue(status, created_at)
+  `;
+  await sql`
+    create table if not exists demo_workspace_snapshots (
+      project_id text primary key references demo_projects(project_id) on delete cascade,
+      payload jsonb not null,
+      updated_at timestamptz not null default now()
+    )
   `;
   queueSchemaEnsured = true;
 }
@@ -393,6 +402,37 @@ export async function markQueuedJobFailed(jobId: string, detail: string) {
         updated_at = now()
     where job_id = ${jobId}
   `;
+}
+
+export async function saveWorkspaceSnapshot(projectId: string, payload: Record<string, unknown>) {
+  if (!canUseNeon()) {
+    memoryState().workspaces.set(projectId, payload);
+    return;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  await sql`
+    insert into demo_workspace_snapshots (project_id, payload)
+    values (${projectId}, ${JSON.stringify(payload)})
+    on conflict (project_id) do update
+      set payload = excluded.payload,
+          updated_at = now()
+  `;
+}
+
+export async function getWorkspaceSnapshot(projectId: string): Promise<Record<string, unknown> | null> {
+  if (!canUseNeon()) {
+    return memoryState().workspaces.get(projectId) ?? null;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  const rows = (await sql`
+    select payload
+    from demo_workspace_snapshots
+    where project_id = ${projectId}
+    limit 1
+  `) as Array<{ payload: Record<string, unknown> }>;
+  return rows[0]?.payload ?? null;
 }
 
 export function normalizeStoredJobResult(result: JobResult): JobResult {

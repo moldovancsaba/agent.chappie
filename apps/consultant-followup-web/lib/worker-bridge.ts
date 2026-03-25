@@ -2,7 +2,7 @@ import type { Feedback, JobRequest, JobResult, RecommendedTask } from "@/lib/con
 import { jobResultSchema } from "@/lib/contracts";
 import { createDemoRecommendation } from "@/lib/demo-worker";
 import { describeDirectWorkerBlock, env, isDirectWorkerEnabled } from "@/lib/env";
-import { getLatestJobResultForProject } from "@/lib/storage";
+import { getLatestJobResultForProject, getWorkspaceSnapshot } from "@/lib/storage";
 
 export class DirectWorkerUnavailableError extends Error {
   override readonly name = "DirectWorkerUnavailableError";
@@ -376,6 +376,14 @@ export async function runWorkerJob(input: {
 
 export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWorkspacePayload> {
   if (!isDirectWorkerEnabled()) {
+    const syncedWorkspace = await getWorkspaceSnapshot(projectId);
+    if (syncedWorkspace && typeof syncedWorkspace === "object") {
+      return normalizeWorkerWorkspacePayload(
+        syncedWorkspace as Partial<WorkerWorkspacePayload> & {
+          project_id: string;
+        }
+      );
+    }
     const stored = await getLatestJobResultForProject(projectId);
     if (stored) {
       return synthesizeWorkspaceFromJobResult(projectId, stored);
