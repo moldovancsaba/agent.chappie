@@ -1889,32 +1889,7 @@ export function DemoWorkspace() {
               ) : (
                 <div className="empty-state guided-empty-state">
                   <h3>No actions recommended yet</h3>
-                  <p>
-                    We need at least one strong signal before the checklist appears:
-                    pricing change, competitor move, offer shift, or closure / expansion signal.
-                  </p>
-                  <div className="guided-grid">
-                    <article className="guided-card">
-                      <strong>Competitor website</strong>
-                      <p>Detect pricing moves, offers, positioning claims, and proof signals.</p>
-                    </article>
-                    <article className="guided-card">
-                      <strong>Internal notes</strong>
-                      <p>Extract risks, opportunities, objections, and timing pressure from messy updates.</p>
-                    </article>
-                    <article className="guided-card">
-                      <strong>Market documents</strong>
-                      <p>Map competitors, packaging pressure, proof patterns, and strategy shifts.</p>
-                    </article>
-                  </div>
-                  <div className="panel-lite">
-                    <strong>Example output</strong>
-                    <ul>
-                      <li>Launch a 7-day trial response this week before Essex captures price-sensitive leads.</li>
-                      <li>Call Westover owner now and secure first access to players and assets before closure finalizes.</li>
-                      <li>Launch a U14 comparison offer before the next intake cycle resets buyer expectations.</li>
-                    </ul>
-                  </div>
+                  <p>We need at least one strong source signal before the checklist appears.</p>
                   <div className="guided-actions">
                     <button
                       className="button-secondary"
@@ -2090,8 +2065,8 @@ export function DemoWorkspace() {
               <div className="section-head">
                 <div>
                   <span className="section-kicker">Know More</span>
-                  <h2>Structured knowledge from the source set</h2>
-                  <p className="section-subcopy">Know More is the knowledge surface. It stays useful even when the checklist is blocked.</p>
+                  <h2>Structured knowledge flashcards from the sources</h2>
+                  <p className="section-subcopy">Know More is useful even when the checklist is blocked.</p>
                 </div>
                 <span className="section-count-badge">
                   {workspace?.fact_chips.length ?? 0} flashcards · {filteredKnowledgeCards.length} cards
@@ -2518,7 +2493,6 @@ export function DemoWorkspace() {
                 ) : (
                   <article className="intel-card">
                     <h3>No knowledge cards yet</h3>
-                    <p>Upload a real source and we will surface market knowledge here, even if no immediate task is strong enough yet.</p>
                   </article>
                 )}
               </div>
@@ -2567,11 +2541,7 @@ export function DemoWorkspace() {
                 <div className="notice">
                   <p>Loading the current workspace…</p>
                 </div>
-              ) : (
-                <div className="notice">
-                  <p>No project is loaded in this browser session yet. Add one source here to start a workspace, or return to the session that created the earlier sources.</p>
-                </div>
-              )}
+              ) : null}
 
               {showSourceComposer || editingSourceId ? (
                 <div className="operator-composer">
@@ -2909,9 +2879,7 @@ export function DemoWorkspace() {
                   ))
                 ) : (
                   <article className="source-asset empty-asset">
-                    <strong>No sources in this workspace yet</strong>
-                    <span>This view only shows sources linked to the active project.</span>
-                    <p>Add a source to start analysis for this project.</p>
+                    <strong>No sources yet</strong>
                   </article>
                 )}
               </div>
