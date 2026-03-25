@@ -18,6 +18,22 @@ For job submission, the app now follows:
 
 `POST /api/jobs` enqueues only. It does not synchronously execute the worker.
 
+### Production without Cloudflare (no inbound tunnel)
+
+You do **not** need `AGENT_API_BASE_URL` or a Cloudflare tunnel on Vercel. Jobs and completed results are **temporary online state** in Neon; the Mac Mini **pulls** work and writes results back over HTTPS to your hosted app.
+
+Set on Vercel (or `.env.local` for a Neon-backed dev deploy):
+
+- `AGENT_BRIDGE_MODE=queue` — disables all server-side HTTP to a private Mac worker; `AGENT_API_BASE_URL` is ignored even if set.
+- `DEMO_STORAGE_MODE=neon` and `DATABASE_URL=...`
+- `WORKER_QUEUE_SHARED_SECRET=...` (same value on the Mac consumer)
+
+On the Mac Mini, run `scripts/worker_queue_consumer.py` with `APP_QUEUE_BASE_URL=https://<your-production-app>` and the same queue secret. The consumer runs the real worker locally and persists to `AGENT_LOCAL_DB_PATH`; the hosted app only sees job rows and `JobResult` JSON.
+
+Workspace panels in the browser are synthesized from the latest stored `JobResult` for that project (not the full Mac SQLite workspace). Features that mutate workspace entities over HTTP to the Mac return a clear error in `queue` mode.
+
+**Ready-to-paste env blocks:** [`vercel_mac_queue_env.md`](vercel_mac_queue_env.md).
+
 ## Troubleshooting: job stays queued / cannot submit context
 
 1. Ensure app env is set in `apps/consultant-followup-web/.env.local`:

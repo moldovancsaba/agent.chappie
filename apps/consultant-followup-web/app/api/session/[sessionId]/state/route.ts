@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isDirectWorkerEnabled } from "@/lib/env";
 import { saveResult, getLatestSessionState, normalizeStoredJobResult, resultNeedsRefresh } from "@/lib/storage";
 import { regenerateWorkerChecklist } from "@/lib/worker-bridge";
 
@@ -7,7 +8,7 @@ export async function GET(_: Request, context: { params: Promise<{ sessionId: st
   const { sessionId } = await context.params;
   const state = await getLatestSessionState(sessionId);
 
-  if (state.project && state.result && resultNeedsRefresh(state.result)) {
+  if (state.project && state.result && resultNeedsRefresh(state.result) && isDirectWorkerEnabled()) {
     try {
       const regenerated = await regenerateWorkerChecklist({
         projectId: state.project.projectId,

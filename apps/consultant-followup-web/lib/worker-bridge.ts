@@ -1,7 +1,16 @@
-import type { Feedback, JobRequest, JobResult } from "@/lib/contracts";
+import type { Feedback, JobRequest, JobResult, RecommendedTask } from "@/lib/contracts";
 import { jobResultSchema } from "@/lib/contracts";
 import { createDemoRecommendation } from "@/lib/demo-worker";
-import { env } from "@/lib/env";
+import { describeDirectWorkerBlock, env, isDirectWorkerEnabled } from "@/lib/env";
+import { getLatestJobResultForProject } from "@/lib/storage";
+
+export class DirectWorkerUnavailableError extends Error {
+  override readonly name = "DirectWorkerUnavailableError";
+
+  constructor() {
+    super(describeDirectWorkerBlock());
+  }
+}
 
 function buildWorkerBaseUrl(): string {
   const base = env.agentApiBaseUrl?.replace(/\/$/, "") ?? "";
@@ -25,6 +34,10 @@ function explainWorkerConnectionFailure(err: unknown): Error {
     parts.push(String(err));
   }
   const blob = parts.join(" ").toLowerCase();
+  const looksDns =
+    blob.includes("enotfound") ||
+    blob.includes("getaddrinfo") ||
+    blob.includes("name not resolved");
   const looksNetwork =
     blob.includes("fetch failed") ||
     blob.includes("failed to fetch") ||
@@ -36,6 +49,20 @@ function explainWorkerConnectionFailure(err: unknown): Error {
     blob.includes("aborted");
   if (!looksNetwork) {
     return err instanceof Error ? err : new Error(String(err));
+  }
+  if (looksDns) {
+    const tunnelHint =
+      base.includes("trycloudflare.com") || base.includes("cfargotunnel.com")
+        ? "Cloudflare quick-tunnel hostnames stop resolving when the tunnel process exits; restart cloudflared and set AGENT_API_BASE_URL (e.g. on Vercel) to the new URL."
+        : "Confirm the hostname is spelled correctly and still exists (DNS / tunnel still running).";
+    return new Error(
+      [
+        `DNS could not resolve the worker host in ${base}.`,
+        tunnelHint,
+        "Job enqueue may still work via the DB queue if configured; routes that load workspace or call the worker API directly need a reachable AGENT_API_BASE_URL.",
+        `Technical detail: ${parts.join(" — ")}`,
+      ].join(" ")
+    );
   }
   return new Error(
     [
@@ -207,6 +234,53 @@ export type WorkerWorkspacePayload = {
   }>;
 };
 
+function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult): WorkerWorkspacePayload {
+  const base = normalizeWorkerWorkspacePayload({ project_id: projectId });
+  if (
+    result.status !== "complete" ||
+    typeof result.result_payload !== "object" ||
+    result.result_payload === null ||
+    !("recommended_tasks" in result.result_payload) ||
+    !Array.isArray(result.result_payload.recommended_tasks)
+  ) {
+    return base;
+  }
+  const tasks = result.result_payload.recommended_tasks as RecommendedTask[];
+  const summary =
+    "summary" in result.result_payload && typeof result.result_payload.summary === "string"
+      ? result.result_payload.summary
+      : "";
+  const factChips = tasks.slice(0, 6).map((task) => ({
+    fact_id: `from_task_${task.rank}`,
+    category: "checklist",
+    label: task.title.length > 160 ? `${task.title.slice(0, 157)}…` : task.title,
+    confidence: 0.72,
+    source_refs: task.evidence_refs ?? [],
+    evidence_refs: task.evidence_refs ?? [],
+  }));
+  const refs = new Set<string>();
+  for (const task of tasks) {
+    for (const ref of task.evidence_refs ?? []) {
+      refs.add(ref);
+    }
+  }
+  const recent_sources = [...refs].slice(0, 12).map((source_ref) => ({
+    source_ref,
+    source_kind: "manual_text",
+    created_at: result.completed_at,
+    preview: source_ref.length > 80 ? `${source_ref.slice(0, 77)}…` : source_ref,
+  }));
+  return normalizeWorkerWorkspacePayload({
+    project_id: projectId,
+    fact_chips: factChips,
+    recent_sources,
+    competitive_snapshot: {
+      ...base.competitive_snapshot,
+      pricing_position: summary.slice(0, 280) || base.competitive_snapshot.pricing_position,
+    },
+  });
+}
+
 export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspacePayload> & { project_id: string }): WorkerWorkspacePayload {
   return {
     project_id: payload.project_id,
@@ -245,7 +319,7 @@ export async function runWorkerJob(input: {
     contentBase64: string;
   };
 }): Promise<JobResult> {
-  if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
+  if (!isDirectWorkerEnabled()) {
     const recommendation = createDemoRecommendation({
       contextNotes: input.contextNotes,
     });
@@ -301,7 +375,11 @@ export async function runWorkerJob(input: {
 }
 
 export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWorkspacePayload> {
-  if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
+  if (!isDirectWorkerEnabled()) {
+    const stored = await getLatestJobResultForProject(projectId);
+    if (stored) {
+      return synthesizeWorkspaceFromJobResult(projectId, stored);
+    }
     return normalizeWorkerWorkspacePayload({
       project_id: projectId,
     });
@@ -328,8 +406,8 @@ export async function regenerateWorkerChecklist(input: {
   jobId: string;
   appId: string;
 }): Promise<JobResult> {
-  if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
-    throw new Error("Worker regeneration is unavailable in demo mode.");
+  if (!isDirectWorkerEnabled()) {
+    throw new Error("Checklist regeneration needs a direct Mac worker (AGENT_BRIDGE_MODE=worker and AGENT_API_BASE_URL).");
   }
 
   const response = await workerFetch(
@@ -358,8 +436,8 @@ async function sendWorkerManagementRequest(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   payload: Record<string, unknown> = {}
 ) {
-  if (env.agentBridgeMode === "demo" || !env.agentApiBaseUrl) {
-    throw new Error("Worker management is unavailable in demo mode.");
+  if (!isDirectWorkerEnabled()) {
+    throw new DirectWorkerUnavailableError();
   }
 
   const headers: Record<string, string> = {

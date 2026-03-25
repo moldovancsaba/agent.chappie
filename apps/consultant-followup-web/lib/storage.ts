@@ -273,6 +273,26 @@ export async function saveResult(result: JobResult) {
   `;
 }
 
+export async function getLatestJobResultForProject(projectId: string): Promise<JobResult | null> {
+  if (!canUseNeon()) {
+    const results = [...memoryState().results.values()]
+      .filter((row) => row.project_id === projectId)
+      .sort((left, right) => right.completed_at.localeCompare(left.completed_at));
+    const raw = results[0] ?? null;
+    return raw ? normalizeStoredJobResult(raw) : null;
+  }
+  const sql = sqlClient();
+  const rows = (await sql`
+    select payload
+    from demo_job_results
+    where project_id = ${projectId}
+    order by completed_at desc
+    limit 1
+  `) as Array<{ payload: JobResult }>;
+  const result = rows[0]?.payload ?? null;
+  return result ? normalizeStoredJobResult(result) : null;
+}
+
 export async function getResult(jobId: string): Promise<JobResult | null> {
   if (!canUseNeon()) {
     const result = memoryState().results.get(jobId) ?? null;
