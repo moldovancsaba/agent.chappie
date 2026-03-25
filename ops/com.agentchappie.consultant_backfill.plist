@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agentchappie.consultant_backfill</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/chappie/Projects/Agent.Chappie/scripts/periodic_consultant_pipeline.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/chappie/Projects/Agent.Chappie/runtime_status/consultant_backfill_stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/chappie/Projects/Agent.Chappie/runtime_status/consultant_backfill_stderr.log</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/chappie/Projects/Agent.Chappie</string>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+</dict>
+</plist>

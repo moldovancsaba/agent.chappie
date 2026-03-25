@@ -21,6 +21,9 @@
     <string>300</string>
     <string>--check-queue-consumer</string>
     <string>--remediate-duplicate-consumers</string>
+    <string>--queue-consumer-label</string>
+    <string>com.agentchappie.queue_consumer</string>
+    <string>--kickstart-missing-queue-consumer</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

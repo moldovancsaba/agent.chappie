@@ -112,6 +112,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="If more than one queue consumer is running, SIGTERM all but the lowest PID (oldest)",
     )
+    parser.add_argument(
+        "--queue-consumer-label",
+        default="com.agentchappie.queue_consumer",
+        help="launchd label for the Neon queue consumer job",
+    )
+    parser.add_argument(
+        "--kickstart-missing-queue-consumer",
+        action="store_true",
+        help="If no worker_queue_consumer.py process is running, launchctl kickstart the queue-consumer label",
+    )
     return parser.parse_args()
 
 
@@ -125,6 +135,26 @@ def main() -> int:
         q_status, _ = check_queue_consumer_health(store, remediate_duplicates=args.remediate_duplicate_consumers)
         if q_status == "missing":
             exit_code = max(exit_code, 4)
+            if args.kickstart_missing_queue_consumer and args.queue_consumer_label:
+                kick = subprocess.run(
+                    ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{args.queue_consumer_label}"],
+                    capture_output=True,
+                    text=True,
+                )
+                kick_event = {
+                    "kind": "queue_consumer_kickstart",
+                    "label": args.queue_consumer_label,
+                    "returncode": kick.returncode,
+                    "stdout": kick.stdout,
+                    "stderr": kick.stderr,
+                    "logged_at": utc_now_iso(),
+                }
+                store.append_watchdog_log(kick_event)
+                _append_jsonl(
+                    os.path.join(store.status_dir, "queue_consumer_health.jsonl"),
+                    kick_event,
+                )
+                print(json.dumps(kick_event, sort_keys=True))
         elif q_status == "duplicate":
             exit_code = max(exit_code, 5)
 

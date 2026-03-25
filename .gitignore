@@ -10,6 +10,7 @@ runtime_status_test/
 traces/
 
 .env
+.env.queue
 .env.local
 .env.*.local
 private/

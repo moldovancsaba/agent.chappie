@@ -25,95 +25,19 @@ import json
 import os
 import sys
 import uuid
-from datetime import UTC, datetime
-from typing import Any
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-from agent_chappie.local_store import get_source_snapshot, initialize_local_store, list_recent_source_snapshots
-from agent_chappie.worker_bridge import (
-    WorkerBridgeConfig,
-    build_workspace_payload,
-    load_config,
-    process_job_payload,
+from agent_chappie.consultant_local_replay import (
+    build_synthetic_consultant_payload,
+    post_workspace_to_host,
+    run_replay_payload,
 )
-
-
-def _utc_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _replay_source_kind(stored: str) -> str:
-    # Snapshots keep `uploaded_file` but raw_text is already extracted; replay as manual_text
-    # so normalize_source_package does not require content_base64.
-    if stored == "uploaded_file":
-        return "manual_text"
-    return stored
-
-
-def _build_payload(project_id: str, snapshot: dict[str, Any], job_id: str, app_id: str) -> dict[str, Any]:
-    source_ref = str(snapshot["source_ref"])
-    replay_kind = _replay_source_kind(str(snapshot["source_kind"]))
-    file_name = snapshot.get("display_label")
-
-    return {
-        "job_request": {
-            "job_id": job_id,
-            "app_id": app_id,
-            "project_id": project_id,
-            "priority_class": "normal",
-            "job_class": "heavy",
-            "submitted_at": _utc_iso(),
-            "requested_capability": "followup_task_recommendation",
-            "input_payload": {
-                "context_type": "working_document",
-                "prompt": (
-                    "Identify competitive signals from the ingested source and return exactly 3 actionable follow-up tasks."
-                ),
-                "artifacts": [{"type": "upload", "ref": source_ref}],
-            },
-            "requested_by": "local:process_local_sources",
-            "policy_tags": ["local-replay", "no-queue"],
-            "source_refs": [source_ref],
-        },
-        "source_package": {
-            "project_id": project_id,
-            "source_kind": replay_kind,
-            "project_summary": str(snapshot["project_summary"] or "managed_on_worker"),
-            "raw_text": str(snapshot["raw_text"] or ""),
-            "source_ref": source_ref,
-            "competitor": snapshot.get("competitor"),
-            "region": snapshot.get("region"),
-            **({"file_name": str(file_name)} if file_name else {}),
-        },
-    }
-
-
-def _post_workspace(base_url: str, secret: str, project_id: str, workspace: dict[str, Any]) -> tuple[int, str]:
-    import urllib.error
-    import urllib.request
-
-    url = f"{base_url.rstrip('/')}/api/worker/projects/{project_id}/workspace"
-    body = json.dumps({"workspace": workspace}).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "x-agent-worker-secret": secret,
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            raw = response.read().decode("utf-8")
-            return int(response.status), raw
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8")
-        return int(exc.code), raw
+from agent_chappie.local_store import get_source_snapshot, initialize_local_store, list_recent_source_snapshots
+from agent_chappie.worker_bridge import build_workspace_payload, load_config
 
 
 def main() -> int:
@@ -161,14 +85,13 @@ def main() -> int:
             return 1
         snapshot = snap
     else:
-        # Prefer operator uploads / primary sources over auto_research_url noise.
         primary = [r for r in rows if str(r.get("source_kind") or "") != "auto_research_url"]
         pool = primary or rows
         snapshot = max(pool, key=lambda r: str(r.get("created_at") or ""))
 
     app_id = os.environ.get("APP_ID", "app_consultant_followup")
     job_id = str(uuid.uuid4())
-    payload = _build_payload(args.project_id, snapshot, job_id, app_id)
+    payload = build_synthetic_consultant_payload(args.project_id, snapshot, job_id=job_id, app_id=app_id)
 
     if args.dry_run:
         print(json.dumps(payload, indent=2))
@@ -176,7 +99,7 @@ def main() -> int:
 
     print(f"DB: {db_path}")
     print(f"project_id={args.project_id} source_ref={snapshot['source_ref']} job_id={job_id}")
-    out = process_job_payload(payload, cfg)
+    out = run_replay_payload(payload, cfg)
     jr = out["job_result"]
     print(f"status={jr['status']} completed_at={jr.get('completed_at')}")
     if jr["status"] == "complete":
@@ -190,14 +113,42 @@ def main() -> int:
 
     if args.app_base_url and args.worker_secret:
         ws = build_workspace_payload(args.project_id, cfg)
-        status, body = _post_workspace(args.app_base_url, args.worker_secret, args.project_id, ws)
+        status, body = _post_workspace_manual(args.app_base_url, args.worker_secret, args.project_id, ws)
         print(f"workspace POST: HTTP {status} {body[:300]}")
         if status != 200:
             return 1
     elif args.app_base_url and not args.worker_secret:
         print("Skipping workspace POST: set --worker-secret or WORKER_QUEUE_SHARED_SECRET", file=sys.stderr)
+    elif not args.app_base_url:
+        code, detail = post_workspace_to_host(args.project_id, build_workspace_payload(args.project_id, cfg))
+        if code and code != 200 and "skipped" not in detail:
+            print(f"env workspace POST: HTTP {code} {detail[:200]}")
 
     return 0 if jr["status"] == "complete" else 2
+
+
+def _post_workspace_manual(base_url: str, secret: str, project_id: str, workspace: dict) -> tuple[int, str]:
+    import urllib.error
+    import urllib.request
+
+    url = f"{base_url.rstrip('/')}/api/worker/projects/{project_id}/workspace"
+    body = json.dumps({"workspace": workspace}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "x-agent-worker-secret": secret,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            raw = response.read().decode("utf-8")
+            return int(response.status), raw
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        return int(exc.code), raw
 
 
 if __name__ == "__main__":

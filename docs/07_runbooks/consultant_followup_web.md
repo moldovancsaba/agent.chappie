@@ -72,6 +72,20 @@ LaunchAgent **`com.agentchappie.watchdog`** runs `scripts/watchdog_agent.py` on 
 
 After pulling repo changes to the plist, re-run **`scripts/install_services.sh`**. Exit codes from the script: **4** = no consumer; **5** = duplicate consumers (should clear after remediation). See also [`docs/02_stack.md`](../02_stack.md) for **exact LLM vs non-LLM** roles (orchestrator Ollama drafter/writer/judge vs deterministic consultant worker).
 
+### Automatic processing on the Mac (launchd)
+
+Production expectation: **raw submissions are processed without manual shell steps**.
+
+1. **`scripts/install_services.sh`** installs four LaunchAgents under `~/Library/LaunchAgents/`:
+   - **`com.agentchappie.runtime`** — heartbeat service (`agent_runtime.py`).
+   - **`com.agentchappie.watchdog`** — restarts stale runtime; checks queue consumer; **kickstarts** `com.agentchappie.queue_consumer` if no `worker_queue_consumer.py` process is running.
+   - **`com.agentchappie.queue_consumer`** — long-lived **`scripts/run_queue_consumer.sh`** loop: claim Neon jobs → `process_job_payload` → `complete` → workspace sync.
+   - **`com.agentchappie.consultant_backfill`** — every **120s**, runs **`scripts/periodic_consultant_pipeline.py`**: full pipeline for SQLite `source_snapshots` still in **`received`** (excludes `auto_research_url`), optional workspace POST when `APP_QUEUE_BASE_URL` + `WORKER_QUEUE_SHARED_SECRET` are set. Disable with `AGENT_CONSULTANT_BACKFILL_ENABLED=0` in `.env.queue` / `.env.local`.
+
+2. **Secrets:** copy [`ops/queue_consumer.env.example`](../../ops/queue_consumer.env.example) to repo root **`.env.queue`** (gitignored) with **`APP_QUEUE_BASE_URL`** and **`WORKER_QUEUE_SHARED_SECRET`**. The shell wrappers source `.env.queue` then `.env.local`.
+
+3. **Manual run** (same as launchd): `zsh scripts/run_queue_consumer.sh`
+
 ## Card intelligence pipeline (source -> facts -> cards -> scores -> tasks)
 
 **MLX Trinity (optional):** When `FLASHCARD_MLX_TRINITY=1`, flashcards are produced by the local three-model Trinity path. **Heuristic fallback is off by default:** set `AGENT_ALLOW_HEURISTIC_FLASHCARDS=1` on dev machines if Trinity fails (MLX missing, timeout, empty rows) and you still want legacy heuristic cards instead of a **blocked** job. **Hard timeout kill:** set `TRINITY_SUBPROCESS=1` with `TRINITY_MAX_WALL_SECONDS>0` to run Trinity in a child process (see [`trinity_architecture.md`](../trinity_architecture.md) §8). **Preflight:** `python3 scripts/trinity_healthcheck.py` (optional `--quick`). Architecture, env tables, and roadmap: [`docs/trinity_architecture.md`](../trinity_architecture.md), [`docs/trinity_flow.md`](../trinity_flow.md) Appendix A, [`docs/03_roadmap.md`](../03_roadmap.md).
