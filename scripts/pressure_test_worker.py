@@ -335,13 +335,7 @@ def render_markdown_report(cases: list[dict[str, Any]]) -> str:
                 f"{task['rank']}. {task['title']} "
                 f"[bucket={task.get('move_bucket', 'n/a')}, priority={task.get('priority_label', 'n/a')}]"
             )
-        lines.append("- Snapshot:")
-        lines.append(
-            "  - "
-            f"Pricing: {case['snapshot'].get('pricing_position', 'n/a')} | "
-            f"Acquisition: {case['snapshot'].get('acquisition_strategy_comparison', 'n/a')} | "
-            f"Weakness: {case['snapshot'].get('current_weakness', 'n/a')}"
-        )
+        lines.append("- Snapshot: (competitive snapshot narrative disabled in product)")
         lines.append("")
     return "\n".join(lines)
 

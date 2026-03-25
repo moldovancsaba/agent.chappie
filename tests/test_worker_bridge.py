@@ -162,21 +162,13 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             source_card = workspace["source_cards"][0]
             snapshot = workspace["competitive_snapshot"]
             combined_source = f"{source_card['key_takeaway']} {source_card['business_impact']}".lower()
-            combined_snapshot = " ".join(
-                [
-                    snapshot["pricing_position"],
-                    snapshot["acquisition_strategy_comparison"],
-                    snapshot["current_weakness"],
-                    *snapshot["active_threats"],
-                ]
-            ).lower()
 
             self.assertIn("fortitude ai", combined_source)
             self.assertTrue("pricing page" in combined_source or "homepage" in combined_source)
             self.assertTrue("free trial" in combined_source or "no engineering required" in combined_source)
-            self.assertIn("fortitude ai", combined_snapshot)
-            self.assertTrue("pricing page" in combined_snapshot or "homepage" in combined_snapshot)
-            self.assertTrue("free trial" in combined_snapshot or "no engineering required" in combined_snapshot)
+            self.assertEqual(snapshot["pricing_position"], "")
+            self.assertEqual(snapshot["acquisition_strategy_comparison"], "")
+            self.assertEqual(snapshot.get("reference_competitor") or "", "")
 
     def test_auto_research_rejects_irrelevant_public_results(self) -> None:
         source = SourcePackage(

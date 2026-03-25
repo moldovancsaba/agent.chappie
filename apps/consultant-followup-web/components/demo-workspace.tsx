@@ -1483,15 +1483,6 @@ export function DemoWorkspace() {
       !hasPlaceholderTaskText(task.why_now) &&
       !hasPlaceholderTaskText(task.expected_advantage)
   );
-  const hasCompetitiveSnapshotData = Boolean(
-    workspace?.competitive_snapshot.reference_competitor ||
-      workspace?.competitive_snapshot.pricing_position ||
-      workspace?.competitive_snapshot.acquisition_strategy_comparison ||
-      workspace?.competitive_snapshot.current_weakness ||
-      workspace?.competitive_snapshot.risk_level ||
-      (workspace?.competitive_snapshot.active_threats?.length ?? 0) > 0 ||
-      (workspace?.competitive_snapshot.immediate_opportunities?.length ?? 0) > 0
-  );
   const sourceLabelByRef = new Map<string, string>();
   for (const source of workspace?.source_cards ?? []) {
     sourceLabelByRef.set(source.source_ref, source.label);
@@ -2089,61 +2080,6 @@ export function DemoWorkspace() {
                 </div>
               ) : null}
 
-              {hasCompetitiveSnapshotData ? (
-              <article className="intel-card snapshot-card">
-                <div className="operator-head">
-                  <h3>Competitive Position Snapshot</h3>
-                  <span>{workspace?.competitive_snapshot.reference_competitor ?? ""}</span>
-                </div>
-                <div className="summary-stack">
-                  {workspace?.competitive_snapshot.pricing_position ? (
-                  <div className="summary-row">
-                    <span>Pricing position</span>
-                    <strong>{workspace?.competitive_snapshot.pricing_position}</strong>
-                  </div>
-                  ) : null}
-                  {workspace?.competitive_snapshot.acquisition_strategy_comparison ? (
-                  <div className="summary-row">
-                    <span>Acquisition comparison</span>
-                    <strong>{workspace?.competitive_snapshot.acquisition_strategy_comparison}</strong>
-                  </div>
-                  ) : null}
-                  {workspace?.competitive_snapshot.current_weakness ? (
-                  <div className="summary-row">
-                    <span>Current weakness</span>
-                    <strong>{workspace?.competitive_snapshot.current_weakness}</strong>
-                  </div>
-                  ) : null}
-                  {workspace?.competitive_snapshot.risk_level ? (
-                  <div className="summary-row">
-                    <span>Risk level</span>
-                    <strong>{titleCaseWords(workspace?.competitive_snapshot.risk_level)}</strong>
-                  </div>
-                  ) : null}
-                </div>
-                {(workspace?.competitive_snapshot.active_threats ?? []).length ? (
-                <div className="task-block">
-                  <span>Active threats</span>
-                  <ul>
-                    {(workspace?.competitive_snapshot.active_threats ?? []).map((item, index) => (
-                      <li key={`threat-${index}`}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                ) : null}
-                {(workspace?.competitive_snapshot.immediate_opportunities ?? []).length ? (
-                <div className="task-block">
-                  <span>Immediate opportunities</span>
-                  <ul>
-                    {(workspace?.competitive_snapshot.immediate_opportunities ?? []).map((item, index) => (
-                      <li key={`opportunity-${index}`}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                ) : null}
-              </article>
-              ) : null}
-
               {visibleFlashcards.length ? (
                 <article className="intel-card">
                   <div className="operator-head">
@@ -2252,7 +2188,7 @@ export function DemoWorkspace() {
               ) : null}
 
               <div className="intel-columns">
-                {filteredKnowledgeCards.length ? (
+                {filteredKnowledgeCards.length > 0 ? (
                   filteredKnowledgeCards.map((card) => (
                     <article
                       className={`intel-card ${classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs)}`}
@@ -2496,11 +2432,7 @@ export function DemoWorkspace() {
                       ) : null}
                     </article>
                   ))
-                ) : (
-                  <article className="intel-card">
-                    <h3>No knowledge cards yet</h3>
-                  </article>
-                )}
+                ) : null}
               </div>
             </section>
           </div>

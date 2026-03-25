@@ -290,10 +290,6 @@ function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult):
     return base;
   }
   const tasks = result.result_payload.recommended_tasks as RecommendedTask[];
-  const summary =
-    "summary" in result.result_payload && typeof result.result_payload.summary === "string"
-      ? result.result_payload.summary
-      : "";
   const factChips = tasks.slice(0, 6).map((task) => ({
     fact_id: `from_task_${task.rank}`,
     category: "checklist",
@@ -318,10 +314,6 @@ function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult):
     project_id: projectId,
     fact_chips: factChips,
     recent_sources,
-    competitive_snapshot: {
-      ...base.competitive_snapshot,
-      pricing_position: summary.slice(0, 280) || base.competitive_snapshot.pricing_position,
-    },
   });
 }
 
@@ -340,11 +332,11 @@ export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspace
     fact_chips: payload.fact_chips ?? [],
     draft_segments: payload.draft_segments ?? [],
     competitive_snapshot: payload.competitive_snapshot ?? {
-      pricing_position: "Still forming",
-      acquisition_strategy_comparison: "Still forming",
+      pricing_position: "",
+      acquisition_strategy_comparison: "",
       active_threats: [],
       immediate_opportunities: [],
-      reference_competitor: "Comparison set still forming",
+      reference_competitor: "",
     },
     knowledge_summary: payload.knowledge_summary ?? [],
     monitor_jobs: payload.monitor_jobs ?? [],

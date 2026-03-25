@@ -3874,10 +3874,13 @@ def normalize_competitor_fact(value: str) -> str | None:
     return cleaned
 
 
-def is_placeholder_entity(value: str) -> bool:
-    lowered = clean_entity(value).lower()
-    if not lowered:
+def is_placeholder_entity(value: str | None) -> bool:
+    if value is None:
         return True
+    cleaned = clean_entity(value)
+    if not cleaned:
+        return True
+    lowered = cleaned.lower()
     blocked_exact = {
         "uploaded file",
         "document source",
@@ -3964,92 +3967,16 @@ def build_competitive_snapshot(
     knowledge_rows: list[dict[str, Any]],
     evidence_units: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    competitor = next((unit["competitor"] for unit in evidence_units if clean_entity(str(unit.get("competitor") or ""))), None)
-    if not competitor:
-        competitor = next((row["competitor"] for row in knowledge_rows if clean_entity(row["competitor"])), None)
-    pricing_observation = next((row for row in observation_rows if row["signal_type"] == "pricing_change"), None)
-    offer_observation = next((row for row in observation_rows if row["signal_type"] == "offer"), None)
-    closure_observation = next((row for row in observation_rows if row["signal_type"] == "closure"), None)
-    asset_sale_observation = next((row for row in observation_rows if row["signal_type"] == "asset_sale"), None)
-    pricing_units = [unit for unit in evidence_units if unit["unit_kind"] in {"pricing", "pricing_change"}]
-    offer_units = [unit for unit in evidence_units if unit["unit_kind"] in {"offer", "positioning", "messaging_shift"}]
-    proof_units = [unit for unit in evidence_units if unit["unit_kind"] in {"proof", "proof_signal"}]
-    pricing_clusters = cluster_units_by_action_shape(pricing_units)
-    offer_clusters = cluster_units_by_action_shape(offer_units)
-    proof_clusters = cluster_units_by_action_shape(proof_units)
-    top_pricing_cluster = pick_best_action_cluster(pricing_units)
-    top_offer_cluster = pick_best_action_cluster(offer_units)
-    top_proof_cluster = pick_best_action_cluster(proof_units)
-
-    pricing_position = ""
-    if pricing_observation:
-        pricing_position = (
-            f"{pricing_observation['competitor']} is resetting buyer price expectations in "
-            f"{humanize_region(pricing_observation['region'])}, which exposes any weaker entry offer you still show."
-        )
-    elif top_pricing_cluster:
-        pricing_position = summarize_snapshot_cluster_pressure(
-            cluster=top_pricing_cluster,
-            fallback_competitor=competitor,
-            fallback="",
-        )
-
-    acquisition_strategy = ""
-    if offer_observation:
-        acquisition_strategy = (
-            f"{offer_observation['competitor']} is lowering switching friction in "
-            f"{humanize_region(offer_observation['region'])} through offer-led acquisition."
-        )
-    elif asset_sale_observation:
-        acquisition_strategy = (
-            f"{asset_sale_observation['competitor']} is creating a cost-side acquisition opening through asset pressure."
-        )
-    elif top_offer_cluster:
-        acquisition_strategy = summarize_snapshot_cluster_pressure(
-            cluster=top_offer_cluster,
-            fallback_competitor=competitor,
-            fallback="",
-        )
-
-    active_threats = [summarize_observation_threat(row) for row in observation_rows[:3]]
-    cluster_threats = build_snapshot_cluster_threats(pricing_clusters, offer_clusters, proof_clusters, competitor)
-    if cluster_threats:
-        active_threats = unique_values(cluster_threats + active_threats)[:3]
-    immediate_opportunities = []
-    if closure_observation:
-        immediate_opportunities.append(
-            f"Move first on {closure_observation['competitor']} before the closure pressure turns into someone else's acquisition gain."
-        )
-    if offer_observation and pricing_observation:
-        immediate_opportunities.append(
-            f"Answer both {offer_observation['competitor']}'s offer pressure and {pricing_observation['competitor']}'s pricing move with one visible comparison response."
-        )
-    open_questions_card = next((card for card in knowledge_cards if card["knowledge_id"] == "open_questions"), None)
-    if open_questions_card and len(immediate_opportunities) < 3:
-        immediate_opportunities.extend(open_questions_card["potential_moves"][: 3 - len(immediate_opportunities)])
-
-    current_weakness = ""
-    if offer_observation:
-        current_weakness = "Weakness: no lower-friction entry offer is visible while a competitor is using offer-led acquisition."
-    elif pricing_observation:
-        current_weakness = "Weakness: your current price framing may look exposed if you do not answer the new comparison anchor quickly."
-    elif top_proof_cluster:
-        current_weakness = summarize_snapshot_weakness(top_proof_cluster, competitor)
-
-    risk_level = ""
-    if closure_observation or (pricing_observation and offer_observation):
-        risk_level = "high"
-    elif pricing_observation or offer_observation or asset_sale_observation:
-        risk_level = "medium"
-
+    """Workspace contract keeps this object for compatibility; narrative fields stay empty (no pricing / M&A framing)."""
+    _ = (knowledge_cards, observation_rows, knowledge_rows, evidence_units)
     return {
-        "pricing_position": pricing_position,
-        "acquisition_strategy_comparison": acquisition_strategy,
-        "current_weakness": current_weakness,
-        "active_threats": active_threats,
-        "immediate_opportunities": immediate_opportunities[:3],
-        "reference_competitor": competitor,
-        "risk_level": risk_level,
+        "pricing_position": "",
+        "acquisition_strategy_comparison": "",
+        "current_weakness": "",
+        "active_threats": [],
+        "immediate_opportunities": [],
+        "reference_competitor": "",
+        "risk_level": "",
     }
 
 
@@ -4198,51 +4125,6 @@ def pick_best_action_cluster(units: list[dict[str, Any]]) -> dict[str, Any] | No
     return clusters[0]
 
 
-def summarize_snapshot_cluster_pressure(cluster: dict[str, Any], fallback_competitor: str, fallback: str) -> str:
-    competitor = str(cluster.get("competitor") or fallback_competitor or "A competitor").strip()
-    asset = str(cluster.get("asset") or "").strip()
-    channel = str(cluster.get("channel") or "").strip()
-    claim = str(cluster.get("claim") or "").strip()
-    excerpt = str(cluster.get("excerpt") or "").strip()
-    if asset and channel and claim:
-        return f"{competitor} is using {asset} in the {channel} to push the {claim} claim into live buyer comparisons."
-    if excerpt and claim:
-        return f"{competitor} is pushing the {claim} claim into live comparisons: {excerpt[:180]}"
-    if asset and channel:
-        return f"{competitor} is making the {channel} more competitive through {asset}."
-    if excerpt:
-        return f"{competitor} is shaping live comparisons through this visible pressure: {excerpt[:180]}"
-    if claim:
-        return f"{competitor} is pushing the {claim} claim into the active comparison set."
-    return fallback
-
-
-def build_snapshot_cluster_threats(
-    pricing_clusters: list[dict[str, Any]],
-    offer_clusters: list[dict[str, Any]],
-    proof_clusters: list[dict[str, Any]],
-    fallback_competitor: str,
-) -> list[str]:
-    threats: list[str] = []
-    for cluster in (pricing_clusters[:1] + offer_clusters[:1] + proof_clusters[:1]):
-        summary = summarize_snapshot_cluster_pressure(
-            cluster=cluster,
-            fallback_competitor=fallback_competitor,
-            fallback="Competitive pressure is active.",
-        )
-        if summary and summary not in threats:
-            threats.append(summary)
-    return threats[:3]
-
-
-def summarize_snapshot_weakness(cluster: dict[str, Any], fallback_competitor: str) -> str:
-    competitor = str(cluster.get("competitor") or fallback_competitor or "a competitor").strip()
-    asset = str(cluster.get("asset") or "proof").strip()
-    channel = str(cluster.get("channel") or "the current comparison path").strip()
-    claim = str(cluster.get("claim") or "trust").strip()
-    return f"Weakness: your current {asset} in the {channel} may look weaker if you do not answer {competitor}'s {claim} claim quickly."
-
-
 def parse_json_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
@@ -4254,21 +4136,6 @@ def parse_json_list(value: Any) -> list[str]:
         if isinstance(parsed, list):
             return [str(item) for item in parsed if str(item).strip()]
     return []
-
-
-def summarize_observation_threat(observation: dict[str, Any]) -> str:
-    competitor = observation.get("competitor") or "A competitor"
-    region = humanize_region(observation.get("region", "region_unknown"))
-    signal_type = observation.get("signal_type")
-    if signal_type == "pricing_change":
-        return f"{competitor} is changing pricing pressure in {region}."
-    if signal_type == "offer":
-        return f"{competitor} is using a direct offer to win buyers in {region}."
-    if signal_type == "closure":
-        return f"{competitor} is unstable in {region}, creating a fast-moving capture opportunity."
-    if signal_type == "asset_sale":
-        return f"{competitor} is creating a low-cost asset opportunity in {region}."
-    return observation.get("summary", "A competitive change is active.")
 
 
 def knowledge_card(
