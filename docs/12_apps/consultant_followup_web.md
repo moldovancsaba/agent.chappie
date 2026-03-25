@@ -1,5 +1,9 @@
 # Consultant Follow-Up Web App
 
+## Product name: 3steps
+
+This surface is the **first app** on the Agent.Chappie platform: **three next best actions**, ingestion, local learning, and regeneration. Phase **8** makes the learning loop **production-credible** (see [`docs/phase8_milestones_and_gates.md`](../phase8_milestones_and_gates.md) and [`docs/08_handoffs/handoff_20260325_phase8_3steps_architect_decisions.md`](../08_handoffs/handoff_20260325_phase8_3steps_architect_decisions.md)).
+
 ## Purpose
 
 This is the first thin app layer for Agent.Chappie. It exists to exercise the accepted contract layer in a public test MVP without adding auth, scheduler implementation, or core orchestration into the app.
@@ -10,7 +14,7 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 - accepts a pasted URL, raw text block, or extracted file text as raw source material
 - submits one `Job Request v1`
 - retrieves one `Job Result v1`
-- submits one `Feedback v1`
+- submits task-level feedback via **[`feedback_v2.md`](../09_contracts/feedback_v2.md)** (unified `action_type` envelope); historical `Feedback v1` shapes may still appear in older examples
 - presents the product as a single decision surface, not a dashboard
 
 The frontend does not own or generate the general project context. That context is inferred, enriched, and maintained on the Mac mini worker.
@@ -57,16 +61,36 @@ This visual direction must not weaken the product rules:
 - `Sources & Jobs` remains a monitoring workspace, not a raw admin panel
 - user-facing voice remains `We` to `You`
 
+### Task-action vocabulary (`feedback_v2` `action_type`)
+
+Map UI labels to contract values (exact strings in API/worker):
+
+| UI | `action_type` |
+| --- | --- |
+| Done | `done` |
+| Edit / Adjust | `edit` |
+| Decline & replace | `decline_and_replace` |
+| Delete (silent) | `delete_only` |
+| Delete & teach | `delete_and_teach` |
+| Hold for later | `hold_for_later` |
+
+Optional `comment` on the same payload drives structured regeneration (channel, segment, competitor, move type, specificity) per Phase 8.
+
+### Task strength (honest labeling)
+
+Each visible task should carry **`task_strength`**: `strong_action` | `tactical_action` | `exploratory_action`. The UI shows this **subtly** (chip or metadata)—exploratory must not look like a strong tactical move.
+
 The main checklist view must:
 
 - show cards, not tables
 - show exactly 3 visible task cards
 - expose decision actions as:
-  - `Done`
-  - `Adjust`
-  - `Delete`
-  - `Delete and teach`
-  - `Hold for later`
+  - `Done` → `done`
+  - `Adjust` / edit → `edit`
+  - `Decline & replace` → `decline_and_replace` (where product offers decline flow)
+  - `Delete` → `delete_only`
+  - `Delete and teach` → `delete_and_teach`
+  - `Hold for later` → `hold_for_later`
   - `Remove source and rebuild` when the task is still tied to a live source
 - include a confidence indicator for the current ranked output
 - replace abstract empty states with guided input options and real ingestion status

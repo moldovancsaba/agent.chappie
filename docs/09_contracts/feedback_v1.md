@@ -1,5 +1,9 @@
 # Contract: Feedback v1
 
+## Note (Phase 8 / 3steps)
+
+Task-level learning and regeneration use **[`feedback_v2.md`](feedback_v2.md)** (`action_type`, comments, hold/delete/teach semantics, `task_strength`). v1 remains valid for historical job-level examples and fields such as `feedback_payload.done` / `edited` / `declined` where still used.
+
 ## Purpose
 
 Defines the app-to-platform feedback envelope for future improvement loops without embedding app logic in the core.

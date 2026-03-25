@@ -187,6 +187,13 @@ def initialize_local_store(path: str | None = None) -> str:
               updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
 
+            create table if not exists project_active_checklist (
+              project_id text primary key,
+              job_id text not null,
+              tasks_json text not null,
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
             create table if not exists evidence_units (
               unit_id text primary key,
               project_id text not null,
@@ -223,6 +230,7 @@ def initialize_local_store(path: str | None = None) -> str:
         _ensure_column(connection, "evidence_units", "section", "text")
         _ensure_column(connection, "evidence_units", "asset", "text")
         _ensure_column(connection, "evidence_units", "claim", "text")
+        _ensure_column(connection, "task_feedback", "action_type", "text")
     finally:
         connection.close()
     return db_path
@@ -1155,6 +1163,7 @@ def save_task_feedback_rows(project_id: str, job_id: str, rows: list[dict[str, A
     if not rows:
         return
     with _connect(path) as connection:
+        _ensure_column(connection, "task_feedback", "action_type", "text")
         for row in rows:
             connection.execute(
                 """
@@ -1168,9 +1177,10 @@ def save_task_feedback_rows(project_id: str, job_id: str, rows: list[dict[str, A
                   feedback_type,
                   feedback_comment,
                   adjusted_text,
-                  replacement_generated
+                  replacement_generated,
+                  action_type
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["feedback_id"],
@@ -1183,12 +1193,14 @@ def save_task_feedback_rows(project_id: str, job_id: str, rows: list[dict[str, A
                     row.get("feedback_comment"),
                     row.get("adjusted_text"),
                     int(bool(row.get("replacement_generated"))),
+                    row.get("action_type"),
                 ),
             )
 
 
 def list_task_feedback_rows(project_id: str, limit: int = 80, path: str | None = None) -> list[dict[str, Any]]:
     with _connect(path) as connection:
+        _ensure_column(connection, "task_feedback", "action_type", "text")
         rows = connection.execute(
             """
             select
@@ -1202,6 +1214,7 @@ def list_task_feedback_rows(project_id: str, limit: int = 80, path: str | None =
               feedback_comment,
               adjusted_text,
               replacement_generated,
+              action_type,
               created_at
             from task_feedback
             where project_id = ?
@@ -1211,6 +1224,49 @@ def list_task_feedback_rows(project_id: str, limit: int = 80, path: str | None =
             (project_id, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def save_project_active_checklist(
+    project_id: str,
+    job_id: str,
+    tasks: list[dict[str, Any]],
+    path: str | None = None,
+) -> None:
+    """Persist last 3-task checklist so feedback_v2 can resolve task_id without the client sending full tasks."""
+    raw = json.dumps(tasks, ensure_ascii=False)
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into project_active_checklist (project_id, job_id, tasks_json, updated_at)
+            values (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            on conflict(project_id) do update set
+              job_id = excluded.job_id,
+              tasks_json = excluded.tasks_json,
+              updated_at = excluded.updated_at
+            """,
+            (project_id, job_id, raw),
+        )
+
+
+def get_project_active_checklist(project_id: str, path: str | None = None) -> dict[str, Any] | None:
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            select project_id, job_id, tasks_json, updated_at
+            from project_active_checklist
+            where project_id = ?
+            """,
+            (project_id,),
+        ).fetchone()
+    if not row:
+        return None
+    data = dict(row)
+    try:
+        data["tasks"] = json.loads(data["tasks_json"])
+    except json.JSONDecodeError:
+        data["tasks"] = []
+    del data["tasks_json"]
+    return data
 
 
 def save_replacement_history(

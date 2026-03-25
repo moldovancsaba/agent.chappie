@@ -747,7 +747,11 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn(first_tasks[0]["title"], [t["title"] for t in regenerated])
             self.assertIn(first_tasks[1]["title"], [t["title"] for t in regenerated])
             memory_rows = list_generation_memory_rows("project_feedback_comment", path=db_path)
-            self.assertTrue(any(row["memory_kind"] == "avoid_bucket" for row in memory_rows))
+            kinds = {row["memory_kind"] for row in memory_rows}
+            self.assertTrue(
+                "avoid_title" in kinds or "prefer_specificity" in kinds or "avoid_phrase" in kinds,
+                msg=f"expected structured memory from comment, got kinds={kinds}",
+            )
 
     def test_edited_task_creates_preference_memory(self) -> None:
         payload = {

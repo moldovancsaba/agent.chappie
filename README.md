@@ -96,7 +96,11 @@ OpenClaw verification plus local Ollama provider examples are in:
 - [`config/openclaw.local.example.json`](/Users/chappie/Projects/Agent.Chappie/config/openclaw.local.example.json)
 - [`docs/setup.md`](/Users/chappie/Projects/Agent.Chappie/docs/setup.md)
 
-### Phase 4 to 8
+### Phase 8 — 3steps (in progress)
+
+Production-credible learning and first-app delivery: [`docs/phase8_milestones_and_gates.md`](docs/phase8_milestones_and_gates.md), task feedback [`docs/09_contracts/feedback_v2.md`](docs/09_contracts/feedback_v2.md).
+
+### Phase 4 to 7 (core scaffold and app)
 
 Implemented in:
 

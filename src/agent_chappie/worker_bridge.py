@@ -25,6 +25,7 @@ from agent_chappie.local_store import (
     delete_managed_source,
     fetch_knowledge_feedback_rows,
     fetch_knowledge_rows,
+    get_project_active_checklist,
     get_source_snapshot,
     initialize_local_store,
     insert_observations,
@@ -44,6 +45,7 @@ from agent_chappie.local_store import (
     replace_evidence_units,
     restore_held_task,
     save_held_task,
+    save_project_active_checklist,
     save_source_snapshot,
     save_generation_memory_rows,
     save_replacement_history,
@@ -285,6 +287,12 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
                 for evidence_ref in evidence_refs
                 if evidence_ref in observation_lookup
             }
+            save_project_active_checklist(
+                source_package.project_id,
+                job_request["job_id"],
+                job_result["result_payload"]["recommended_tasks"],
+                config.local_db_path,
+            )
     processing_summary = (
         job_result["result_payload"].get("summary")
         if job_result["status"] == "complete" and isinstance(job_result["result_payload"], dict)
@@ -327,7 +335,6 @@ def process_management_request(
     config: WorkerBridgeConfig,
 ) -> tuple[dict[str, Any], HTTPStatus]:
     parts = [p for p in path.strip("/").split("/") if p]
-    print(f"DEBUG PATH: {path} -> PARTS: {parts}")
     if len(parts) < 3 or parts[0] != "projects":
         return {"error": "not_found"}, HTTPStatus.NOT_FOUND
 
@@ -437,6 +444,13 @@ def process_management_request(
 
     if resource == "task-feedback" and method == "POST" and len(parts) == 3:
         return process_task_feedback(project_id, payload, config), HTTPStatus.OK
+
+    if resource == "tasks" and method == "POST" and len(parts) == 4 and parts[3] == "feedback":
+        try:
+            result = apply_task_feedback(payload, config)
+            return result, HTTPStatus.OK
+        except ValueError as exc:
+            return {"error": "invalid_task_feedback", "detail": str(exc)}, HTTPStatus.BAD_REQUEST
 
     if resource == "checklist" and method == "POST" and len(parts) == 3:
         job_id = str(payload.get("job_id") or f"regenerated_{project_id}_{int(time.time() * 1000)}")
@@ -849,12 +863,123 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     }
 
 
+FEEDBACK_V2_ACTION_TYPES = frozenset(
+    {
+        "done",
+        "edit",
+        "decline_and_replace",
+        "delete_only",
+        "delete_and_teach",
+        "hold_for_later",
+    }
+)
+
+
+def _map_v2_action_to_feedback_type(action_type: str) -> str:
+    return {
+        "done": "completed",
+        "edit": "edited",
+        "decline_and_replace": "declined",
+        "delete_only": "deleted_silent",
+        "delete_and_teach": "deleted_with_annotation",
+        "hold_for_later": "held_for_later",
+    }[action_type]
+
+
+def _resolve_task_from_checklist(tasks: list[dict[str, Any]], task_id: str) -> dict[str, Any] | None:
+    tid = str(task_id).strip()
+    for entry in tasks:
+        if str(entry.get("task_id") or "") == tid:
+            return entry
+        if str(entry.get("rank") or "") == tid:
+            return entry
+    if tid.isdigit():
+        rank = int(tid)
+        for entry in tasks:
+            if int(entry.get("rank") or 0) == rank:
+                return entry
+        if 1 <= rank <= len(tasks):
+            return tasks[rank - 1]
+    return None
+
+
+def apply_task_feedback(feedback_payload: dict[str, Any], config: WorkerBridgeConfig) -> dict[str, Any]:
+    """
+    feedback_v2 entrypoint: { project_id, task_id, action_type, comment?, edited_title? }
+    Loads the active checklist from the worker DB (or bootstraps via regeneration), applies one action, returns exactly 3 tasks.
+    """
+    project_id = str(feedback_payload.get("project_id") or "").strip()
+    task_id = str(feedback_payload.get("task_id") or "").strip()
+    action_type = str(feedback_payload.get("action_type") or "").strip()
+    comment = str(feedback_payload.get("comment") or "").strip()
+    edited_title = str(feedback_payload.get("edited_title") or "").strip()
+    if not project_id or not task_id or not action_type:
+        raise ValueError("project_id, task_id, and action_type are required")
+    if action_type not in FEEDBACK_V2_ACTION_TYPES:
+        raise ValueError(f"Unsupported action_type: {action_type}")
+
+    stored = get_project_active_checklist(project_id, path=config.local_db_path)
+    if not stored or not stored.get("tasks"):
+        job_id_boot = f"bootstrap_{project_id}_{int(time.time() * 1000)}"
+        result_document = regenerate_project_checklist(
+            project_id,
+            config,
+            job_id=job_id_boot,
+            app_id="consultant_followup_web",
+        )
+        boot_tasks = result_document["result_payload"]["recommended_tasks"]
+        save_project_active_checklist(project_id, job_id_boot, boot_tasks, config.local_db_path)
+        current_tasks = boot_tasks
+        job_id = job_id_boot
+    else:
+        current_tasks = stored["tasks"]
+        job_id = stored["job_id"]
+
+    target = _resolve_task_from_checklist(current_tasks, task_id)
+    if not target:
+        raise ValueError("task_id does not match the active checklist")
+
+    internal_type = _map_v2_action_to_feedback_type(action_type)
+    adjusted_text: str | None = None
+    if action_type == "edit":
+        adjusted_text = edited_title or comment or None
+        if not adjusted_text:
+            raise ValueError("edit requires edited_title or comment with new wording")
+
+    feedback_item: dict[str, Any] = {
+        "feedback_id": f"fb_v2_{project_id}_{int(time.time() * 1000)}",
+        "task_id": target.get("rank"),
+        "original_title": target["title"],
+        "original_expected_advantage": target.get("expected_advantage"),
+        "feedback_type": internal_type,
+        "feedback_comment": comment or None,
+        "adjusted_text": adjusted_text,
+        "replacement_generated": True,
+        "action_type": action_type,
+    }
+    inner_payload = {
+        "job_id": job_id,
+        "current_tasks": list(current_tasks),
+        "task_feedback_items": [feedback_item],
+    }
+    result = process_task_feedback(project_id, inner_payload, config)
+    out_tasks = result["job_result"]["result_payload"]["recommended_tasks"]
+    return {
+        "tasks": out_tasks,
+        "job_id": job_id,
+        "job_result": result["job_result"],
+        "workspace": result.get("workspace"),
+    }
+
+
 def process_task_feedback(project_id: str, payload: dict[str, Any], config: WorkerBridgeConfig) -> dict[str, Any]:
     job_id = str(payload.get("job_id") or "")
     feedback_items = payload.get("task_feedback_items") or []
     current_tasks = payload.get("current_tasks") or []
-    if not job_id or not isinstance(feedback_items, list) or not feedback_items:
-        raise ValueError("Task feedback requires a job id and at least one feedback item.")
+    if not isinstance(feedback_items, list) or not feedback_items:
+        raise ValueError("Task feedback requires at least one feedback item.")
+    if not job_id:
+        job_id = f"feedback_job_{project_id}_{int(time.time() * 1000)}"
 
     rows = []
     for index, item in enumerate(feedback_items):
@@ -870,14 +995,15 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
                 "feedback_comment": item.get("feedback_comment"),
                 "adjusted_text": item.get("adjusted_text"),
                 "replacement_generated": True,
+                "action_type": item.get("action_type"),
             }
         )
     save_task_feedback_rows(project_id, job_id, rows, path=config.local_db_path)
     # Only write to generation_memory for feedback types that carry intent signals.
-    # delete_only (deleted_silent) must NOT write to generation_memory — it is a silent action.
+    # delete_only (deleted_silent) and done (completed) must NOT write teaching memory.
     memory_eligible_rows = [
         row for row in rows
-        if row["feedback_type"] != "deleted_silent"
+        if row["feedback_type"] not in {"deleted_silent", "completed"}
     ]
     if memory_eligible_rows:
         save_generation_memory_rows(project_id, build_generation_memory_rows(memory_eligible_rows), path=config.local_db_path)
@@ -925,6 +1051,12 @@ def process_task_feedback(project_id: str, payload: dict[str, Any], config: Work
             source_feedback_id=row["feedback_id"],
             path=config.local_db_path,
         )
+    save_project_active_checklist(
+        project_id,
+        job_id,
+        result_document["result_payload"]["recommended_tasks"],
+        config.local_db_path,
+    )
     return {"job_result": result_document, "workspace": build_workspace_payload(project_id, config)}
 
 
@@ -2456,7 +2588,7 @@ def generate_learning_checklist(
         # Post-generation quality gate:
         # 1. Skip tasks with synthetic doubled competitor name pattern
         title = str(t.get("title") or "")
-        if re.search(r"the competitor using .{5,40} \1", title, re.IGNORECASE):
+        if re.search(r"(the competitor using .{5,60})\s+\1", title, re.IGNORECASE):
             t["quality_class"] = "rejected_phrasing"
             continue
         # 2. Cap title length at 20 words
@@ -2896,6 +3028,15 @@ def select_diverse_tasks(tasks: list[dict[str, Any]], target_count: int) -> list
 
 def normalize_task_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def task_title_jaccard(title_a: str, title_b: str) -> float:
+    """Token Jaccard on normalized titles; used for duplicate / replacement checks in tests and gates."""
+    wa = set(normalize_task_key(title_a).split())
+    wb = set(normalize_task_key(title_b).split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
 
 
 def normalize_legacy_product_voice(value: str) -> str:

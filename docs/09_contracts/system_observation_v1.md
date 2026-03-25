@@ -7,7 +7,7 @@ Defines the internal signal format used by the private worker to accumulate comp
 ## Ownership
 
 - produced by the private worker
-- persisted in Neon
+- persisted in the **authoritative local worker database** (Mac mini SQLite), table `system_observations` — **not** in Neon; Neon may hold app-visible shared state only and must not be authoritative for internal observations
 - consumed internally by task-generation logic
 - not shown directly to end users
 

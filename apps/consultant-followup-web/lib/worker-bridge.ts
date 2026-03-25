@@ -3,6 +3,59 @@ import { jobResultSchema } from "@/lib/contracts";
 import { createDemoRecommendation } from "@/lib/demo-worker";
 import { env } from "@/lib/env";
 
+function buildWorkerBaseUrl(): string {
+  const base = env.agentApiBaseUrl?.replace(/\/$/, "") ?? "";
+  if (!base) {
+    throw new Error(
+      "AGENT_API_BASE_URL is not set. Copy apps/consultant-followup-web/.env.example to .env.local and set the worker URL (e.g. http://127.0.0.1:8787)."
+    );
+  }
+  return base;
+}
+
+function explainWorkerConnectionFailure(err: unknown): Error {
+  const base = env.agentApiBaseUrl ?? "(AGENT_API_BASE_URL unset)";
+  const parts: string[] = [];
+  if (err instanceof Error) {
+    parts.push(err.message);
+    if (err.cause instanceof Error) {
+      parts.push(err.cause.message);
+    }
+  } else {
+    parts.push(String(err));
+  }
+  const blob = parts.join(" ").toLowerCase();
+  const looksNetwork =
+    blob.includes("fetch failed") ||
+    blob.includes("failed to fetch") ||
+    blob.includes("econnrefused") ||
+    blob.includes("connection refused") ||
+    blob.includes("enotfound") ||
+    blob.includes("networkerror") ||
+    blob.includes("socket") ||
+    blob.includes("aborted");
+  if (!looksNetwork) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+  return new Error(
+    [
+      `The app cannot reach the private worker at ${base}.`,
+      "Start the worker from the Agent.Chappie repo root:",
+      "  source .venv/bin/activate && python scripts/worker_bridge.py",
+      "Ensure AGENT_SHARED_SECRET matches in the worker process and in apps/consultant-followup-web/.env.local.",
+      `Technical detail: ${parts.join(" — ")}`,
+    ].join(" ")
+  );
+}
+
+async function workerFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, cache: "no-store" });
+  } catch (err) {
+    throw explainWorkerConnectionFailure(err);
+  }
+}
+
 type SourcePackage = {
   source_kind: "manual_text" | "url" | "uploaded_file";
   project_summary: string;
@@ -215,7 +268,7 @@ export async function runWorkerJob(input: {
     });
   }
 
-  const response = await fetch(`${env.agentApiBaseUrl.replace(/\/$/, "")}/jobs`, {
+  const response = await workerFetch(`${buildWorkerBaseUrl()}/jobs`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -233,11 +286,16 @@ export async function runWorkerJob(input: {
         content_base64: input.uploadedFile?.contentBase64,
       } satisfies SourcePackage,
     }),
-    cache: "no-store",
   });
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.detail ?? "Worker bridge failed to return a result.");
+    const detail = payload.detail ?? payload.error ?? "Worker bridge failed to return a result.";
+    if (response.status === 401) {
+      throw new Error(
+        `Worker returned 401 (unauthorized). Set AGENT_SHARED_SECRET in apps/consultant-followup-web/.env.local to match the worker (same value as when starting worker_bridge.py). ${detail}`
+      );
+    }
+    throw new Error(detail);
   }
   return jobResultSchema.parse(payload.job_result);
 }
@@ -249,14 +307,13 @@ export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWor
     });
   }
 
-  const response = await fetch(
-    `${env.agentApiBaseUrl.replace(/\/$/, "")}/projects/${encodeURIComponent(projectId)}/workspace`,
+  const response = await workerFetch(
+    `${buildWorkerBaseUrl()}/projects/${encodeURIComponent(projectId)}/workspace`,
     {
       method: "GET",
       headers: {
         "x-agent-shared-secret": env.agentSharedSecret ?? "",
       },
-      cache: "no-store",
     }
   );
   const payload = await response.json();
@@ -275,8 +332,8 @@ export async function regenerateWorkerChecklist(input: {
     throw new Error("Worker regeneration is unavailable in demo mode.");
   }
 
-  const response = await fetch(
-    `${env.agentApiBaseUrl.replace(/\/$/, "")}/projects/${encodeURIComponent(input.projectId)}/checklist`,
+  const response = await workerFetch(
+    `${buildWorkerBaseUrl()}/projects/${encodeURIComponent(input.projectId)}/checklist`,
     {
       method: "POST",
       headers: {
@@ -287,7 +344,6 @@ export async function regenerateWorkerChecklist(input: {
         job_id: input.jobId,
         app_id: input.appId,
       }),
-      cache: "no-store",
     }
   );
   const payload = await response.json();
@@ -306,18 +362,26 @@ async function sendWorkerManagementRequest(
     throw new Error("Worker management is unavailable in demo mode.");
   }
 
-  const response = await fetch(`${env.agentApiBaseUrl.replace(/\/$/, "")}${path}`, {
+  const headers: Record<string, string> = {
+    "x-agent-shared-secret": env.agentSharedSecret ?? "",
+  };
+  if (method !== "GET") {
+    headers["Content-Type"] = "application/json";
+  }
+  const response = await workerFetch(`${buildWorkerBaseUrl()}${path}`, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      "x-agent-shared-secret": env.agentSharedSecret ?? "",
-    },
-    body: JSON.stringify(payload),
-    cache: "no-store",
+    headers,
+    body: method === "GET" ? undefined : JSON.stringify(payload),
   });
   const body = await response.json();
   if (!response.ok) {
-    throw new Error(body.detail ?? "Worker management request failed.");
+    const detail = body.detail ?? body.error ?? "Worker management request failed.";
+    if (response.status === 401) {
+      throw new Error(
+        `Worker returned 401. AGENT_SHARED_SECRET in .env.local must match the running worker. ${detail}`
+      );
+    }
+    throw new Error(detail);
   }
   return body;
 }
@@ -437,6 +501,39 @@ export async function submitWorkerTaskFeedback(projectId: string, payload: Feedb
     "POST",
     payload as unknown as Record<string, unknown>
   );
+}
+
+/** Phase 8 / feedback_v2 — same shape as `docs/09_contracts/feedback_v2.md` task payload. */
+export type TaskFeedbackV2Payload = {
+  project_id: string;
+  task_id: string;
+  action_type:
+    | "done"
+    | "edit"
+    | "decline_and_replace"
+    | "delete_only"
+    | "delete_and_teach"
+    | "hold_for_later";
+  comment?: string;
+  edited_title?: string;
+};
+
+export type TaskFeedbackV2Response = {
+  tasks: unknown[];
+  job_id?: string;
+  job_result?: unknown;
+  workspace?: unknown;
+};
+
+export async function submitWorkerTaskFeedbackV2(
+  payload: TaskFeedbackV2Payload
+): Promise<TaskFeedbackV2Response> {
+  const projectId = payload.project_id;
+  return sendWorkerManagementRequest(
+    `/projects/${encodeURIComponent(projectId)}/tasks/feedback`,
+    "POST",
+    payload as unknown as Record<string, unknown>
+  ) as Promise<TaskFeedbackV2Response>;
 }
 
 // ── Generation Memory Management ────────────────────────────────────────────

@@ -30,10 +30,10 @@ On the M4 Mac mini 16GB / 256GB, success means:
 - not a live online fine-tuning system
 - not a broad plugin platform
 - not a UI-first product at this phase
-- not yet a continuously running daemon or launchd-managed service
 
 ## Current status
 
 - dry-run validated
-- live-run not validated in this sandbox
+- live-run validated on the host; sandbox may still block loopback to local model transport
 - governed triad scaffold implemented
+- optional launchd-managed runtime and watchdog on the Mac mini (see operational docs)

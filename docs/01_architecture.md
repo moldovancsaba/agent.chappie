@@ -255,6 +255,7 @@ The platform boundary is defined by v1 document contracts:
 - `docs/09_contracts/job_request_v1.md`
 - `docs/09_contracts/job_result_v1.md`
 - `docs/09_contracts/feedback_v1.md`
+- `docs/09_contracts/feedback_v2.md` (task / learning feedback for 3steps; app → worker)
 - `docs/09_contracts/app_identity_v1.md`
 - `docs/09_contracts/scheduler_policy_v1.md`
 
@@ -308,7 +309,9 @@ Implementation status:
 
 Phase 5 introduces the first real private worker bridge:
 
-`Vercel app -> app API -> private Mac mini worker -> Neon-backed observations -> Job Result`
+`Vercel app -> app API -> private Mac mini worker -> local brain (SQLite) -> Job Result`
+
+(App-visible state may use a separate database such as Neon; **internal observations** stay authoritative on the worker.)
 
 ### Hidden System Observation layer
 
@@ -317,7 +320,7 @@ Purpose:
 - continuously ingest raw market or competitor context
 - normalize signals into `SystemObservation v1`
 - deduplicate recent overlapping signals
-- persist signals in Neon
+- persist signals in the **local worker SQLite** (`system_observations` and related tables)
 - update lightweight project knowledge state on the worker
 
 This layer is internal only. It must not be rendered directly in the app UI.

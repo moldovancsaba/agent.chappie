@@ -258,6 +258,20 @@ Proof requirements:
 
 ## Phase 6 - execution observability enhancements
 
+Status:
+
+- planned, not implemented
+
+Acceptance criteria:
+
+- richer execution observability extends beyond the already completed runtime supervision baseline
+- future operator tooling improves inspection without changing the core boundary model
+
+Proof requirements:
+
+- observability design or implementation evidence
+- example operator workflows
+
 ## Phase 7 - Real task learning loop
 
 Status:
@@ -327,19 +341,33 @@ Proof requirements:
 - exact local persistence paths and schema references
 - explicit handoff documenting what still remains after the pass
 
+## Phase 8 - 3steps production-credible delivery (first app)
+
+**Product name:** 3steps (consultant follow-up web app as the first shipping surface).
+
 Status:
 
-- planned, not implemented
+- in progress (Phase 8)
 
-Acceptance criteria:
+Objective:
 
-- richer execution observability extends beyond the already completed runtime supervision baseline
-- future operator tooling improves inspection without changing the core boundary model
+- credible **action engine**: ingest context, generate exactly **3** actions, learn from operator feedback on the **app/API path**, regenerate without degrading into disguised weak or duplicate tasks
 
-Proof requirements:
+Acceptance criteria (summary; full gates in [`docs/phase8_milestones_and_gates.md`](phase8_milestones_and_gates.md)):
 
-- observability design or implementation evidence
-- example operator workflows
+- learning loop: decline/replace, delete-and-teach (semantic), comment-driven regen, bounded memory (decay/caps), **reversible** teach (inspect + delete one + undo last teach)
+- **Feedback v2** documented and used end-to-end: [`docs/09_contracts/feedback_v2.md`](09_contracts/feedback_v2.md)
+- every task carries honest **`task_strength`**: `strong_action` | `tactical_action` | `exploratory_action` with subtle UI
+- proof via **Next.js API** (raw JSON + DB rows + before/after tasks) for `decline_and_replace`, `delete_and_teach`, comment-driven regeneration; CI runs deterministic tests; fragile live-model cases optional in CI
+- reference **beta workflow** passes: one consultant, one project, real sources, full feedback cycle — sign-off: developer + architect + product owner
+
+Architect decisions:
+
+- [`docs/08_handoffs/handoff_20260325_phase8_3steps_architect_decisions.md`](08_handoffs/handoff_20260325_phase8_3steps_architect_decisions.md)
+
+Non-goals:
+
+- no auth, chat, global learning, architecture redesign, or dashboard sprawl (see milestones doc)
 
 ## Phase 7 - task engine
 
@@ -357,7 +385,7 @@ Proof requirements:
 - task state model
 - example task transitions
 
-## Phase 8 - skills
+## Phase 9 - skills
 
 Status:
 
@@ -373,7 +401,7 @@ Proof requirements:
 - example skill integration
 - audit trail evidence
 
-## Phase 8 - learning
+## Phase 10 - offline learning
 
 Status:
 

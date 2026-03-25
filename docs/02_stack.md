@@ -88,15 +88,15 @@ Status:
 
 ## Planned stack
 
-### SQLite
+### SQLite (worker brain)
 
 Layer:
 
-- structured runtime persistence
+- structured persistence for internal intelligence on the Mac mini worker (`AGENT_LOCAL_DB_PATH`, default under `runtime_status/`)
 
 Status:
 
-- planned, not implemented
+- in use for the private worker / 3steps app path (observations, sources, task feedback, generation memory, etc.)
 
 ### MLX
 

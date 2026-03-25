@@ -1,5 +1,39 @@
 # Runbook: Consultant Follow-Up Web App
 
+**Product:** **3steps** (first app). Phase **8** delivery plan and gates: [`docs/phase8_milestones_and_gates.md`](../phase8_milestones_and_gates.md). Task feedback contract: [`docs/09_contracts/feedback_v2.md`](../09_contracts/feedback_v2.md).
+
+## Task actions and proof (Phase 8)
+
+- Use **`feedback_v2`** `action_type` values: `done`, `edit`, `decline_and_replace`, `delete_only`, `delete_and_teach`, `hold_for_later`; optional `comment`.
+- Tasks must expose **`task_strength`**: `strong_action` | `tactical_action` | `exploratory_action` in API payloads and subtle UI.
+- **Beta learning controls:** inspect learned negatives for the project, remove one mistaken signal, undo most recent teach — via app/API, not raw SQLite.
+- **Proof:** capture raw request/response JSON, before/after tasks, DB rows for `decline_and_replace`, `delete_and_teach`, and comment-driven regeneration through **Next.js API**.
+- **CI:** unit + integration + deterministic API-boundary tests must run in CI; fragile live-model/internet cases may stay out of CI with artifacts captured separately.
+
+## Troubleshooting: “fetch failed” / cannot submit context
+
+The browser talks to **Next.js**; Next.js talks to the **private worker** (`AGENT_API_BASE_URL`, default `http://127.0.0.1:8787`). A generic **fetch failed** almost always means the worker is **not running** or **not reachable** from the machine where `npm run dev` runs.
+
+1. **Start the worker** (repo root, same machine as the app unless you change the URL). The worker reads **process environment variables only** (it does not auto-load `.env` files):
+
+   ```bash
+   cd /path/to/Agent.Chappie
+   source .venv/bin/activate
+   export AGENT_SHARED_SECRET=replace-me
+   export AGENT_LOCAL_DB_PATH=runtime_status/agent_brain.sqlite3
+   python scripts/worker_bridge.py
+   ```
+
+   Use the **same** `AGENT_SHARED_SECRET` string as in `apps/consultant-followup-web/.env.local`.
+
+2. **Confirm health:** `curl http://127.0.0.1:8787/health` → `{"status":"ok",...}`
+
+3. **Match secrets:** `AGENT_SHARED_SECRET` in `apps/consultant-followup-web/.env.local` must equal the value the worker uses (e.g. from repo `.env.local` / environment when launching `worker_bridge.py`). A mismatch yields **401**, not always “fetch failed”.
+
+4. **App env file:** Variables must live in **`apps/consultant-followup-web/.env.local`** (Next.js does not load the repo-root `.env.local` for the app).
+
+5. After changing `.env.local`, **restart** `npm run dev`.
+
 ## Local development
 
 ```bash
@@ -162,6 +196,7 @@ launchctl kickstart -k gui/$(id -u)/com.agentchappie.worker
 - root directory: `apps/consultant-followup-web`
 - framework: Next.js
 - keep the Mac mini worker private
+- **Production `AGENT_API_BASE_URL`:** Vercel runs server-side `fetch` from its own network. **`http://127.0.0.1:8787` will never reach your Mac.** Set `AGENT_API_BASE_URL` in Vercel to a **public HTTPS URL** that tunnels to the worker (for example Cloudflare Tunnel, ngrok, or similar), and use the same **`AGENT_SHARED_SECRET`** as the worker process. Without this, submissions show connection errors (e.g. “cannot reach the private worker”).
 - keep app secrets in Vercel env settings only
 - `POST /api/jobs` is the app-side bridge entrypoint
 - `GET /api/session/[sessionId]/state` restores the latest saved project and result for the current anonymous session

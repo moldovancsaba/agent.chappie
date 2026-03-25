@@ -91,6 +91,7 @@ For the current MVP capability:
 - every task title must describe a concrete action, not generic strategy wording
 - `evidence_refs` must map to stored signal identifiers or source refs
 - user-visible output must not expose the full internal observation list
+- each recommended task should include **`task_strength`**: `strong_action` | `tactical_action` | `exploratory_action` (Phase 8 / 3steps) so exploratory moves are not disguised as strong actions; see [`feedback_v2.md`](feedback_v2.md)
 
 If strong evidence is insufficient, the result may return a blocked or no-strong-action response instead of hallucinated tasks.
 
