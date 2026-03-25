@@ -11,6 +11,8 @@ const sourceRequestSchema = z
   .object({
     label: z.string().min(1),
     source_kind: z.enum(["url", "manual_text", "uploaded_file"]),
+    repeat_interval: z.enum(["never", "daily", "weekly", "monthly", "quarterly", "yearly"]).default("never"),
+    repeat_anchor_at: z.string().min(1).optional(),
     content_text: z.string().min(1),
     file_name: z.string().min(1).optional(),
     content_type: z.string().min(1).optional(),
@@ -75,6 +77,10 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       if (contentType.includes("multipart/form-data")) {
         const form = await request.formData();
         const sourceKind = z.enum(["url", "manual_text", "uploaded_file"]).parse(String(form.get("source_kind") ?? ""));
+        const repeatInterval = z
+          .enum(["never", "daily", "weekly", "monthly", "quarterly", "yearly"])
+          .catch("never")
+          .parse(String(form.get("repeat_interval") ?? "never"));
         const labelRaw = String(form.get("label") ?? "").trim();
         const contentTextRaw = String(form.get("content_text") ?? "").trim();
         const file = form.get("file");
@@ -104,6 +110,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         const parsed = sourceRequestSchema.parse({
           label,
           source_kind: sourceKind,
+          repeat_interval: repeatInterval,
+          repeat_anchor_at: String(form.get("repeat_anchor_at") ?? "").trim() || undefined,
           content_text: contentText || label,
           file_name: fileName,
           content_type: mimeType,

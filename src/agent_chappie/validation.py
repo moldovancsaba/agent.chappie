@@ -286,6 +286,9 @@ def _validate_task_quality(task: dict[str, Any]) -> None:
     normalized_title = title.lower()
     normalized_advantage = expected_advantage.lower()
     normalized_why = why_now.lower()
+    placeholder_tokens = ("uploaded file", "document source", "placeholder", "dummy", "sample competitor")
+    if any(token in normalized_title or token in normalized_why or token in normalized_advantage for token in placeholder_tokens):
+        raise ValidationError("recommended_tasks cannot include placeholder entities or dummy content")
 
     weak_starts = (
         "adjust ",

@@ -836,7 +836,7 @@ def extract_uploaded_file_text(source: SourcePackage) -> str:
     if len(normalized) < 40:
         raise ValueError(f"The uploaded file '{file_name}' did not contain enough readable text to analyze.")
 
-    return f"Uploaded File: {file_name}\nExtracted Content: {normalized[:12000]}"
+    return normalized[:12000]
 
 
 def extract_docx_text(raw_bytes: bytes) -> str:
@@ -1253,6 +1253,9 @@ def clean_entity(value: str) -> str | None:
         flags=re.IGNORECASE,
     ).strip(" .:-")
     if not candidate or len(candidate) < 3:
+        return None
+    lowered_candidate = candidate.lower()
+    if lowered_candidate in {"uploaded file", "document source", "manual text", "url source"}:
         return None
     if re.fullmatch(r"[A-Z]?\d{1,2}|U\d{1,2}", candidate):
         return None

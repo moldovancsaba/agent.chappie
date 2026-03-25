@@ -16,6 +16,7 @@ type TaskDecision = {
 type SourceFormState = {
   label: string;
   sourceKind: "url" | "manual_text" | "uploaded_file";
+  repeatInterval: "never" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
   contentText: string;
 };
 type JobFormState = {
@@ -184,6 +185,8 @@ type WorkspaceSnapshot = {
     label: string;
     source_kind: string;
     content_text: string;
+    repeat_interval: "never" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+    repeat_anchor_at: string | null;
     status: string;
     last_run_at: string | null;
     last_result_status: string | null;
@@ -604,6 +607,16 @@ function fallbackSourceLabel(sourceRef: string) {
   return titleCaseWords(sourceRef.replaceAll("_", " "));
 }
 
+function hasPlaceholderTaskText(value: string) {
+  const lowered = value.toLowerCase();
+  return (
+    lowered.includes("uploaded file") ||
+    lowered.includes("document source") ||
+    lowered.includes("placeholder") ||
+    lowered.includes("dummy")
+  );
+}
+
 function normalizeWorkspaceSnapshot(payload: Partial<WorkspaceSnapshot> & { project_id: string }) {
   return {
     project_id: payload.project_id,
@@ -654,6 +667,7 @@ export function DemoWorkspace() {
   const [sourceForm, setSourceForm] = useState<SourceFormState>({
     label: "",
     sourceKind: "url",
+    repeatInterval: "never",
     contentText: "",
   });
   const [sourceUploadFile, setSourceUploadFile] = useState<File | null>(null);
@@ -676,6 +690,7 @@ export function DemoWorkspace() {
   const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
   const [knowledgeDeleteReason, setKnowledgeDeleteReason] = useState<Record<string, string>>({});
   const [flashcardTeachNote, setFlashcardTeachNote] = useState<Record<string, string>>({});
+  const [flashcardTeachOpen, setFlashcardTeachOpen] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1037,6 +1052,7 @@ export function DemoWorkspace() {
           body: JSON.stringify({
             label: resolvedLabel,
             source_kind: sourceForm.sourceKind,
+            repeat_interval: sourceForm.repeatInterval,
             content_text: contentText,
           }),
         })
@@ -1046,8 +1062,10 @@ export function DemoWorkspace() {
             body: (() => {
               const form = new FormData();
               form.set("source_kind", sourceForm.sourceKind);
+              form.set("repeat_interval", sourceForm.repeatInterval);
               form.set("label", resolvedLabel);
               form.set("content_text", contentText);
+              form.set("repeat_anchor_at", new Date().toISOString());
               form.set("file", sourceUploadFile);
               return form;
             })(),
@@ -1059,6 +1077,8 @@ export function DemoWorkspace() {
               source_id: generateId("source_cfg"),
               label: resolvedLabel,
               source_kind: sourceForm.sourceKind,
+              repeat_interval: sourceForm.repeatInterval,
+              repeat_anchor_at: new Date().toISOString(),
               content_text: contentText,
               file_name: fileName,
               content_type: contentType,
@@ -1074,7 +1094,7 @@ export function DemoWorkspace() {
     setWorkspace((current) =>
       current && Array.isArray(body.sources) ? { ...current, managed_sources: body.sources } : current
     );
-    setSourceForm({ label: "", sourceKind: "url", contentText: "" });
+    setSourceForm({ label: "", sourceKind: "url", repeatInterval: "never", contentText: "" });
     setSourceUploadFile(null);
     setEditingSourceId(null);
     setShowSourceComposer(false);
@@ -1301,6 +1321,11 @@ export function DemoWorkspace() {
       delete next[factId];
       return next;
     });
+    setFlashcardTeachOpen((current) => {
+      const next = { ...current };
+      delete next[factId];
+      return next;
+    });
     setManagementStatus({
       tone: "success",
       message:
@@ -1407,7 +1432,12 @@ export function DemoWorkspace() {
   const completeResult = isCompleteResultWithTasks(jobResult) ? jobResult : null;
   const blockedResult =
     jobResult && jobResult.status === "blocked" && !isCompleteResultWithTasks(jobResult) ? jobResult : null;
-  const tasks = completeResult?.result_payload.recommended_tasks ?? [];
+  const tasks = (completeResult?.result_payload.recommended_tasks ?? []).filter(
+    (task) =>
+      !hasPlaceholderTaskText(task.title) &&
+      !hasPlaceholderTaskText(task.why_now) &&
+      !hasPlaceholderTaskText(task.expected_advantage)
+  );
   const sourceLabelByRef = new Map<string, string>();
   for (const source of workspace?.source_cards ?? []) {
     sourceLabelByRef.set(source.source_ref, source.label);
@@ -1515,7 +1545,7 @@ export function DemoWorkspace() {
   const navigationItems: Array<{ view: AppView; label: string; description: string }> = [
     { view: "checklist", label: "Checklist", description: "Your next three moves" },
     { view: "know-more", label: "Know More", description: "What we learned and why" },
-    { view: "sources-jobs", label: "Sources & Jobs", description: "What we monitor for you" },
+    { view: "sources-jobs", label: "Sources", description: "What we monitor for you" },
   ];
   const activeNavigationItem = navigationItems.find((item) => item.view === activeView) ?? navigationItems[0];
   const topbarSummary =
@@ -2140,27 +2170,53 @@ export function DemoWorkspace() {
                           <button
                             className="decision-button reject"
                             type="button"
-                            onClick={() => void actOnFactFlashcard(card.card_id, "teach")}
+                            onClick={() =>
+                              setFlashcardTeachOpen((current) => ({
+                                ...current,
+                                [card.card_id]: !current[card.card_id],
+                              }))
+                            }
                           >
                             Delete and teach
                           </button>
                         </div>
-                        <div className="adjust-shell">
-                          <label htmlFor={`flashcard-teach-${card.card_id}`}>
-                            For <strong>Delete and teach</strong>: what should we avoid next time? (negative signal)
-                          </label>
-                          <textarea
-                            id={`flashcard-teach-${card.card_id}`}
-                            value={flashcardTeachNote[card.card_id] ?? ""}
-                            onChange={(event) =>
-                              setFlashcardTeachNote((current) => ({
-                                ...current,
-                                [card.card_id]: event.target.value,
-                              }))
-                            }
-                            placeholder="Neutral wrong or irrelevant facts use Delete and forget only. Use this field when the fact is harmful or misleading and similar patterns should be avoided."
-                          />
-                        </div>
+                        {flashcardTeachOpen[card.card_id] ? (
+                          <div className="adjust-shell">
+                            <label htmlFor={`flashcard-teach-${card.card_id}`}>What should we avoid next time?</label>
+                            <textarea
+                              id={`flashcard-teach-${card.card_id}`}
+                              value={flashcardTeachNote[card.card_id] ?? ""}
+                              onChange={(event) =>
+                                setFlashcardTeachNote((current) => ({
+                                  ...current,
+                                  [card.card_id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Tell us what pattern should be avoided in the future."
+                            />
+                            <div className="task-actions compact-actions">
+                              <button
+                                className="decision-button reject"
+                                type="button"
+                                onClick={() => void actOnFactFlashcard(card.card_id, "teach")}
+                              >
+                                Confirm teach
+                              </button>
+                              <button
+                                className="decision-button"
+                                type="button"
+                                onClick={() =>
+                                  setFlashcardTeachOpen((current) => ({
+                                    ...current,
+                                    [card.card_id]: false,
+                                  }))
+                                }
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </article>
                     ))}
                   </div>
@@ -2430,9 +2486,9 @@ export function DemoWorkspace() {
             <section className="panel section-card">
               <div className="section-head">
                 <div>
-                  <span className="section-kicker">Sources &amp; Jobs</span>
+                  <span className="section-kicker">Sources</span>
                   <h2>Monitor your market and capture signals automatically.</h2>
-                  <p className="section-subcopy">Add one source first. We will watch it, synthesize what changed, and surface actions when a strong move emerges.</p>
+                  <p className="section-subcopy">Add one source with its repeat cadence. We will watch it, synthesize what changed, and surface actions when a strong move emerges.</p>
                 </div>
                 <span className="section-count-badge">{workspace?.source_cards.length ?? 0} sources</span>
               </div>
@@ -2443,20 +2499,9 @@ export function DemoWorkspace() {
                   type="button"
                   onClick={() => {
                     setShowSourceComposer((current) => !current);
-                    setShowJobComposer(false);
                   }}
                 >
                   {showSourceComposer || editingSourceId ? "Hide source setup" : "Add source"}
-                </button>
-                <button
-                  className="button-secondary"
-                  type="button"
-                  onClick={() => {
-                    setShowJobComposer((current) => !current);
-                    setShowSourceComposer(false);
-                  }}
-                >
-                  {showJobComposer || editingJobId ? "Hide job setup" : "Add job"}
                 </button>
               </div>
 
@@ -2560,6 +2605,25 @@ export function DemoWorkspace() {
                         placeholder="Short source label"
                       />
                     </details>
+                    <label>
+                      Repeat
+                      <select
+                        value={sourceForm.repeatInterval}
+                        onChange={(event) =>
+                          setSourceForm((current) => ({
+                            ...current,
+                            repeatInterval: event.target.value as SourceFormState["repeatInterval"],
+                          }))
+                        }
+                      >
+                        <option value="never">Never</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="yearly">Yearly</option>
+                      </select>
+                    </label>
                     <div className="task-actions compact-actions">
                       <button className="button-primary" type="button" onClick={() => void handleCreateSource()}>
                         {editingSourceId ? "Save source" : "Add source"}
@@ -2570,7 +2634,7 @@ export function DemoWorkspace() {
                         onClick={() => {
                           setEditingSourceId(null);
                           setShowSourceComposer(false);
-                          setSourceForm({ label: "", sourceKind: "url", contentText: "" });
+                          setSourceForm({ label: "", sourceKind: "url", repeatInterval: "never", contentText: "" });
                           setSourceUploadFile(null);
                         }}
                       >
@@ -2581,7 +2645,7 @@ export function DemoWorkspace() {
                 </div>
               ) : null}
 
-              {showJobComposer || editingJobId ? (
+              {false ? (
                 <div className="operator-composer secondary-composer">
                   <div className="task-block">
                     <span>Monitoring job</span>
@@ -2656,6 +2720,7 @@ export function DemoWorkspace() {
                           <span>
                             {titleCaseWords(source.source_kind)} · {source.status}
                           </span>
+                          <span>Repeat: {titleCaseWords(source.repeat_interval ?? "never")}</span>
                           <p>{source.content_text}</p>
                           <div className="task-actions compact-actions">
                             <button
@@ -2667,6 +2732,7 @@ export function DemoWorkspace() {
                                 setSourceForm({
                                   label: source.label,
                                   sourceKind: source.source_kind as SourceFormState["sourceKind"],
+                                  repeatInterval: source.repeat_interval ?? "never",
                                   contentText: source.content_text,
                                 });
                               }}
@@ -2808,7 +2874,7 @@ export function DemoWorkspace() {
                 )}
               </div>
 
-              {workspace?.managed_jobs.length || workspace?.monitor_jobs.length ? (
+              {false ? (
                 <div className="monitoring-secondary">
                   <div className="section-head compact">
                     <div>
@@ -2818,7 +2884,7 @@ export function DemoWorkspace() {
                   </div>
                   <div className="secondary-assets">
                     {workspace?.managed_jobs.length ? (
-                      workspace.managed_jobs.map((job) => (
+                      workspace?.managed_jobs.map((job) => (
                         <article className="job-item" key={job.managed_job_id}>
                           <strong>{job.name}</strong>
                           <span>
@@ -2848,7 +2914,7 @@ export function DemoWorkspace() {
                         </article>
                       ))
                     ) : (
-                      workspace.monitor_jobs.map((job) => (
+                      workspace?.monitor_jobs.map((job) => (
                         <article className="job-item" key={job.job_name}>
                           <strong>{job.job_name}</strong>
                           <span>Status: {job.status}</span>

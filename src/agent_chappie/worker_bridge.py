@@ -296,15 +296,18 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
                 result_document["result_payload"] = repaired_payload
                 job_result = validate_job_result(result_document)
             else:
-                fallback_payload = generate_guaranteed_task_triplet(
-                    source_package,
-                    aggregated or observations,
-                    draft_segments,
-                    feedback_rows,
-                    generation_memory_rows,
+                job_result = validate_job_result(
+                    {
+                        "job_id": job_request["job_id"],
+                        "app_id": job_request["app_id"],
+                        "project_id": job_request["project_id"],
+                        "status": "blocked",
+                        "completed_at": utc_now_iso(),
+                        "result_payload": {
+                            "reason": "Insufficient high-quality evidence to publish three concrete tasks without placeholders.",
+                        },
+                    }
                 )
-                result_document["result_payload"] = fallback_payload
-                job_result = validate_job_result(result_document)
         if job_result["status"] == "complete" and "recommended_tasks" in job_result["result_payload"]:
             evidence_refs = {
                 evidence_ref
@@ -380,6 +383,8 @@ def process_management_request(
                     "label": payload["label"],
                     "source_kind": payload["source_kind"],
                     "content_text": payload["content_text"],
+                    "repeat_interval": payload.get("repeat_interval", "never"),
+                    "repeat_anchor_at": payload.get("repeat_anchor_at"),
                     "status": payload.get("status", "active"),
                 },
                 path=config.local_db_path,
@@ -3103,7 +3108,7 @@ def infer_segment_competitor(segment_text: str, source: SourcePackage) -> str | 
     candidates.extend(extract_named_entities(segment_text))
     for candidate in candidates:
         cleaned = clean_entity(candidate)
-        if cleaned:
+        if cleaned and not is_placeholder_entity(cleaned):
             return cleaned
     return None
 
@@ -3629,20 +3634,30 @@ def build_nba_tasks_from_cards(cards: list[dict[str, Any]], top_n: int = 3) -> l
     if not cards:
         return []
     ranked = sorted(cards, key=lambda card: float(card.get("rank_score") or 0), reverse=True)
-    selected = ranked[: max(3, top_n)]
+    selected = ranked[: max(6, top_n * 2)]
     tasks: list[dict[str, Any]] = []
-    for rank, card in enumerate(selected[:3], start=1):
-        insight = str(card.get("insight") or "Action opportunity detected from stored intelligence cards.")
-        implication = str(card.get("implication") or "This move can improve competitive position in the next decision window.")
+    for card in selected:
+        insight = str(card.get("insight") or "").strip()
+        implication = str(card.get("implication") or "").strip()
+        if not insight or not implication:
+            continue
+        if any(is_placeholder_entity(part) for part in (insight, implication, str(card.get("competitor") or ""))):
+            continue
         moves = card.get("potential_moves") or []
-        title = str(moves[0] if moves else insight)[:220]
+        move_title = str(moves[0] if moves else "").strip()
+        title = (move_title or insight)[:220]
+        if not title or is_placeholder_entity(title):
+            continue
         evidence_refs = [*card.get("fact_refs", []), *card.get("source_refs", [])]
+        if not evidence_refs:
+            continue
+        rank = len(tasks) + 1
         tasks.append(
             {
                 "rank": rank,
                 "title": title,
                 "why_now": f"We detected a concrete signal change in stored intelligence: {implication}",
-                "expected_advantage": f"Weighted by confidence {card.get('confidence', 0):.2f}, impact {card.get('impact_score', 0):.0f}, and urgency.",
+                "expected_advantage": str(card.get("implication") or insight)[:240],
                 "evidence_refs": unique_values(evidence_refs)[:8] or [f"card::{card.get('card_id')}"],
                 "best_before": str(card.get("expires_at") or ""),
                 "confidence_class": (
@@ -3655,7 +3670,9 @@ def build_nba_tasks_from_cards(cards: list[dict[str, Any]], top_n: int = 3) -> l
                 "supporting_source_refs": card.get("source_refs", []),
             }
         )
-    return tasks
+        if len(tasks) >= top_n:
+            break
+    return tasks if len(tasks) == top_n else []
 
 
 def build_fact_chips(
@@ -3852,7 +3869,58 @@ def normalize_competitor_fact(value: str) -> str | None:
     cleaned = clean_entity(re.sub(r"\bfocus\b$", "", value, flags=re.IGNORECASE).strip(" .:-"))
     if not cleaned:
         return None
+    if is_placeholder_entity(cleaned):
+        return None
     return cleaned
+
+
+def is_placeholder_entity(value: str) -> bool:
+    lowered = clean_entity(value).lower()
+    if not lowered:
+        return True
+    blocked_exact = {
+        "uploaded file",
+        "document source",
+        "manual text",
+        "url source",
+        "unknown",
+        "region unknown",
+        "n/a",
+        "none",
+        "non",
+    }
+    if lowered in blocked_exact:
+        return True
+    blocked_substrings = (
+        "uploaded file",
+        "document source",
+        "placeholder",
+        "dummy",
+        "sample",
+    )
+    return any(token in lowered for token in blocked_substrings)
+
+
+def normalize_competitor_for_copy(
+    competitor: str,
+    *,
+    strongest_excerpt: str = "",
+    explicit_claim: str | None = None,
+) -> str:
+    cleaned = clean_entity(competitor) or ""
+    if cleaned and not is_placeholder_entity(cleaned):
+        return cleaned
+    if strongest_excerpt.strip():
+        return fallback_competitor_reference(strongest_excerpt=strongest_excerpt, explicit_claim=explicit_claim)
+    return "the visible competitor"
+
+
+def sanitize_signal_summary_for_copy(summary: str) -> str:
+    collapsed = " ".join(summary.split())
+    collapsed = re.sub(r"uploaded file\s*:\s*[^\n]+", "", collapsed, flags=re.IGNORECASE)
+    collapsed = re.sub(r"extracted content\s*:\s*", "", collapsed, flags=re.IGNORECASE)
+    collapsed = re.sub(r"\s{2,}", " ", collapsed).strip()
+    return collapsed or "A concrete market signal changed in the latest source."
 
 
 def summarize_market_fact_patterns(fact_chips: list[dict[str, Any]]) -> list[str]:
@@ -4866,11 +4934,12 @@ def synthesize_task_why_now(
     channel: str,
     explicit_claim: str | None = None,
 ) -> str:
+    competitor = normalize_competitor_for_copy(competitor, strongest_excerpt=strongest_excerpt, explicit_claim=explicit_claim)
     audience_phrase = normalize_task_audience(audience)
     claim_phrase = explicit_claim or strongest_excerpt.strip()
     if observations:
         primary = observations[0]
-        summary = str(primary.get("summary") or strongest_excerpt).strip()
+        summary = sanitize_signal_summary_for_copy(str(primary.get("summary") or strongest_excerpt).strip())
         signal_type = str(primary.get("signal_type") or "signal").replace("_", " ")
         return f"We detected a {signal_type} signal in your sources tied to {competitor}: {summary} If you do not answer that specific pressure in the {channel}, {audience_phrase} can keep comparing you through {competitor}'s claim."
 
@@ -4898,6 +4967,7 @@ def synthesize_task_title(
     explicit_section: str | None = None,
     explicit_claim: str | None = None,
 ) -> str:
+    competitor = normalize_competitor_for_copy(competitor, strongest_excerpt=strongest_excerpt, explicit_claim=explicit_claim)
     audience_phrase = normalize_task_audience(audience)
     competitor_claim = explicit_claim or offer or infer_competitor_claim(strongest_excerpt) or "its strongest visible claim"
     competitor_phrase = competitor_possessive_phrase(competitor)
@@ -4938,6 +5008,7 @@ def synthesize_task_expected_advantage(
     timing_window: str,
     explicit_claim: str | None = None,
 ) -> str:
+    competitor = normalize_competitor_for_copy(competitor, explicit_claim=explicit_claim)
     audience_phrase = normalize_task_audience(audience)
     claim_phrase = explicit_claim or "its strongest visible claim"
     if move_bucket == "pricing_or_offer_move":

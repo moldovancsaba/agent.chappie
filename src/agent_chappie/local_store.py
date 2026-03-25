@@ -89,6 +89,8 @@ def initialize_local_store(path: str | None = None) -> str:
               label text not null,
               source_kind text not null,
               content_text text not null,
+              repeat_interval text not null default 'never',
+              repeat_anchor_at text,
               status text not null,
               last_run_at text,
               last_result_status text,
@@ -295,6 +297,8 @@ def initialize_local_store(path: str | None = None) -> str:
         _ensure_column(connection, "source_snapshots", "signal_count", "integer not null default 0")
         _ensure_column(connection, "source_snapshots", "knowledge_count", "integer not null default 0")
         _ensure_column(connection, "source_snapshots", "last_used_in_checklist", "integer not null default 0")
+        _ensure_column(connection, "managed_sources", "repeat_interval", "text not null default 'never'")
+        _ensure_column(connection, "managed_sources", "repeat_anchor_at", "text")
         _ensure_column(connection, "knowledge_feedback", "confidence_source", "text")
         _ensure_column(connection, "knowledge_feedback", "original_payload_json", "text")
         _ensure_column(connection, "knowledge_feedback", "corrected_implication", "text")
@@ -934,6 +938,8 @@ def list_managed_sources(project_id: str, path: str | None = None) -> list[dict[
               label,
               source_kind,
               content_text,
+              repeat_interval,
+              repeat_anchor_at,
               status,
               last_run_at,
               last_result_status,
@@ -959,12 +965,14 @@ def create_managed_source(source: dict[str, Any], path: str | None = None) -> No
               label,
               source_kind,
               content_text,
+              repeat_interval,
+              repeat_anchor_at,
               status,
               last_run_at,
               last_result_status,
               last_result_summary
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 source["source_id"],
@@ -972,6 +980,8 @@ def create_managed_source(source: dict[str, Any], path: str | None = None) -> No
                 source["label"],
                 source["source_kind"],
                 source["content_text"],
+                source.get("repeat_interval", "never"),
+                source.get("repeat_anchor_at"),
                 source["status"],
                 source.get("last_run_at"),
                 source.get("last_result_status"),
@@ -987,6 +997,8 @@ def update_managed_source(source_id: str, updates: dict[str, Any], path: str | N
         "label",
         "source_kind",
         "content_text",
+        "repeat_interval",
+        "repeat_anchor_at",
         "status",
         "last_run_at",
         "last_result_status",

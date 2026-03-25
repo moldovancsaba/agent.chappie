@@ -251,6 +251,8 @@ export type WorkerWorkspacePayload = {
     label: string;
     source_kind: string;
     content_text: string;
+    repeat_interval: "never" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+    repeat_anchor_at: string | null;
     status: string;
     last_run_at: string | null;
     last_result_status: string | null;
@@ -523,7 +525,15 @@ async function sendWorkerManagementRequest(
 
 export async function createWorkerSource(
   projectId: string,
-  payload: { source_id: string; label: string; source_kind: string; content_text: string; status?: string }
+  payload: {
+    source_id: string;
+    label: string;
+    source_kind: string;
+    content_text: string;
+    repeat_interval?: "never" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+    repeat_anchor_at?: string;
+    status?: string;
+  }
 ) {
   return sendWorkerManagementRequest(`/projects/${encodeURIComponent(projectId)}/sources`, "POST", payload);
 }
