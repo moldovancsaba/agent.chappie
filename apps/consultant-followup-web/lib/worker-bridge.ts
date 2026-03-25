@@ -8,6 +8,8 @@ import {
   getLatestJobResultForProject,
   getWorkspaceSnapshot,
   listPendingQueueJobsForProject,
+  saveResult,
+  saveWorkspaceSnapshot,
 } from "@/lib/storage";
 
 export class DirectWorkerUnavailableError extends Error {
@@ -709,7 +711,116 @@ export async function updateWorkerIngestedSource(
   );
 }
 
-export async function deleteWorkerIngestedSource(projectId: string, sourceRef: string) {
+function pruneWorkspaceRowSourceRefs(row: unknown, sourceRef: string): unknown | null {
+  if (!row || typeof row !== "object") {
+    return row;
+  }
+  const o = row as Record<string, unknown>;
+  const sr = o.source_refs;
+  if (!Array.isArray(sr)) {
+    return row;
+  }
+  const next = (sr as string[]).filter((r) => r !== sourceRef);
+  if (
+    next.length === 0 &&
+    (Boolean(o.card_id) || Boolean(o.fact_id) || Boolean(o.knowledge_id) || Boolean(o.segment_id))
+  ) {
+    return null;
+  }
+  return { ...o, source_refs: next };
+}
+
+function applyIngestedSourceRemovalToSnapshot(payload: Record<string, unknown>, sourceRef: string): void {
+  for (const key of ["source_cards", "recent_sources"] as const) {
+    const arr = payload[key];
+    if (!Array.isArray(arr)) {
+      continue;
+    }
+    payload[key] = arr.filter((row) => {
+      if (!row || typeof row !== "object") {
+        return true;
+      }
+      return (row as { source_ref?: string }).source_ref !== sourceRef;
+    });
+  }
+  const activity = payload.recent_activity;
+  if (Array.isArray(activity)) {
+    payload.recent_activity = activity.filter((row) => {
+      if (!row || typeof row !== "object") {
+        return true;
+      }
+      return (row as { source_ref?: string }).source_ref !== sourceRef;
+    });
+  }
+  for (const key of [
+    "fact_chips",
+    "intelligence_cards",
+    "visible_intelligence_cards",
+    "knowledge_cards",
+    "draft_segments",
+  ] as const) {
+    const arr = payload[key];
+    if (!Array.isArray(arr)) {
+      continue;
+    }
+    const out: unknown[] = [];
+    for (const row of arr) {
+      const pruned = pruneWorkspaceRowSourceRefs(row, sourceRef);
+      if (pruned !== null) {
+        out.push(pruned);
+      }
+    }
+    payload[key] = out;
+  }
+}
+
+async function deleteIngestedSourceHostedNeon(projectId: string, sourceRef: string): Promise<WorkerWorkspacePayload> {
+  const latest = await getLatestJobResultForProject(projectId);
+  if (
+    latest &&
+    latest.status === "complete" &&
+    latest.result_payload &&
+    typeof latest.result_payload === "object" &&
+    "recommended_tasks" in latest.result_payload
+  ) {
+    const rp = latest.result_payload as Record<string, unknown> & { recommended_tasks: RecommendedTask[] };
+    const tasks = rp.recommended_tasks;
+    if (Array.isArray(tasks)) {
+      const filtered = tasks.filter(
+        (t) =>
+          !(t.supporting_source_refs ?? []).includes(sourceRef) && !(t.evidence_refs ?? []).includes(sourceRef)
+      );
+      if (filtered.length !== tasks.length) {
+        await saveResult({
+          ...latest,
+          result_payload: { ...rp, recommended_tasks: filtered },
+        });
+      }
+    }
+  }
+
+  const snap = await getWorkspaceSnapshot(projectId);
+  if (snap && typeof snap === "object") {
+    const copy = { ...(snap as Record<string, unknown>) };
+    applyIngestedSourceRemovalToSnapshot(copy, sourceRef);
+    await saveWorkspaceSnapshot(projectId, copy);
+  }
+
+  return fetchWorkerWorkspace(projectId);
+}
+
+export async function deleteWorkerIngestedSource(
+  projectId: string,
+  sourceRef: string
+): Promise<Record<string, unknown>> {
+  if (!isDirectWorkerEnabled()) {
+    if (env.demoStorageMode !== "neon" || !env.databaseUrl?.trim()) {
+      throw new Error(
+        "Removing a source in queue mode needs DATABASE_URL (Neon). Alternatively use AGENT_BRIDGE_MODE=worker with AGENT_API_BASE_URL so the Mac can delete from the brain database."
+      );
+    }
+    return deleteIngestedSourceHostedNeon(projectId, sourceRef) as unknown as Record<string, unknown>;
+  }
   return sendWorkerManagementRequest(
     `/projects/${encodeURIComponent(projectId)}/sources/ingested/${encodeURIComponent(sourceRef)}`,
     "DELETE",
