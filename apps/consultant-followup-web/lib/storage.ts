@@ -248,13 +248,8 @@ export async function enqueueJobForWorker(job: JobRequest, sourcePackage: Queued
 export async function saveResult(result: JobResult) {
   if (!canUseNeon()) {
     memoryState().results.set(result.job_id, result);
-    const row = memoryState().queue.get(result.job_id);
-    if (row) {
-      row.status = "complete";
-      row.completed_at = new Date().toISOString();
-      row.error_detail = null;
-      memoryState().queue.set(result.job_id, row);
-    }
+    // "Move" semantics: once consumed and completed, keep durable result only.
+    memoryState().queue.delete(result.job_id);
     return;
   }
   const sql = sqlClient();
@@ -273,11 +268,9 @@ export async function saveResult(result: JobResult) {
           payload = excluded.payload
   `;
   await ensureQueueSchema();
+  // "Move" semantics: remove completed payload from online queue table.
   await sql`
-    update demo_job_queue
-    set status = ${"complete"},
-        completed_at = now(),
-        updated_at = now()
+    delete from demo_job_queue
     where job_id = ${result.job_id}
   `;
 }
