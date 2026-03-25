@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from collections.abc import Iterator
 from typing import Any
@@ -210,6 +211,77 @@ def initialize_local_store(path: str | None = None) -> str:
               timing text,
               confidence real not null,
               created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            create table if not exists atomic_facts (
+              fact_id text primary key,
+              project_id text not null,
+              source_ref text not null,
+              fact_type text not null,
+              fact_key text not null,
+              fact_value_json text not null,
+              clause_text text,
+              trace_ref text,
+              confidence real not null,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            create index if not exists idx_atomic_facts_project_type
+              on atomic_facts(project_id, fact_type, created_at desc);
+
+            create table if not exists intelligence_cards (
+              card_id text primary key,
+              project_id text not null,
+              insight text not null,
+              implication text not null,
+              potential_moves_json text not null,
+              segment text,
+              competitor text,
+              channel text,
+              fact_refs_json text not null,
+              source_refs_json text not null,
+              state text not null default 'candidate',
+              expires_at text,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            create index if not exists idx_intelligence_cards_project_state
+              on intelligence_cards(project_id, state, updated_at desc);
+
+            create table if not exists card_scores (
+              card_id text primary key references intelligence_cards(card_id) on delete cascade,
+              project_id text not null,
+              confidence real not null,
+              impact_score real not null,
+              freshness_score real not null,
+              evidence_strength real not null,
+              rank_score real not null,
+              scored_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            create index if not exists idx_card_scores_project_rank
+              on card_scores(project_id, rank_score desc, confidence desc);
+
+            create table if not exists card_actions (
+              action_id text primary key,
+              card_id text not null references intelligence_cards(card_id) on delete cascade,
+              project_id text not null,
+              action_type text not null,
+              note text,
+              created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            create index if not exists idx_card_actions_project
+              on card_actions(project_id, created_at desc);
+
+            create table if not exists card_weight_profiles (
+              project_id text primary key,
+              w_confidence real not null default 0.45,
+              w_impact real not null default 0.40,
+              w_urgency real not null default 0.15,
+              sample_count integer not null default 0,
+              updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
             """
         )
@@ -1498,3 +1570,247 @@ def restore_held_task(held_task_id: str, project_id: str, path: str | None = Non
             (held_task_id, project_id),
         )
     return cursor.rowcount > 0
+
+
+def replace_atomic_facts(project_id: str, facts: list[dict[str, Any]], path: str | None = None) -> None:
+    with _connect(path) as connection:
+        connection.execute("delete from atomic_facts where project_id = ?", (project_id,))
+        for fact in facts:
+            connection.execute(
+                """
+                insert into atomic_facts (
+                  fact_id, project_id, source_ref, fact_type, fact_key, fact_value_json,
+                  clause_text, trace_ref, confidence
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    fact["fact_id"],
+                    project_id,
+                    fact.get("source_ref") or "",
+                    fact.get("fact_type") or "observation",
+                    fact.get("fact_key") or "unknown",
+                    json.dumps(fact.get("fact_value"), ensure_ascii=False),
+                    fact.get("clause_text"),
+                    fact.get("trace_ref"),
+                    float(fact.get("confidence", 0.5)),
+                ),
+            )
+
+
+def list_atomic_facts(project_id: str, limit: int = 500, path: str | None = None) -> list[dict[str, Any]]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            select fact_id, project_id, source_ref, fact_type, fact_key, fact_value_json, clause_text, trace_ref, confidence, created_at
+            from atomic_facts
+            where project_id = ?
+            order by created_at desc
+            limit ?
+            """,
+            (project_id, max(1, limit)),
+        ).fetchall()
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["fact_value"] = json.loads(item.pop("fact_value_json"))
+        except Exception:
+            item["fact_value"] = item.pop("fact_value_json")
+        output.append(item)
+    return output
+
+
+def upsert_intelligence_cards(
+    project_id: str,
+    cards: list[dict[str, Any]],
+    scores: list[dict[str, Any]],
+    path: str | None = None,
+) -> None:
+    score_by_card = {str(score["card_id"]): score for score in scores}
+    with _connect(path) as connection:
+        for card in cards:
+            card_id = str(card["card_id"])
+            connection.execute(
+                """
+                insert into intelligence_cards (
+                  card_id, project_id, insight, implication, potential_moves_json, segment, competitor, channel,
+                  fact_refs_json, source_refs_json, state, expires_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(card_id) do update set
+                  insight = excluded.insight,
+                  implication = excluded.implication,
+                  potential_moves_json = excluded.potential_moves_json,
+                  segment = excluded.segment,
+                  competitor = excluded.competitor,
+                  channel = excluded.channel,
+                  fact_refs_json = excluded.fact_refs_json,
+                  source_refs_json = excluded.source_refs_json,
+                  state = excluded.state,
+                  expires_at = excluded.expires_at,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                """,
+                (
+                    card_id,
+                    project_id,
+                    card.get("insight") or "",
+                    card.get("implication") or "",
+                    json.dumps(card.get("potential_moves", []), ensure_ascii=False),
+                    card.get("segment"),
+                    card.get("competitor"),
+                    card.get("channel"),
+                    json.dumps(card.get("fact_refs", []), ensure_ascii=False),
+                    json.dumps(card.get("source_refs", []), ensure_ascii=False),
+                    card.get("state", "candidate"),
+                    card.get("expires_at"),
+                ),
+            )
+            score = score_by_card.get(card_id)
+            if score:
+                connection.execute(
+                    """
+                    insert into card_scores (
+                      card_id, project_id, confidence, impact_score, freshness_score, evidence_strength, rank_score
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?)
+                    on conflict(card_id) do update set
+                      confidence = excluded.confidence,
+                      impact_score = excluded.impact_score,
+                      freshness_score = excluded.freshness_score,
+                      evidence_strength = excluded.evidence_strength,
+                      rank_score = excluded.rank_score,
+                      scored_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    """,
+                    (
+                        card_id,
+                        project_id,
+                        float(score.get("confidence", 0.5)),
+                        float(score.get("impact_score", 50.0)),
+                        float(score.get("freshness_score", 0.5)),
+                        float(score.get("evidence_strength", 0.5)),
+                        float(score.get("rank_score", 0.0)),
+                    ),
+                )
+
+
+def list_intelligence_cards(project_id: str, include_hidden: bool = True, path: str | None = None) -> list[dict[str, Any]]:
+    where = "where c.project_id = ?"
+    if not include_hidden:
+        where += " and c.state = 'active'"
+    with _connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            select
+              c.card_id,
+              c.project_id,
+              c.insight,
+              c.implication,
+              c.potential_moves_json,
+              c.segment,
+              c.competitor,
+              c.channel,
+              c.fact_refs_json,
+              c.source_refs_json,
+              c.state,
+              c.expires_at,
+              c.updated_at,
+              coalesce(s.confidence, 0.0) as confidence,
+              coalesce(s.impact_score, 0.0) as impact_score,
+              coalesce(s.freshness_score, 0.0) as freshness_score,
+              coalesce(s.evidence_strength, 0.0) as evidence_strength,
+              coalesce(s.rank_score, 0.0) as rank_score
+            from intelligence_cards c
+            left join card_scores s on s.card_id = c.card_id
+            {where}
+            order by s.rank_score desc, c.updated_at desc
+            """,
+            (project_id,),
+        ).fetchall()
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["potential_moves"] = json.loads(item.pop("potential_moves_json") or "[]")
+        item["fact_refs"] = json.loads(item.pop("fact_refs_json") or "[]")
+        item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
+        output.append(item)
+    return output
+
+
+def record_card_action(
+    project_id: str,
+    card_id: str,
+    action_type: str,
+    note: str | None = None,
+    path: str | None = None,
+) -> None:
+    action_id = f"{project_id}:{card_id}:{action_type}:{int(datetime_now_epoch_ms())}"
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into card_actions (action_id, card_id, project_id, action_type, note)
+            values (?, ?, ?, ?, ?)
+            """,
+            (action_id, card_id, project_id, action_type, note),
+        )
+        if action_type == "delete_and_forget":
+            new_state = "deleted_forget"
+        elif action_type == "delete_and_teach":
+            new_state = "deleted_teach"
+        else:
+            new_state = None
+        if new_state:
+            connection.execute(
+                "update intelligence_cards set state = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where card_id = ? and project_id = ?",
+                (new_state, card_id, project_id),
+            )
+
+
+def upsert_card_weight_profile(
+    project_id: str,
+    w_confidence: float,
+    w_impact: float,
+    w_urgency: float,
+    sample_count: int,
+    path: str | None = None,
+) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into card_weight_profiles (project_id, w_confidence, w_impact, w_urgency, sample_count)
+            values (?, ?, ?, ?, ?)
+            on conflict(project_id) do update set
+              w_confidence = excluded.w_confidence,
+              w_impact = excluded.w_impact,
+              w_urgency = excluded.w_urgency,
+              sample_count = excluded.sample_count,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            """,
+            (project_id, w_confidence, w_impact, w_urgency, sample_count),
+        )
+
+
+def get_card_weight_profile(project_id: str, path: str | None = None) -> dict[str, Any]:
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            select project_id, w_confidence, w_impact, w_urgency, sample_count, updated_at
+            from card_weight_profiles
+            where project_id = ?
+            limit 1
+            """,
+            (project_id,),
+        ).fetchone()
+    if not row:
+        return {
+            "project_id": project_id,
+            "w_confidence": 0.45,
+            "w_impact": 0.40,
+            "w_urgency": 0.15,
+            "sample_count": 0,
+        }
+    return dict(row)
+
+
+def datetime_now_epoch_ms() -> int:
+    return int(time.time() * 1000)

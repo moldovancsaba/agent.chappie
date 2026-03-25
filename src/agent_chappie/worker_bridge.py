@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_chappie.local_store import (
+    get_card_weight_profile,
     clear_generation_memory,
     create_managed_job,
     create_managed_source,
@@ -34,6 +36,7 @@ from agent_chappie.local_store import (
     list_evidence_units,
     list_generation_memory_rows,
     list_held_tasks,
+    list_intelligence_cards,
     list_task_feedback_rows,
     list_observations_for_source,
     list_managed_jobs,
@@ -43,6 +46,7 @@ from agent_chappie.local_store import (
     list_recent_source_snapshots,
     replace_draft_segments,
     replace_evidence_units,
+    replace_atomic_facts,
     restore_held_task,
     save_held_task,
     save_project_active_checklist,
@@ -55,6 +59,8 @@ from agent_chappie.local_store import (
     update_managed_source,
     update_monitor_state,
     update_source_snapshot,
+    upsert_card_weight_profile,
+    upsert_intelligence_cards,
     upsert_knowledge_feedback,
     upsert_knowledge_state,
 )
@@ -213,8 +219,26 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     refreshed_knowledge = fetch_knowledge_rows(source_package.project_id, path=config.local_db_path)
     aggregated = list_recent_observations(source_package.project_id, path=config.local_db_path)
     fact_chips = build_fact_chips(refreshed_sources, aggregated or observations, refreshed_knowledge)
+    atomic_facts = build_atomic_facts(
+        source_package.project_id,
+        refreshed_sources,
+        aggregated or observations,
+        refreshed_knowledge,
+    )
+    replace_atomic_facts(source_package.project_id, atomic_facts, path=config.local_db_path)
     evidence_units = build_evidence_units(source_package.project_id, refreshed_sources, aggregated or observations, fact_chips)
     replace_evidence_units(source_package.project_id, evidence_units, path=config.local_db_path)
+    feedback_rows = list_task_feedback_rows(source_package.project_id, path=config.local_db_path)
+    weight_profile = apply_adaptive_weight_profile(source_package.project_id, feedback_rows, config)
+    candidate_cards = build_flashcards_from_atomic_facts(
+        source_package.project_id,
+        atomic_facts,
+        refreshed_sources,
+        source_package.project_summary,
+    )
+    card_scores = score_flashcards(source_package.project_id, candidate_cards, atomic_facts, weight_profile)
+    all_cards, visible_cards = apply_visibility_top_percent(candidate_cards, card_scores, percent=0.20)
+    upsert_intelligence_cards(source_package.project_id, all_cards, card_scores, path=config.local_db_path)
     knowledge_cards = build_knowledge_cards(
         refreshed_sources,
         aggregated or observations,
@@ -232,7 +256,6 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         evidence_units,
     )
     replace_draft_segments(source_package.project_id, draft_segments, path=config.local_db_path)
-    feedback_rows = list_task_feedback_rows(source_package.project_id, path=config.local_db_path)
     generation_memory_rows = list_generation_memory_rows(source_package.project_id, path=config.local_db_path)
     result_payload = generate_learning_checklist(
         source_package,
@@ -244,6 +267,13 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         feedback_rows,
         generation_memory_rows,
     )
+    # NBA now derives from the full scored card corpus (not only visible cards).
+    nba_tasks = build_nba_tasks_from_cards(all_cards, top_n=3)
+    if nba_tasks:
+        result_payload = {
+            "summary": "Ranked from scored intelligence cards using confidence, impact, and urgency weighting.",
+            "recommended_tasks": nba_tasks,
+        }
     used_source_refs: set[str] = set()
 
     if "recommended_tasks" in result_payload:
@@ -786,6 +816,8 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
     draft_segment_feedback_rows = list_draft_segment_feedback_rows(project_id, path=config.local_db_path)
     monitor_rows = list_monitor_rows(path=config.local_db_path)
     fact_chips = build_fact_chips(source_rows, observation_rows, knowledge_rows)
+    intelligence_cards = list_intelligence_cards(project_id, include_hidden=True, path=config.local_db_path)
+    visible_intelligence_cards = [card for card in intelligence_cards if card.get("state") == "active"]
     evidence_units = build_evidence_units(project_id, source_rows, observation_rows, fact_chips)
     replace_evidence_units(project_id, evidence_units, path=config.local_db_path)
     knowledge_cards = build_knowledge_cards(source_rows, observation_rows, knowledge_rows, knowledge_feedback_rows, fact_chips, evidence_units)
@@ -844,6 +876,8 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
             "offer_signals": sum(1 for row in observation_rows if row["signal_type"] in {"offer", "asset_sale"}),
         },
         "fact_chips": fact_chips,
+        "intelligence_cards": intelligence_cards,
+        "visible_intelligence_cards": visible_intelligence_cards,
         "draft_segments": draft_segments,
         "competitive_snapshot": competitive_snapshot,
         "knowledge_summary": knowledge_summary_rows[:5],
@@ -3155,6 +3189,426 @@ def infer_domain_from_sources(source: SourcePackage, fact_chips: list[dict[str, 
     if any(token in normalized for token in ("academy", "club", "u14", "families", "intake", "enrollment")):
         return "academy"
     return "general"
+
+
+def build_atomic_facts(
+    project_id: str,
+    source_rows: list[dict[str, Any]],
+    observation_rows: list[dict[str, Any]],
+    knowledge_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    facts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_fact(
+        fact_type: str,
+        fact_key: str,
+        fact_value: dict[str, Any],
+        *,
+        source_ref: str = "",
+        clause_text: str | None = None,
+        trace_ref: str | None = None,
+        confidence: float = 0.6,
+    ) -> None:
+        key_blob = json.dumps({"t": fact_type, "k": fact_key, "v": fact_value}, sort_keys=True, ensure_ascii=False)
+        if key_blob in seen:
+            return
+        seen.add(key_blob)
+        fact_id = f"fact::{project_id}::{len(facts)+1}"
+        facts.append(
+            {
+                "fact_id": fact_id,
+                "project_id": project_id,
+                "source_ref": source_ref,
+                "fact_type": fact_type,
+                "fact_key": fact_key,
+                "fact_value": fact_value,
+                "clause_text": clause_text,
+                "trace_ref": trace_ref,
+                "confidence": round(float(confidence), 2),
+            }
+        )
+
+    # 1) Atomic signal facts (traceable to one observation row)
+    for row in observation_rows:
+        add_fact(
+            "signal",
+            str(row.get("signal_type") or "signal"),
+            {
+                "competitor": row.get("competitor"),
+                "region": row.get("region"),
+                "summary": row.get("summary"),
+            },
+            source_ref=str(row.get("source_ref") or ""),
+            clause_text=str(row.get("summary") or ""),
+            trace_ref=str(row.get("signal_id") or ""),
+            confidence=float(row.get("confidence") or 0.58),
+        )
+
+    # 2) Competitor entity facts (atomic names)
+    competitors = set()
+    for row in source_rows:
+        text = str(row.get("raw_text") or "")
+        for entity in extract_named_entities(text):
+            normalized = clean_entity(entity)
+            if normalized:
+                competitors.add((normalized, str(row.get("source_ref") or "")))
+    for row in knowledge_rows:
+        competitor = clean_entity(str(row.get("competitor") or ""))
+        if competitor:
+            competitors.add((competitor, ""))
+    for competitor, source_ref in sorted(competitors):
+        add_fact(
+            "entity",
+            "competitor",
+            {"name": competitor},
+            source_ref=source_ref,
+            clause_text=competitor,
+            confidence=0.72 if source_ref else 0.64,
+        )
+
+    # 3) Aggregate/stat facts derived from atomic facts
+    competitor_names = sorted({item[0] for item in competitors})
+    add_fact(
+        "stat",
+        "competitor_count",
+        {"value": len(competitor_names), "items": competitor_names[:400]},
+        source_ref=source_rows[0]["source_ref"] if source_rows else "",
+        confidence=0.8 if competitor_names else 0.42,
+    )
+
+    signal_counts: dict[str, int] = {}
+    for row in observation_rows:
+        signal_type = str(row.get("signal_type") or "unknown")
+        signal_counts[signal_type] = signal_counts.get(signal_type, 0) + 1
+    for signal_type, count in sorted(signal_counts.items()):
+        add_fact(
+            "stat",
+            "signal_type_count",
+            {"signal_type": signal_type, "value": count},
+            source_ref=source_rows[0]["source_ref"] if source_rows else "",
+            confidence=0.76,
+        )
+
+    raw_joined = " ".join(str(row.get("raw_text") or "") for row in source_rows).lower()
+    subscription_present = any(
+        token in raw_joined
+        for token in ("monthly subscription", "subscription", "recurring", "monthly plan", "membership")
+    )
+    add_fact(
+        "stat",
+        "subscription_model_present",
+        {"value": bool(subscription_present)},
+        source_ref=source_rows[0]["source_ref"] if source_rows else "",
+        confidence=0.66 if raw_joined else 0.3,
+    )
+
+    return facts
+
+
+def build_flashcards_from_atomic_facts(
+    project_id: str,
+    atomic_facts: list[dict[str, Any]],
+    source_rows: list[dict[str, Any]],
+    kyc_context: str,
+) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+
+    def card(
+        insight: str,
+        implication: str,
+        potential_moves: list[str],
+        fact_refs: list[str],
+        source_refs: list[str],
+        *,
+        segment: str = "market",
+        competitor: str | None = None,
+        channel: str | None = None,
+    ) -> None:
+        card_id = f"card::{project_id}::{len(cards)+1}"
+        cards.append(
+            {
+                "card_id": card_id,
+                "project_id": project_id,
+                "insight": insight,
+                "implication": implication,
+                "potential_moves": potential_moves[:3],
+                "fact_refs": unique_values(fact_refs),
+                "source_refs": unique_values([ref for ref in source_refs if ref]),
+                "segment": segment,
+                "competitor": competitor,
+                "channel": channel or "pricing page",
+                "state": "candidate",
+            }
+        )
+
+    competitor_count_fact = next(
+        (
+            fact
+            for fact in atomic_facts
+            if fact.get("fact_type") == "stat" and fact.get("fact_key") == "competitor_count"
+        ),
+        None,
+    )
+    subscription_fact = next(
+        (
+            fact
+            for fact in atomic_facts
+            if fact.get("fact_type") == "stat" and fact.get("fact_key") == "subscription_model_present"
+        ),
+        None,
+    )
+    signal_count_facts = [
+        fact
+        for fact in atomic_facts
+        if fact.get("fact_type") == "stat" and fact.get("fact_key") == "signal_type_count"
+    ]
+
+    if competitor_count_fact:
+        value = int((competitor_count_fact.get("fact_value") or {}).get("value") or 0)
+        insight = f"{value} competitors/entities are currently represented in your market evidence set."
+        implication = (
+            "The comparison field is crowded; differentiation and channel-specific proof need to be explicit."
+            if value >= 10
+            else "The comparison field is still sparse; one differentiated move can shift buyer framing quickly."
+        )
+        card(
+            insight=insight,
+            implication=implication,
+            potential_moves=[
+                "Build a competitor map focused on the highest-pressure segment this week.",
+                "Add one direct comparison block where buyers evaluate alternatives.",
+                "Prioritize evidence-backed claims over generic value statements.",
+            ],
+            fact_refs=[competitor_count_fact["fact_id"]],
+            source_refs=[competitor_count_fact.get("source_ref") or ""],
+            segment="competition",
+        )
+
+    if subscription_fact:
+        value = bool((subscription_fact.get("fact_value") or {}).get("value"))
+        insight = (
+            "Subscription or recurring model language appears in current market sources."
+            if value
+            else "No subscription model signal appears in the current market evidence."
+        )
+        implication = (
+            "Recurring positioning is already part of the comparison set and must be benchmarked directly."
+            if value
+            else "Recurring pricing can be a potential asymmetry if buyer fit and onboarding friction are handled."
+        )
+        card(
+            insight=insight,
+            implication=implication,
+            potential_moves=[
+                "Test one recurring offer variant for the highest-likelihood segment.",
+                "Run objection capture on recurring terms before rollout.",
+                "Publish a side-by-side recurring vs legacy payment comparison.",
+            ],
+            fact_refs=[subscription_fact["fact_id"]],
+            source_refs=[subscription_fact.get("source_ref") or ""],
+            segment="pricing",
+            channel="pricing page",
+        )
+
+    for fact in signal_count_facts[:6]:
+        data = fact.get("fact_value") or {}
+        signal_type = str(data.get("signal_type") or "signal")
+        count = int(data.get("value") or 0)
+        if count <= 0:
+            continue
+        insight = f"{count} {signal_type.replace('_', ' ')} signal(s) were detected in the latest source set."
+        implication = (
+            f"{signal_type.replace('_', ' ').title()} pressure is active now and can affect near-term conversion decisions."
+        )
+        card(
+            insight=insight,
+            implication=implication,
+            potential_moves=[
+                f"Create one response move specifically for {signal_type.replace('_', ' ')} pressure.",
+                "Attach strongest excerpt evidence to the move owner and deadline.",
+                "Measure whether this pressure decreases after the move ships.",
+            ],
+            fact_refs=[fact["fact_id"]],
+            source_refs=[fact.get("source_ref") or ""],
+            segment="signals",
+        )
+
+    if not cards:
+        fallback_refs = [fact["fact_id"] for fact in atomic_facts[:3]]
+        fallback_source_refs = [fact.get("source_ref") or "" for fact in atomic_facts[:3]]
+        card(
+            insight=f"Atomic extraction ran for project context: {kyc_context[:120] or 'project'}",
+            implication="The source is stored, but more explicit business evidence is needed for higher-impact decisions.",
+            potential_moves=[
+                "Add one denser source with concrete commercial details.",
+                "Specify the exact segment/channel where pressure appears.",
+                "Confirm top competitor list before next recommendation cycle.",
+            ],
+            fact_refs=fallback_refs,
+            source_refs=fallback_source_refs,
+        )
+    return cards
+
+
+def apply_adaptive_weight_profile(
+    project_id: str,
+    feedback_rows: list[dict[str, Any]],
+    config: WorkerBridgeConfig,
+) -> dict[str, float]:
+    profile = get_card_weight_profile(project_id, path=config.local_db_path)
+    w_conf = float(profile.get("w_confidence", 0.45))
+    w_imp = float(profile.get("w_impact", 0.40))
+    w_urg = float(profile.get("w_urgency", 0.15))
+    sample_count = int(profile.get("sample_count", 0))
+
+    # Lightweight learning loop from usage feedback (phase-2 bootstrap):
+    # successful completion => more confidence weight; decline/delete => more urgency/impact pressure.
+    for row in feedback_rows[-80:]:
+        action = str(row.get("action_type") or row.get("feedback_type") or "")
+        if action in {"done", "completed"}:
+            w_conf += 0.004
+            w_imp += 0.002
+        elif action in {"decline_and_replace", "declined", "delete_and_teach"}:
+            w_urg += 0.004
+            w_imp += 0.002
+        elif action in {"hold_for_later", "hold"}:
+            w_urg -= 0.002
+            w_conf -= 0.001
+        sample_count += 1
+
+    # Keep weights positive and normalized.
+    w_conf = max(0.05, w_conf)
+    w_imp = max(0.05, w_imp)
+    w_urg = max(0.05, w_urg)
+    total = w_conf + w_imp + w_urg
+    normalized = {
+        "w_confidence": w_conf / total,
+        "w_impact": w_imp / total,
+        "w_urgency": w_urg / total,
+        "sample_count": sample_count,
+    }
+    upsert_card_weight_profile(
+        project_id,
+        normalized["w_confidence"],
+        normalized["w_impact"],
+        normalized["w_urgency"],
+        normalized["sample_count"],
+        path=config.local_db_path,
+    )
+    return normalized
+
+
+def score_flashcards(
+    project_id: str,
+    cards: list[dict[str, Any]],
+    atomic_facts: list[dict[str, Any]],
+    weights: dict[str, float],
+) -> list[dict[str, Any]]:
+    now = datetime.now(UTC)
+    fact_lookup = {fact["fact_id"]: fact for fact in atomic_facts}
+    scored: list[dict[str, Any]] = []
+    for idx, card in enumerate(cards):
+        refs = card.get("fact_refs", [])
+        ref_facts = [fact_lookup[ref] for ref in refs if ref in fact_lookup]
+        confidence = sum(float(f.get("confidence", 0.5)) for f in ref_facts) / max(1, len(ref_facts))
+        confidence = max(0.2, min(0.98, confidence))
+
+        # Impact heuristic from segment/channel semantics.
+        segment = str(card.get("segment") or "market")
+        if segment in {"pricing", "competition"}:
+            impact_score = 78.0
+            expiry_days = 5
+        elif segment in {"signals"}:
+            impact_score = 70.0
+            expiry_days = 4
+        else:
+            impact_score = 62.0
+            expiry_days = 7
+        impact_score = max(30.0, min(98.0, impact_score + (2.0 if len(ref_facts) >= 3 else 0.0)))
+
+        expires_at = now + timedelta(days=expiry_days + idx % 3)
+        freshness_score = max(0.05, min(1.0, (expires_at - now).total_seconds() / (10 * 24 * 3600)))
+        evidence_strength = max(0.15, min(1.0, len(ref_facts) / 6))
+
+        rank_score = (
+            float(weights.get("w_confidence", 0.45)) * confidence
+            + float(weights.get("w_impact", 0.40)) * (impact_score / 100.0)
+            + float(weights.get("w_urgency", 0.15)) * freshness_score
+        )
+
+        card["expires_at"] = expires_at.isoformat().replace("+00:00", "Z")
+        scored.append(
+            {
+                "card_id": card["card_id"],
+                "project_id": project_id,
+                "confidence": round(confidence, 3),
+                "impact_score": round(impact_score, 2),
+                "freshness_score": round(freshness_score, 3),
+                "evidence_strength": round(evidence_strength, 3),
+                "rank_score": round(rank_score, 6),
+            }
+        )
+    return scored
+
+
+def apply_visibility_top_percent(
+    cards: list[dict[str, Any]],
+    scores: list[dict[str, Any]],
+    percent: float = 0.20,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not cards:
+        return [], []
+    score_by_card = {score["card_id"]: score for score in scores}
+    ranked_cards = sorted(cards, key=lambda c: score_by_card.get(c["card_id"], {}).get("rank_score", 0.0), reverse=True)
+    keep = max(1, math.ceil(len(ranked_cards) * percent))
+    visible_ids = {card["card_id"] for card in ranked_cards[:keep]}
+    visible: list[dict[str, Any]] = []
+    all_cards: list[dict[str, Any]] = []
+    for card in ranked_cards:
+        score = score_by_card.get(card["card_id"], {})
+        item = {
+            **card,
+            **score,
+            "state": "active" if card["card_id"] in visible_ids else "suppressed",
+        }
+        all_cards.append(item)
+        if card["card_id"] in visible_ids:
+            visible.append(item)
+    return all_cards, visible
+
+
+def build_nba_tasks_from_cards(cards: list[dict[str, Any]], top_n: int = 3) -> list[dict[str, Any]]:
+    if not cards:
+        return []
+    ranked = sorted(cards, key=lambda card: float(card.get("rank_score") or 0), reverse=True)
+    selected = ranked[: max(3, top_n)]
+    tasks: list[dict[str, Any]] = []
+    for rank, card in enumerate(selected[:3], start=1):
+        insight = str(card.get("insight") or "Action opportunity detected from stored intelligence cards.")
+        implication = str(card.get("implication") or "This move can improve competitive position in the next decision window.")
+        moves = card.get("potential_moves") or []
+        title = str(moves[0] if moves else insight)[:220]
+        evidence_refs = [*card.get("fact_refs", []), *card.get("source_refs", [])]
+        tasks.append(
+            {
+                "rank": rank,
+                "title": title,
+                "why_now": implication,
+                "expected_advantage": f"Weighted by confidence {card.get('confidence', 0):.2f}, impact {card.get('impact_score', 0):.0f}, and urgency.",
+                "evidence_refs": unique_values(evidence_refs)[:8] or [f"card::{card.get('card_id')}"],
+                "best_before": str(card.get("expires_at") or ""),
+                "confidence_class": (
+                    "strong_action"
+                    if float(card.get("confidence") or 0) >= 0.75
+                    else "moderate_action"
+                    if float(card.get("confidence") or 0) >= 0.55
+                    else "exploratory_action"
+                ),
+                "supporting_source_refs": card.get("source_refs", []),
+            }
+        )
+    return tasks
 
 
 def build_fact_chips(

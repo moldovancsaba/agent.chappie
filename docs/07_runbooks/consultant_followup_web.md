@@ -34,6 +34,93 @@ Workspace panels in the browser are synthesized from the latest stored `JobResul
 
 **Ready-to-paste env blocks:** [`vercel_mac_queue_env.md`](vercel_mac_queue_env.md).
 
+## Card intelligence pipeline (source -> facts -> cards -> scores -> tasks)
+
+The worker now runs a strict three-layer flow:
+
+1. **Drafter**: extract atomic facts (traceable, one clause/observation per fact) and aggregate stats.
+2. **Writer**: build business flashcards from atomic facts + KYC context.
+3. **Judge**: score each card (`confidence`, `impact_score`, `freshness`, `expires_at`) and rank.
+
+Visibility rule:
+
+- All cards are stored in local brain tables (`atomic_facts`, `intelligence_cards`, `card_scores`).
+- App-visible flashcards are the dynamic top 20% by weighted rank.
+- Recommendations are generated from **all** cards, weighted by confidence * impact * urgency.
+
+### End-to-end example
+
+**Input source (excerpt)**
+
+- "341 competitor soccer clubs in our market list."
+- "No club uses monthly subscription; all use seasonal/upfront packages."
+- "Offer-heavy pages focus on trial + onboarding waiver."
+
+**Atomic facts (drafter output)**
+
+```json
+[
+  { "fact_type": "entity", "fact_key": "competitor", "fact_value": { "name": "Essex County Club" } },
+  { "fact_type": "entity", "fact_key": "competitor", "fact_value": { "name": "FlowOps" } },
+  { "fact_type": "stat", "fact_key": "competitor_count", "fact_value": { "value": 341 } },
+  { "fact_type": "stat", "fact_key": "subscription_model_present", "fact_value": { "value": false } },
+  { "fact_type": "stat", "fact_key": "signal_type_count", "fact_value": { "signal_type": "offer", "value": 27 } }
+]
+```
+
+**Flashcards (writer output)**
+
+```json
+[
+  {
+    "insight": "341 competitors/entities are currently represented in your market evidence set.",
+    "implication": "The comparison field is crowded; differentiation and channel-specific proof need to be explicit.",
+    "potential_moves": [
+      "Build a competitor map focused on the highest-pressure segment this week.",
+      "Add one direct comparison block where buyers evaluate alternatives."
+    ],
+    "fact_refs": ["fact::...::competitor_count"],
+    "source_refs": ["managed_source_src_..."]
+  },
+  {
+    "insight": "No subscription model signal appears in the current market evidence.",
+    "implication": "Recurring pricing can be a potential asymmetry if buyer fit and onboarding friction are handled.",
+    "potential_moves": [
+      "Test one recurring offer variant for the highest-likelihood segment.",
+      "Publish a side-by-side recurring vs legacy payment comparison."
+    ],
+    "fact_refs": ["fact::...::subscription_model_present"],
+    "source_refs": ["managed_source_src_..."]
+  }
+]
+```
+
+**Judge scores**
+
+```json
+{
+  "card_id": "card::demo_project::2",
+  "confidence": 0.82,
+  "impact_score": 78,
+  "freshness_score": 0.71,
+  "expires_at": "2026-03-29T00:00:00Z",
+  "rank_score": 0.79
+}
+```
+
+**Final task output (NBA weighted from all cards)**
+
+```json
+{
+  "rank": 1,
+  "title": "Test one recurring offer variant for the highest-likelihood segment.",
+  "why_now": "Recurring pricing can be a potential asymmetry if buyer fit and onboarding friction are handled.",
+  "expected_advantage": "Weighted by confidence 0.82, impact 78, and urgency.",
+  "evidence_refs": ["fact::...::subscription_model_present", "managed_source_src_..."],
+  "best_before": "2026-03-29"
+}
+```
+
 ## Troubleshooting: job stays queued / cannot submit context
 
 1. Ensure app env is set in `apps/consultant-followup-web/.env.local`:

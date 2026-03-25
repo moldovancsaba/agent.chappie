@@ -488,17 +488,25 @@ export async function getHiddenFactChipIds(projectId: string): Promise<Set<strin
   return new Set(rows.map((row) => row.fact_id));
 }
 
-export async function filterWorkspaceHiddenFactChips<T extends { fact_chips: Array<{ fact_id: string }> }>(
+export async function filterWorkspaceHiddenFactChips<
+  T extends {
+    fact_chips: Array<{ fact_id: string }>;
+    intelligence_cards?: Array<{ card_id: string }>;
+    visible_intelligence_cards?: Array<{ card_id: string }>;
+  },
+>(
   projectId: string,
   workspace: T
 ): Promise<T> {
   const hidden = await getHiddenFactChipIds(projectId);
-  if (!hidden.size || !workspace.fact_chips?.length) {
+  if (!hidden.size) {
     return workspace;
   }
   return {
     ...workspace,
-    fact_chips: workspace.fact_chips.filter((chip) => !hidden.has(chip.fact_id)),
+    fact_chips: (workspace.fact_chips ?? []).filter((chip) => !hidden.has(chip.fact_id)),
+    intelligence_cards: (workspace.intelligence_cards ?? []).filter((card) => !hidden.has(card.card_id)),
+    visible_intelligence_cards: (workspace.visible_intelligence_cards ?? []).filter((card) => !hidden.has(card.card_id)),
   };
 }
 

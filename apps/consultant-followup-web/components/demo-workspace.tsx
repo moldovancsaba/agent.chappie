@@ -79,6 +79,44 @@ type ManagementStatus = {
 } | null;
 type WorkspaceSnapshot = {
   project_id: string;
+  intelligence_cards: Array<{
+    card_id: string;
+    project_id: string;
+    insight: string;
+    implication: string;
+    potential_moves: string[];
+    fact_refs: string[];
+    source_refs: string[];
+    segment: string;
+    competitor?: string | null;
+    channel?: string | null;
+    state: string;
+    expires_at?: string | null;
+    confidence: number;
+    impact_score: number;
+    freshness_score: number;
+    evidence_strength: number;
+    rank_score: number;
+  }>;
+  visible_intelligence_cards: Array<{
+    card_id: string;
+    project_id: string;
+    insight: string;
+    implication: string;
+    potential_moves: string[];
+    fact_refs: string[];
+    source_refs: string[];
+    segment: string;
+    competitor?: string | null;
+    channel?: string | null;
+    state: string;
+    expires_at?: string | null;
+    confidence: number;
+    impact_score: number;
+    freshness_score: number;
+    evidence_strength: number;
+    rank_score: number;
+  }>;
   draft_segments: Array<{
     segment_id: string;
     project_id: string;
@@ -569,6 +607,8 @@ function fallbackSourceLabel(sourceRef: string) {
 function normalizeWorkspaceSnapshot(payload: Partial<WorkspaceSnapshot> & { project_id: string }) {
   return {
     project_id: payload.project_id,
+    intelligence_cards: payload.intelligence_cards ?? [],
+    visible_intelligence_cards: payload.visible_intelligence_cards ?? [],
     fact_chips: payload.fact_chips ?? [],
     draft_segments: payload.draft_segments ?? [],
     source_cards: payload.source_cards ?? [],
@@ -1225,7 +1265,14 @@ export function DemoWorkspace() {
       return;
     }
     setWorkspace((current) =>
-      current ? { ...current, fact_chips: current.fact_chips.filter((c) => c.fact_id !== factId) } : current
+      current
+        ? {
+            ...current,
+            fact_chips: current.fact_chips.filter((c) => c.fact_id !== factId),
+            intelligence_cards: current.intelligence_cards.filter((c) => c.card_id !== factId),
+            visible_intelligence_cards: current.visible_intelligence_cards.filter((c) => c.card_id !== factId),
+          }
+        : current
     );
     setFlashcardTeachNote((current) => {
       const next = { ...current };
@@ -1373,6 +1420,28 @@ export function DemoWorkspace() {
   const filteredKnowledgeCards = focusedSourceRef
     ? (workspace?.knowledge_cards ?? []).filter((card) => card.source_refs.includes(focusedSourceRef))
     : (workspace?.knowledge_cards ?? []);
+  const visibleFlashcards =
+    workspace && workspace.visible_intelligence_cards.length
+      ? workspace.visible_intelligence_cards
+      : (workspace?.fact_chips ?? []).map((chip) => ({
+          card_id: chip.fact_id,
+          project_id: workspace?.project_id ?? "",
+          insight: `${humanizeFactCategory(chip.category)}: ${chip.label}`,
+          implication: "This fact currently contributes to recommendation weighting.",
+          potential_moves: [],
+          fact_refs: [chip.fact_id],
+          source_refs: chip.source_refs,
+          segment: chip.category,
+          competitor: null,
+          channel: "pricing page",
+          state: "active",
+          expires_at: null,
+          confidence: chip.confidence,
+          impact_score: 50,
+          freshness_score: 0.5,
+          evidence_strength: 0.5,
+          rank_score: chip.confidence,
+        }));
   const taskScopedSourceRefs = selectedTask?.supporting_source_refs ?? [];
   const selectedTaskEvidence = selectedTask
     ? workspace?.recent_activity.filter(
@@ -1433,7 +1502,7 @@ export function DemoWorkspace() {
     activeView === "checklist"
       ? `${tasks.length} ranked moves`
       : activeView === "know-more"
-        ? `${(workspace?.fact_chips?.length ?? 0) + filteredKnowledgeCards.length} knowledge items`
+        ? `${visibleFlashcards.length} flashcards · ${filteredKnowledgeCards.length} cards`
         : `${workspace?.source_cards.length ?? 0} monitored sources`;
 
   return (
@@ -1997,35 +2066,45 @@ export function DemoWorkspace() {
                 </div>
               </article>
 
-              {workspace?.fact_chips.length ? (
+              {visibleFlashcards.length ? (
                 <article className="intel-card">
                   <div className="operator-head">
                     <h3>Knowledge flashcards</h3>
-                    <span>{workspace.fact_chips.length} atomic facts</span>
+                    <span>{visibleFlashcards.length} visible cards (top 20%)</span>
                   </div>
                   <p className="section-subcopy" style={{ marginTop: 0 }}>
                     Each flashcard is the smallest unit of knowledge we store and use when recommending your next best
                     actions. Only two operations are supported here, as agreed.
                   </p>
                   <div className="flashcard-deck">
-                    {workspace.fact_chips.map((chip) => (
+                    {visibleFlashcards.map((card) => (
                       <article
-                        className={`intel-card mini flashcard ${classifyOriginFromSourceRefs(chip.source_refs, autoCollectedSourceRefs)}`}
-                        key={chip.fact_id}
+                        className={`intel-card mini flashcard ${classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs)}`}
+                        key={card.card_id}
                       >
                         <div className="operator-head">
-                          <h3>{humanizeFactCategory(chip.category)}</h3>
+                          <h3>{titleCaseWords(card.segment || "card")}</h3>
                           <span>
-                            {confidenceLabel(chip.confidence)} ({chip.confidence.toFixed(2)})
+                            {confidenceLabel(card.confidence)} ({card.confidence.toFixed(2)}) · impact{" "}
+                            {Math.round(card.impact_score)}
                           </span>
                         </div>
-                        <p className="surface-summary">{originLabel(classifyOriginFromSourceRefs(chip.source_refs, autoCollectedSourceRefs))}</p>
-                        <p className="flashcard-body">{chip.label}</p>
-                        {chip.source_refs[0] ? (
+                        <p className="surface-summary">{originLabel(classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs))}</p>
+                        <p className="flashcard-body">{card.insight}</p>
+                        <p className="surface-summary">{card.implication}</p>
+                        {card.potential_moves.length ? (
+                          <ul>
+                            {card.potential_moves.slice(0, 2).map((move, index) => (
+                              <li key={`${card.card_id}-move-${index}`}>{move}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {card.expires_at ? <p className="surface-summary">Expires {formatTimestamp(card.expires_at)}</p> : null}
+                        {card.source_refs[0] ? (
                           <button
                             className="button-secondary flashcard-source-link"
                             type="button"
-                            onClick={() => setFocusedSourceRef(chip.source_refs[0] ?? null)}
+                            onClick={() => setFocusedSourceRef(card.source_refs[0] ?? null)}
                           >
                             View linked source
                           </button>
@@ -2034,29 +2113,29 @@ export function DemoWorkspace() {
                           <button
                             className="decision-button"
                             type="button"
-                            onClick={() => void actOnFactFlashcard(chip.fact_id, "forget")}
+                            onClick={() => void actOnFactFlashcard(card.card_id, "forget")}
                           >
                             Delete and forget
                           </button>
                           <button
                             className="decision-button reject"
                             type="button"
-                            onClick={() => void actOnFactFlashcard(chip.fact_id, "teach")}
+                            onClick={() => void actOnFactFlashcard(card.card_id, "teach")}
                           >
                             Delete and teach
                           </button>
                         </div>
                         <div className="adjust-shell">
-                          <label htmlFor={`flashcard-teach-${chip.fact_id}`}>
+                          <label htmlFor={`flashcard-teach-${card.card_id}`}>
                             For <strong>Delete and teach</strong>: what should we avoid next time? (negative signal)
                           </label>
                           <textarea
-                            id={`flashcard-teach-${chip.fact_id}`}
-                            value={flashcardTeachNote[chip.fact_id] ?? ""}
+                            id={`flashcard-teach-${card.card_id}`}
+                            value={flashcardTeachNote[card.card_id] ?? ""}
                             onChange={(event) =>
                               setFlashcardTeachNote((current) => ({
                                 ...current,
-                                [chip.fact_id]: event.target.value,
+                                [card.card_id]: event.target.value,
                               }))
                             }
                             placeholder="Neutral wrong or irrelevant facts use Delete and forget only. Use this field when the fact is harmful or misleading and similar patterns should be avoided."

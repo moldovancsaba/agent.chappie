@@ -99,6 +99,44 @@ type SourcePackage = {
 
 export type WorkerWorkspacePayload = {
   project_id: string;
+  intelligence_cards: Array<{
+    card_id: string;
+    project_id: string;
+    insight: string;
+    implication: string;
+    potential_moves: string[];
+    fact_refs: string[];
+    source_refs: string[];
+    segment: string;
+    competitor?: string | null;
+    channel?: string | null;
+    state: string;
+    expires_at?: string | null;
+    confidence: number;
+    impact_score: number;
+    freshness_score: number;
+    evidence_strength: number;
+    rank_score: number;
+  }>;
+  visible_intelligence_cards: Array<{
+    card_id: string;
+    project_id: string;
+    insight: string;
+    implication: string;
+    potential_moves: string[];
+    fact_refs: string[];
+    source_refs: string[];
+    segment: string;
+    competitor?: string | null;
+    channel?: string | null;
+    state: string;
+    expires_at?: string | null;
+    confidence: number;
+    impact_score: number;
+    freshness_score: number;
+    evidence_strength: number;
+    rank_score: number;
+  }>;
   draft_segments: Array<{
     segment_id: string;
     project_id: string;
@@ -288,6 +326,8 @@ function synthesizeWorkspaceFromJobResult(projectId: string, result: JobResult):
 export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspacePayload> & { project_id: string }): WorkerWorkspacePayload {
   return {
     project_id: payload.project_id,
+    intelligence_cards: payload.intelligence_cards ?? [],
+    visible_intelligence_cards: payload.visible_intelligence_cards ?? [],
     recent_sources: payload.recent_sources ?? [],
     recent_activity: payload.recent_activity ?? [],
     market_summary: payload.market_summary ?? {
