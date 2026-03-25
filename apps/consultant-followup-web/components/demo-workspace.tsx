@@ -977,31 +977,53 @@ export function DemoWorkspace() {
             content_text: contentText,
           }),
         })
-      : await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            source_id: generateId("source_cfg"),
-            label: resolvedLabel,
-            source_kind: sourceForm.sourceKind,
-            content_text: contentText,
-            file_name: fileName,
-            content_type: contentType,
-            content_base64: contentBase64,
-            status: "active",
-          }),
-        });
+      : sourceForm.sourceKind === "uploaded_file" && sourceUploadFile
+        ? await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources`, {
+            method: "POST",
+            body: (() => {
+              const form = new FormData();
+              form.set("source_kind", sourceForm.sourceKind);
+              form.set("label", resolvedLabel);
+              form.set("content_text", contentText);
+              form.set("file", sourceUploadFile);
+              return form;
+            })(),
+          })
+        : await fetch(`/api/projects/${encodeURIComponent(projectId)}/sources`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              source_id: generateId("source_cfg"),
+              label: resolvedLabel,
+              source_kind: sourceForm.sourceKind,
+              content_text: contentText,
+              file_name: fileName,
+              content_type: contentType,
+              content_base64: contentBase64,
+              status: "active",
+            }),
+          });
     const body = await response.json();
     if (!response.ok) {
       setManagementStatus({ tone: "error", message: body.detail ?? "The source could not be created." });
       return;
     }
-    setWorkspace((current) => (current ? { ...current, managed_sources: body.sources ?? [] } : current));
+    setWorkspace((current) =>
+      current && Array.isArray(body.sources) ? { ...current, managed_sources: body.sources } : current
+    );
     setSourceForm({ label: "", sourceKind: "url", contentText: "" });
     setSourceUploadFile(null);
     setEditingSourceId(null);
     setShowSourceComposer(false);
-    setManagementStatus({ tone: "success", message: editingSourceId ? "Source updated." : "Source saved." });
+    const queuedOk = body.status === "queued";
+    setManagementStatus({
+      tone: "success",
+      message: editingSourceId
+        ? "Source updated."
+        : queuedOk
+          ? `Queued (job ${body.job_id ?? ""}). Local worker will process and sync Know More.`
+          : "Source saved.",
+    });
   }
 
   async function updateSource(sourceId: string, payload: Record<string, unknown>) {
