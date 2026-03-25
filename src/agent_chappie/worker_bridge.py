@@ -1512,19 +1512,32 @@ def build_knowledge_cards(
     fact_chips: list[dict[str, Any]],
     evidence_units: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    def kb_data_moves(items: list[str], refs: list[str]) -> list[str]:
+    def kb_plain_potential_moves(items: list[str]) -> list[str]:
+        """Operator-facing suggestions only—no row[]= / source_ref= debug strings."""
         out: list[str] = []
-        for idx, item in enumerate(items[:3]):
-            c = _clip_task_copy(item, 140)
-            if c:
-                out.append(f"row[{idx}]={c}")
-        for ref in refs:
+        seen: set[str] = set()
+        for item in items:
+            c = _clip_task_copy(str(item).strip(), 220)
+            if not c:
+                continue
+            key = c.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(c)
+            if len(out) >= 3:
+                return out
+        for filler in (
+            "Check this read against your live site and what prospects say on recent calls.",
+            "If it is wrong, use Decline and teach so the system learns your market.",
+            "Pick one concrete homepage or pricing tweak to test against this pattern.",
+        ):
             if len(out) >= 3:
                 break
-            r = _clip_task_copy(ref, 100)
-            if r:
-                out.append(f"source_ref={r}")
-        return (out or ["items=empty"])[:3]
+            if filler.lower() not in seen:
+                seen.add(filler.lower())
+                out.append(filler)
+        return out[:3]
 
     feedback_lookup = {row["knowledge_id"]: row for row in feedback_rows}
     entities = unique_entities(source_rows, observation_rows, knowledge_rows)
@@ -1554,10 +1567,7 @@ def build_knowledge_cards(
             market_items or ["No market synthesis has been derived yet."],
             market_summary_insight(market_units, source_rows),
             market_summary_implication(market_units),
-            kb_data_moves(
-                market_items or [],
-                flatten_unit_source_refs(market_units[:5]) or [row["source_ref"] for row in source_rows[:4]],
-            ),
+            kb_plain_potential_moves(market_items or []),
             observation_rows[:4],
             flatten_unit_source_refs(market_units[:5]) or [row["source_ref"] for row in source_rows[:4]],
             0.78 if source_rows else 0.22,
@@ -1575,16 +1585,22 @@ def build_knowledge_cards(
             "Competitors Detected",
             "Named companies, schools, clubs, or products we extracted from the current source set.",
             competitor_items[:6] or ["No named competitors have been extracted with enough confidence yet."],
-            _clip_task_copy(f"knowledge_id=competitors_detected · n={len(competitor_items)}", 220),
             _clip_task_copy(
-                f"sample={','.join(competitor_items[:4])}" if competitor_items else "sample=empty",
-                260,
+                (
+                    f"We picked up {len(competitor_items)} named competitor candidate(s) from this material. "
+                    f"Strongest signals: {', '.join(competitor_items[:4])}."
+                )
+                if competitor_items
+                else "We did not extract confident named competitors from this pass—your sources may not name firms explicitly yet.",
+                280,
             ),
-            kb_data_moves(
-                competitor_items[:6] or ["extract=empty"],
-                competitor_source_refs or flatten_fact_source_refs(facts_by_category.get("competitor", []))
-                or [row["source_ref"] for row in source_rows[:4]],
+            _clip_task_copy(
+                "Treat this as a draft list to verify; wrong names create wrong tasks downstream."
+                if competitor_items
+                else "Add a memo, deck, or page that names who you actually compete with.",
+                220,
             ),
+            kb_plain_potential_moves(competitor_items[:6] or ["Name one or two competitors explicitly in your sources so we can track them."]),
             observation_rows[:4],
             competitor_source_refs or flatten_fact_source_refs(facts_by_category.get("competitor", [])) or [row["source_ref"] for row in source_rows[:4]],
             0.74 if competitor_items else 0.28,
@@ -1612,14 +1628,21 @@ def build_knowledge_cards(
             "Pricing / Packaging",
             "Commercial packaging and pricing observations we extracted from the current source material.",
             pricing_items[:5] or ["No pricing or packaging observations are strong enough yet."],
-            _clip_task_copy(f"knowledge_id=pricing_packaging · n_units={len(pricing_units)}", 220),
-            _clip_task_copy(f"n_facts={len(pricing_facts)}", 120),
-            kb_data_moves(
-                pricing_items[:5] or ["extract=empty"],
-                flatten_unit_source_refs(pricing_units[:5])
-                or flatten_fact_source_refs(pricing_facts[:5])
-                or source_refs_for_items(pricing_items[:5], source_rows),
+            _clip_task_copy(
+                (
+                    f"Pricing and packaging language shows up in {len(pricing_units)} evidence line(s) from this ingest."
+                    if pricing_units
+                    else "We did not isolate strong pricing or packaging claims in this pass."
+                ),
+                240,
             ),
+            _clip_task_copy(
+                "Buyers will compare numbers and packaging—make sure your story matches what they see in the wild."
+                if pricing_units
+                else "Upload or paste material that states fees, plans, or packaging more explicitly.",
+                220,
+            ),
+            kb_plain_potential_moves(pricing_items[:5] or ["Add clearer pricing or packaging language if this card feels empty."]),
             [row for row in observation_rows if row["signal_type"] == "pricing_change"][:4],
             flatten_unit_source_refs(pricing_units[:5]) or flatten_fact_source_refs(pricing_facts[:5]) or source_refs_for_items(pricing_items[:5], source_rows),
             0.71 if pricing_items else 0.24,
@@ -1645,14 +1668,21 @@ def build_knowledge_cards(
             "Offer / Positioning",
             "Offer language, positioning claims, and tactical market signals found in the sources.",
             positioning_items[:5] or ["No clear positioning or offer observations have been extracted yet."],
-            _clip_task_copy(f"knowledge_id=offer_positioning · n_units={len(positioning_units)}", 220),
-            _clip_task_copy(f"n_facts={len(positioning_facts)}", 120),
-            kb_data_moves(
-                positioning_items[:5] or ["extract=empty"],
-                flatten_unit_source_refs(positioning_units[:5])
-                or flatten_fact_source_refs(positioning_facts[:5])
-                or source_refs_for_items(positioning_items[:5], source_rows),
+            _clip_task_copy(
+                (
+                    f"Offer and positioning cues appear across {len(positioning_units)} evidence snippet(s) here."
+                    if positioning_units
+                    else "We did not find strong offer or positioning lines in this ingest."
+                ),
+                240,
             ),
+            _clip_task_copy(
+                "This shapes how buyers frame you versus alternatives—teach the card if it misreads your story."
+                if positioning_units
+                else "Paste homepage, sales deck, or battlecard excerpts so we can read your positioning.",
+                220,
+            ),
+            kb_plain_potential_moves(positioning_items[:5] or ["Add copy that states how you position against alternatives."]),
             [row for row in observation_rows if row["signal_type"] in {"offer", "messaging_shift"}][:4],
             flatten_unit_source_refs(positioning_units[:5]) or flatten_fact_source_refs(positioning_facts[:5]) or source_refs_for_items(positioning_items[:5], source_rows),
             0.73 if positioning_items else 0.25,
@@ -1677,14 +1707,21 @@ def build_knowledge_cards(
             "Proof Signals",
             "Trust cues, proof points, and credibility patterns extracted from the current source set.",
             proof_items[:5] or ["No proof signals have been extracted yet."],
-            _clip_task_copy(f"knowledge_id=proof_signals · n_units={len(proof_units)}", 220),
-            _clip_task_copy(f"n_facts={len(proof_facts)}", 120),
-            kb_data_moves(
-                proof_items[:5] or ["extract=empty"],
-                flatten_unit_source_refs(proof_units[:5])
-                or flatten_fact_source_refs(proof_facts[:5])
-                or source_refs_for_items(proof_items[:5], source_rows),
+            _clip_task_copy(
+                (
+                    f"We surfaced {len(proof_units)} proof- or trust-shaped snippet(s) from your sources."
+                    if proof_units
+                    else "No strong proof or trust cues stood out in this pass."
+                ),
+                240,
             ),
+            _clip_task_copy(
+                "Weak proof on your side will stand out if competitors lean on logos, quotes, or case studies."
+                if proof_units
+                else "Include customer stories, metrics, or third-party validation in the next upload.",
+                220,
+            ),
+            kb_plain_potential_moves(proof_items[:5] or ["Add testimonials, logos, or case-study language if proof looks thin."]),
             [row for row in observation_rows if row["signal_type"] == "proof_signal"][:4],
             flatten_unit_source_refs(proof_units[:5]) or flatten_fact_source_refs(proof_facts[:5]) or source_refs_for_items(proof_items[:5], source_rows),
             0.69 if proof_items else 0.21,
@@ -1696,26 +1733,32 @@ def build_knowledge_cards(
 
     open_questions = []
     if not any(row.get("region") and row["region"] != "region_unknown" for row in source_rows + knowledge_rows):
-        open_questions.append("gap=region_unknown · need=geo_source")
+        open_questions.append("Geography is still fuzzy—add where you sell or compete so comparisons stay grounded.")
     if not competitor_items:
-        open_questions.append("gap=named_competitors · need=competitor_source")
+        open_questions.append("We still need clearer named competitors in the source material.")
     if source_rows and not any(
         unit["unit_kind"] in {"pricing", "pricing_change", "offer", "proof", "positioning", "messaging_shift", "proof_signal"}
         for unit in all_units
     ):
-        open_questions.append("gap=commercial_pressure_units · need=pricing_or_offer_or_proof_evidence")
+        open_questions.append("Commercial signals (pricing, offers, proof) are thin; richer sources will sharpen this workspace.")
     open_questions.extend(missing_evidence_categories(all_units)[:2])
     if not open_questions:
-        open_questions.append("gap=none · status=ok")
+        open_questions.append("No major structural gaps jumped out on this pass.")
     cards.append(
         knowledge_card(
             "open_questions",
             "Open Questions",
             "Weak-confidence areas and unresolved questions the operator may want to confirm or correct.",
             open_questions,
-            _clip_task_copy(f"knowledge_id=open_questions · n_gaps={len(open_questions)}", 220),
-            _clip_task_copy("field=open_questions · source=gap_detector", 160),
-            kb_data_moves(open_questions, [row["source_ref"] for row in source_rows[:3]]),
+            _clip_task_copy(
+                f"We flagged {len(open_questions)} area(s) where your confirmation—or better sources—would tighten the read.",
+                220,
+            ),
+            _clip_task_copy(
+                "These are prompts, not verdicts: fix them with edits, new uploads, or Decline and teach when we misread you.",
+                200,
+            ),
+            kb_plain_potential_moves(open_questions),
             observation_rows[:2],
             [row["source_ref"] for row in source_rows[:3]],
             0.55,
@@ -5087,12 +5130,33 @@ def flatten_unit_source_refs(units: list[dict[str, Any]]) -> list[str]:
     return unique_values([str(unit["source_ref"]) for unit in units if unit.get("source_ref")])
 
 
+def prettify_auto_research_excerpt(text: str) -> str:
+    """Turn internal 'Auto Research URL/Title/Content' blobs into a short operator-facing line."""
+    t = text.strip()
+    if not t:
+        return ""
+    if "Auto Research URL:" in t:
+        url_m = re.search(r"Auto Research URL:\s*(\S+)", t)
+        title_m = re.search(r"Auto Research Title:\s*(.+)", t)
+        url = url_m.group(1).strip() if url_m else ""
+        title = title_m.group(1).strip() if title_m else ""
+        title = title.split("\n")[0].strip()
+        if title and url:
+            return f"We matched a public page titled “{title}” ({url})."
+        if url:
+            return f"We matched a public page ({url})."
+    return t
+
+
 def strongest_unit_excerpt(units: list[dict[str, Any]]) -> str | None:
     if not units:
         return None
     strongest = max(units, key=lambda unit: float(unit.get("confidence") or 0))
     excerpt = str(strongest.get("excerpt") or "").strip()
-    return excerpt[:220] if excerpt else None
+    if not excerpt:
+        return None
+    readable = prettify_auto_research_excerpt(excerpt)
+    return _clip_task_copy(readable, 260) if readable else None
 
 
 def unique_units_by_label(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5121,6 +5185,26 @@ def unit_cluster_title(unit: dict[str, Any]) -> str:
     if channel:
         return f"{channel.title()} move"
     return humanize_fact_category(str(unit.get("unit_kind") or "evidence"))
+
+
+def humanize_evidence_unit_kind(kind: str) -> str:
+    k = (kind or "").strip().lower()
+    return {
+        "offer": "offer- or trial-style conversion pressure",
+        "pricing": "pricing or packaging pressure",
+        "pricing_change": "pricing change signals",
+        "pricing_packaging": "pricing or packaging",
+        "positioning": "positioning or messaging",
+        "proof": "proof or trust signals",
+        "proof_signal": "proof or trust signals",
+        "messaging_shift": "messaging or positioning shift",
+        "opportunity": "market shift or opportunity",
+        "closure": "closure or exit signals",
+        "asset_sale": "asset or clearance signals",
+        "opening": "launch or new-program signals",
+        "vendor_adoption": "vendor or platform adoption",
+        "segment": "buyer- or segment-focused language",
+    }.get(k, "competitive signal")
 
 
 def cluster_units_by_action_shape(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5212,26 +5296,45 @@ def build_unit_cluster_segments(
 
 def market_summary_insight(market_units: list[dict[str, Any]], source_rows: list[dict[str, Any]]) -> str:
     if not market_units:
-        return _clip_task_copy(f"knowledge_id=market_summary · units=0 · sources={len(source_rows)}", 200)
+        return _clip_task_copy(
+            "We do not yet have enough structured evidence lines to summarize the market—try another upload "
+            f"or a clearer memo. ({len(source_rows)} source(s) ingested.)",
+            280,
+        )
+    clusters = cluster_units_by_action_shape(market_units)
+    if clusters:
+        lead = summarize_market_cluster_item(clusters[0])
+        return _clip_task_copy(
+            f"{lead} In total we are holding {len(market_units)} evidence line(s) under this summary.",
+            320,
+        )
     top = market_units[0]
-    return _clip_task_copy(
-        " · ".join(
-            [
-                "knowledge_id=market_summary",
-                f"primary_kind={top.get('unit_kind')}",
-                f"competitor={top.get('competitor') or ''}",
-                f"n_units={len(market_units)}",
-            ]
-        ),
-        260,
-    )
+    kind = humanize_evidence_unit_kind(str(top.get("unit_kind") or ""))
+    excerpt = prettify_auto_research_excerpt(str(top.get("excerpt") or top.get("label") or "").strip())
+    if excerpt:
+        return _clip_task_copy(f"The strongest single read is {kind}: {excerpt}", 300)
+    return _clip_task_copy(f"The strongest single read is {kind}, based on the current extract.", 220)
 
 
 def market_summary_implication(market_units: list[dict[str, Any]]) -> str:
     if not market_units:
-        return _clip_task_copy("knowledge_id=market_summary · implication=insufficient_units", 160)
-    top = market_units[0]
-    return _clip_task_copy(f"top_unit_kind={top.get('unit_kind')} · cluster_size={len(market_units)}", 200)
+        return (
+            "Treat the workspace as provisional until richer sources land; you can still Decline and teach any card that "
+            "misreads you."
+        )
+    kinds = {str(u.get("unit_kind") or "").lower() for u in market_units[:24]}
+    if kinds & {"offer", "pricing", "pricing_change", "pricing_packaging"}:
+        return (
+            "Buyers will compare trials, packaging, and numbers they can see—check that your site and talk track answer "
+            "those comparisons directly."
+        )
+    if kinds & {"proof", "proof_signal"}:
+        return (
+            "Trust and proof are loud in this material; if your side is quieter, it will show up in live bake-offs."
+        )
+    return (
+        "Use this card as a working read of what the ingested text emphasizes—not a final judgment on your strategy."
+    )
 
 
 def select_market_summary_items(market_units: list[dict[str, Any]], source_rows: list[dict[str, Any]]) -> list[str]:
@@ -5259,12 +5362,36 @@ def select_market_summary_items(market_units: list[dict[str, Any]], source_rows:
 
 
 def summarize_market_cluster_item(cluster: dict[str, Any]) -> str:
-    parts = [f"unit_kind={cluster.get('unit_kind')}", f"competitor={cluster.get('competitor') or ''}"]
-    for key in ("channel", "asset", "claim", "section"):
-        v = cluster.get(key)
-        if v:
-            parts.append(f"{key}={v}")
-    return _clip_task_copy(" · ".join(parts), 260)
+    kind_phrase = humanize_evidence_unit_kind(str(cluster.get("unit_kind") or ""))
+    comp = clean_entity(str(cluster.get("competitor") or "").strip())
+    channel = str(cluster.get("channel") or "").strip()
+    asset = str(cluster.get("asset") or "").strip()
+    section = str(cluster.get("section") or "").strip()
+    claim = str(cluster.get("claim") or "").strip()
+    n = max(1, int(cluster.get("cluster_size") or 1))
+    label = str(cluster.get("label") or "").strip()
+
+    where_bits: list[str] = []
+    if channel:
+        where_bits.append(channel)
+    if section and section.lower() != channel.lower():
+        where_bits.append(section)
+    elif asset and asset.lower() != channel.lower():
+        where_bits.append(asset)
+    where = ", ".join(where_bits) if where_bits else "the ingested material"
+
+    who = f" involving {comp}" if comp else ""
+    claim_bit = f" The text also stresses “{claim}”." if claim and claim.lower() not in where.lower() else ""
+
+    if n > 1:
+        strength = f" ({n} supporting snippets cluster this way.)"
+    else:
+        strength = ""
+
+    sentence = f"We read {kind_phrase}{who}, concentrated around {where}.{claim_bit}{strength}"
+    if label and label.lower() not in sentence.lower():
+        sentence = f"{sentence} ({label})"
+    return _clip_task_copy(" ".join(sentence.split()), 320)
 
 
 def normalize_item_signature(item: str) -> str:
@@ -5328,11 +5455,11 @@ def missing_evidence_categories(units: list[dict[str, Any]]) -> list[str]:
     categories = {str(unit.get("unit_kind") or "") for unit in units}
     gaps: list[str] = []
     if not categories.intersection({"pricing", "pricing_change"}):
-        gaps.append("gap=pricing_evidence · need=pricing_or_packaging_unit")
+        gaps.append("Pricing or packaging evidence is light—add pages that spell out plans, fees, or bundles.")
     if not categories.intersection({"offer", "positioning", "messaging_shift"}):
-        gaps.append("gap=offer_positioning_evidence · need=offer_or_positioning_unit")
+        gaps.append("Offer or positioning language is thin—add copy about trials, packaging, or how you differentiate.")
     if not categories.intersection({"proof", "proof_signal"}):
-        gaps.append("gap=proof_evidence · need=proof_or_trust_unit")
+        gaps.append("Proof or trust signals are thin—add testimonials, logos, metrics, or case-style claims.")
     return gaps
 
 
