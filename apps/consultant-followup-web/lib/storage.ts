@@ -16,11 +16,33 @@ type SessionState = {
   result: JobResult | null;
 };
 
+export type QueuedSourcePackage = {
+  source_kind: "manual_text" | "url" | "uploaded_file";
+  project_summary: string;
+  raw_text: string;
+  source_ref: string;
+  file_name?: string;
+  content_type?: string;
+  content_base64?: string;
+};
+
+export type QueuedJobRecord = {
+  job_id: string;
+  project_id: string;
+  status: "queued" | "processing" | "complete" | "failed";
+  job_request: JobRequest;
+  source_package: QueuedSourcePackage;
+  claimed_at?: string | null;
+  completed_at?: string | null;
+  error_detail?: string | null;
+};
+
 type MemoryState = {
   projects: Map<string, ProjectRecord>;
   jobs: Map<string, JobRequest>;
   results: Map<string, JobResult>;
   feedback: Map<string, Feedback>;
+  queue: Map<string, QueuedJobRecord>;
 };
 
 declare global {
@@ -34,6 +56,7 @@ function memoryState(): MemoryState {
       jobs: new Map(),
       results: new Map(),
       feedback: new Map(),
+      queue: new Map(),
     };
   }
   return globalThis.__agentChappieDemoState__;
@@ -48,6 +71,34 @@ function sqlClient() {
     throw new Error("DATABASE_URL is required for Neon storage mode.");
   }
   return neon(env.databaseUrl);
+}
+
+let queueSchemaEnsured = false;
+
+async function ensureQueueSchema() {
+  if (!canUseNeon() || queueSchemaEnsured) {
+    return;
+  }
+  const sql = sqlClient();
+  await sql`
+    create table if not exists demo_job_queue (
+      job_id text primary key references demo_jobs(job_id) on delete cascade,
+      project_id text not null references demo_projects(project_id) on delete cascade,
+      status text not null,
+      job_request jsonb not null,
+      source_package jsonb not null,
+      claimed_at timestamptz,
+      completed_at timestamptz,
+      error_detail text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `;
+  await sql`
+    create index if not exists idx_demo_job_queue_status_created
+    on demo_job_queue(status, created_at)
+  `;
+  queueSchemaEnsured = true;
 }
 
 function newestProjectRecord(records: ProjectRecord[]) {
@@ -142,9 +193,59 @@ export async function saveJob(job: JobRequest) {
   `;
 }
 
+export async function enqueueJobForWorker(job: JobRequest, sourcePackage: QueuedSourcePackage) {
+  if (!canUseNeon()) {
+    memoryState().queue.set(job.job_id, {
+      job_id: job.job_id,
+      project_id: job.project_id,
+      status: "queued",
+      job_request: job,
+      source_package: sourcePackage,
+      claimed_at: null,
+      completed_at: null,
+      error_detail: null,
+    });
+    return;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  await sql`
+    insert into demo_job_queue (
+      job_id,
+      project_id,
+      status,
+      job_request,
+      source_package
+    )
+    values (
+      ${job.job_id},
+      ${job.project_id},
+      ${"queued"},
+      ${JSON.stringify(job)},
+      ${JSON.stringify(sourcePackage)}
+    )
+    on conflict (job_id) do update
+      set project_id = excluded.project_id,
+          status = excluded.status,
+          job_request = excluded.job_request,
+          source_package = excluded.source_package,
+          error_detail = null,
+          claimed_at = null,
+          completed_at = null,
+          updated_at = now()
+  `;
+}
+
 export async function saveResult(result: JobResult) {
   if (!canUseNeon()) {
     memoryState().results.set(result.job_id, result);
+    const row = memoryState().queue.get(result.job_id);
+    if (row) {
+      row.status = "complete";
+      row.completed_at = new Date().toISOString();
+      row.error_detail = null;
+      memoryState().queue.set(result.job_id, row);
+    }
     return;
   }
   const sql = sqlClient();
@@ -162,6 +263,14 @@ export async function saveResult(result: JobResult) {
           completed_at = excluded.completed_at,
           payload = excluded.payload
   `;
+  await ensureQueueSchema();
+  await sql`
+    update demo_job_queue
+    set status = ${"complete"},
+        completed_at = now(),
+        updated_at = now()
+    where job_id = ${result.job_id}
+  `;
 }
 
 export async function getResult(jobId: string): Promise<JobResult | null> {
@@ -178,6 +287,92 @@ export async function getResult(jobId: string): Promise<JobResult | null> {
   `) as Array<{ payload: JobResult }>;
   const result = rows[0]?.payload ?? null;
   return result ? normalizeStoredJobResult(result) : null;
+}
+
+export async function getQueuedJob(jobId: string): Promise<QueuedJobRecord | null> {
+  if (!canUseNeon()) {
+    return memoryState().queue.get(jobId) ?? null;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  const rows = (await sql`
+    select
+      job_id,
+      project_id,
+      status,
+      job_request,
+      source_package,
+      claimed_at,
+      completed_at,
+      error_detail
+    from demo_job_queue
+    where job_id = ${jobId}
+    limit 1
+  `) as Array<QueuedJobRecord>;
+  return rows[0] ?? null;
+}
+
+export async function claimNextQueuedJob(): Promise<QueuedJobRecord | null> {
+  if (!canUseNeon()) {
+    const queued = [...memoryState().queue.values()].find((q) => q.status === "queued") ?? null;
+    if (!queued) {
+      return null;
+    }
+    queued.status = "processing";
+    queued.claimed_at = new Date().toISOString();
+    memoryState().queue.set(queued.job_id, queued);
+    return queued;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  const rows = (await sql`
+    with next_job as (
+      select job_id
+      from demo_job_queue
+      where status = 'queued'
+      order by created_at asc
+      limit 1
+      for update skip locked
+    )
+    update demo_job_queue q
+    set status = 'processing',
+        claimed_at = now(),
+        updated_at = now()
+    from next_job
+    where q.job_id = next_job.job_id
+    returning
+      q.job_id,
+      q.project_id,
+      q.status,
+      q.job_request,
+      q.source_package,
+      q.claimed_at,
+      q.completed_at,
+      q.error_detail
+  `) as Array<QueuedJobRecord>;
+  return rows[0] ?? null;
+}
+
+export async function markQueuedJobFailed(jobId: string, detail: string) {
+  if (!canUseNeon()) {
+    const row = memoryState().queue.get(jobId);
+    if (!row) return;
+    row.status = "failed";
+    row.error_detail = detail;
+    row.completed_at = new Date().toISOString();
+    memoryState().queue.set(jobId, row);
+    return;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  await sql`
+    update demo_job_queue
+    set status = ${"failed"},
+        error_detail = ${detail},
+        completed_at = now(),
+        updated_at = now()
+    where job_id = ${jobId}
+  `;
 }
 
 export function normalizeStoredJobResult(result: JobResult): JobResult {

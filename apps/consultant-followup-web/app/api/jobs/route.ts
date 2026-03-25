@@ -3,8 +3,7 @@ import { NextResponse } from "next/server";
 import { demoJobSubmissionSchema, jobRequestSchema } from "@/lib/contracts";
 import { env } from "@/lib/env";
 import { generateId } from "@/lib/ids";
-import { saveJob, saveProject, saveResult } from "@/lib/storage";
-import { runWorkerJob } from "@/lib/worker-bridge";
+import { enqueueJobForWorker, saveJob, saveProject } from "@/lib/storage";
 
 export async function POST(request: Request) {
   try {
@@ -79,17 +78,18 @@ export async function POST(request: Request) {
     });
     await saveJob(jobRequest);
 
-    const jobResult = await runWorkerJob({
-      jobRequest,
-      contextNotes: payload.contextNotes,
-      sourceKind: payload.sourceKind,
-      uploadedFile,
+    await enqueueJobForWorker(jobRequest, {
+      source_kind: payload.sourceKind,
+      project_summary: "managed_on_worker",
+      raw_text: payload.contextNotes,
+      source_ref: `source_${jobRequest.job_id}`,
+      file_name: uploadedFile?.fileName,
+      content_type: uploadedFile?.contentType,
+      content_base64: uploadedFile?.contentBase64,
     });
 
-    await saveResult(jobResult);
-
     return NextResponse.json({
-      scheduler_state: jobResult.status === "complete" ? "complete" : "blocked",
+      scheduler_state: "queued",
       project_id: projectId,
       job_id: jobId,
       job_request: jobRequest,

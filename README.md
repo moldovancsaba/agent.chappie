@@ -119,3 +119,12 @@ Phase 5 adds a private worker bridge plus a continuous observation layer. The ap
 
 ## Agent Work Rule
 When you are done with a bucket of tasks, always provide a full plain text summary that can be easily copied and pasted for the Architect to review.
+
+## Documentation-first policy
+
+This repository is documentation-driven:
+
+- implementation must follow repository docs (`architecture`, `contracts`, `runbooks`, `roadmap`, `handoffs`)
+- do not assume undocumented behavior
+- clarify ambiguity before acting on critical behavior changes
+- keep code and docs synchronized in the same pass

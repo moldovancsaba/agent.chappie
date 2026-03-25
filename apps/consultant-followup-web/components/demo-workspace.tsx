@@ -786,12 +786,25 @@ export function DemoWorkspace() {
       setProjectId(body.project_id);
       setJobRequest(body.job_request);
 
-      const resultResponse = await fetch(body.result_url);
-      const resultBody = await resultResponse.json();
-      if (!resultResponse.ok) {
-        throw new Error(resultBody.detail ?? "The job result could not be retrieved.");
-      }
-      setJobResult(resultBody.job_result);
+      const fetchResultWithPolling = async () => {
+        const maxAttempts = 30;
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          const resultResponse = await fetch(body.result_url, { cache: "no-store" });
+          const resultBody = await resultResponse.json();
+          if (resultResponse.ok && resultBody.job_result) {
+            return resultBody.job_result;
+          }
+          if (resultResponse.status === 202) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            continue;
+          }
+          throw new Error(resultBody.detail ?? "The job result could not be retrieved.");
+        }
+        throw new Error("The job is still queued. Please wait a moment and refresh.");
+      };
+
+      const resolvedResult = await fetchResultWithPolling();
+      setJobResult(resolvedResult);
       setActiveView("checklist");
       if (inputMode === "file") {
         setSelectedFile(null);

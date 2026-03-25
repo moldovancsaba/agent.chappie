@@ -10,29 +10,33 @@
 - **Proof:** capture raw request/response JSON, before/after tasks, DB rows for `decline_and_replace`, `delete_and_teach`, and comment-driven regeneration through **Next.js API**.
 - **CI:** unit + integration + deterministic API-boundary tests must run in CI; fragile live-model/internet cases may stay out of CI with artifacts captured separately.
 
-## Troubleshooting: “fetch failed” / cannot submit context
+## Job execution model (Phase 8)
 
-The browser talks to **Next.js**; Next.js talks to the **private worker** (`AGENT_API_BASE_URL`, default `http://127.0.0.1:8787`). A generic **fetch failed** almost always means the worker is **not running** or **not reachable** from the machine where `npm run dev` runs.
+For job submission, the app now follows:
 
-1. **Start the worker** (repo root, same machine as the app unless you change the URL). The worker reads **process environment variables only** (it does not auto-load `.env` files):
+`Vercel app/API -> durable database queue -> Mac mini worker consumer -> result written back to DB -> app polls result`
+
+`POST /api/jobs` enqueues only. It does not synchronously execute the worker.
+
+## Troubleshooting: job stays queued / cannot submit context
+
+1. Ensure app env is set in `apps/consultant-followup-web/.env.local`:
+   - `DEMO_STORAGE_MODE=neon`
+   - `DATABASE_URL=...`
+   - `WORKER_QUEUE_SHARED_SECRET=...`
+
+2. Start the Mac worker queue consumer (repo root):
 
    ```bash
-   cd /path/to/Agent.Chappie
    source .venv/bin/activate
-   export AGENT_SHARED_SECRET=replace-me
+   export APP_QUEUE_BASE_URL=https://agent-chappie.doneisbetter.com
+   export WORKER_QUEUE_SHARED_SECRET=replace-me
    export AGENT_LOCAL_DB_PATH=runtime_status/agent_brain.sqlite3
-   python scripts/worker_bridge.py
+   python scripts/worker_queue_consumer.py
    ```
 
-   Use the **same** `AGENT_SHARED_SECRET` string as in `apps/consultant-followup-web/.env.local`.
-
-2. **Confirm health:** `curl http://127.0.0.1:8787/health` → `{"status":"ok",...}`
-
-3. **Match secrets:** `AGENT_SHARED_SECRET` in `apps/consultant-followup-web/.env.local` must equal the value the worker uses (e.g. from repo `.env.local` / environment when launching `worker_bridge.py`). A mismatch yields **401**, not always “fetch failed”.
-
-4. **App env file:** Variables must live in **`apps/consultant-followup-web/.env.local`** (Next.js does not load the repo-root `.env.local` for the app).
-
-5. After changing `.env.local`, **restart** `npm run dev`.
+3. If jobs remain queued, verify worker API auth secret matches between Vercel and Mac worker consumer (`WORKER_QUEUE_SHARED_SECRET`).
+4. If queue claim succeeds but completion fails, inspect consumer output for `complete` / `fail` callback errors.
 
 ## Local development
 
@@ -58,6 +62,7 @@ APP_ID=app_consultant_followup
 AGENT_BRIDGE_MODE=worker
 AGENT_API_BASE_URL=http://127.0.0.1:8787
 AGENT_SHARED_SECRET=replace-me
+WORKER_QUEUE_SHARED_SECRET=replace-me
 AGENT_LOCAL_DB_PATH=runtime_status/agent_brain.sqlite3
 DEMO_STORAGE_MODE=memory
 DATABASE_URL=postgres://user:password@host/database?sslmode=require
@@ -196,7 +201,9 @@ launchctl kickstart -k gui/$(id -u)/com.agentchappie.worker
 - root directory: `apps/consultant-followup-web`
 - framework: Next.js
 - keep the Mac mini worker private
-- **Production `AGENT_API_BASE_URL`:** Vercel runs server-side `fetch` from its own network. **`http://127.0.0.1:8787` will never reach your Mac.** Set `AGENT_API_BASE_URL` in Vercel to a **public HTTPS URL** that tunnels to the worker (for example Cloudflare Tunnel, ngrok, or similar), and use the same **`AGENT_SHARED_SECRET`** as the worker process. Without this, submissions show connection errors (e.g. “cannot reach the private worker”).
+- **Documented product boundary** (see [`docs/01_architecture.md`](../01_architecture.md)): `Vercel app/API → durable database/job layer → private Mac mini worker`. The Mac is **not** meant to be the public edge; the online DB is the handoff between the app and the worker.
+- **What the shipped app does today:** `POST /api/jobs` still calls **`runWorkerJob`**, which performs a **synchronous HTTP POST from the Next.js server** to `AGENT_API_BASE_URL/jobs`, then writes the result to Neon (when `DEMO_STORAGE_MODE=neon`). There is **no** worker process in this repository yet that **polls Neon** for pending `demo_jobs` and processes them asynchronously. Until that outbox/poller exists, **any** deployment where the server cannot reach the worker URL will fail at job submit time—even if Neon is configured correctly.
+- **Implication for [agent-chappie.doneisbetter.com](https://agent-chappie.doneisbetter.com):** Either implement **enqueue-only + Mac-side Neon consumer** (aligns with the architecture doc), or temporarily use a **reachable** `AGENT_API_BASE_URL` for the current synchronous bridge. Local `127.0.0.1` on Vercel is never the Mac.
 - keep app secrets in Vercel env settings only
 - `POST /api/jobs` is the app-side bridge entrypoint
 - `GET /api/session/[sessionId]/state` restores the latest saved project and result for the current anonymous session

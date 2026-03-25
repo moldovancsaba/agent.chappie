@@ -12,6 +12,8 @@ A bucket of tasks or feature is only considered "Done" when it meets the followi
 - Complex logic is properly commented and explained inline.
 - Public functions, API routes, and components have updated docstrings.
 - Project documentation (e.g., `README.md`, `docs/`) is updated to reflect structural or usage changes.
+- Documentation was actively used during implementation; behavior was not assumed.
+- Ambiguities that could affect behavior were clarified before implementation (or explicitly escalated).
 
 ## 3. Quality Assurance (QA) & Quality Control (QC)
 - Unit tests and regression tests are written or updated for all new functionality.
@@ -24,3 +26,4 @@ A bucket of tasks or feature is only considered "Done" when it meets the followi
 
 ## 5. Handover & Summary (Agent Work Rule)
 - **When you are done with a bucket of tasks, always provide a full plain text summary that can be easily copied and pasted for the Architect to review.**
+- Handover includes deterministic proof artifacts and any unresolved clarification questions.
