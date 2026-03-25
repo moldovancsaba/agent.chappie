@@ -2,7 +2,11 @@ import type { Feedback, JobRequest, JobResult, RecommendedTask } from "@/lib/con
 import { jobResultSchema } from "@/lib/contracts";
 import { createDemoRecommendation } from "@/lib/demo-worker";
 import { describeDirectWorkerBlock, env, isDirectWorkerEnabled } from "@/lib/env";
-import { getLatestJobResultForProject, getWorkspaceSnapshot } from "@/lib/storage";
+import {
+  filterWorkspaceHiddenFactChips,
+  getLatestJobResultForProject,
+  getWorkspaceSnapshot,
+} from "@/lib/storage";
 
 export class DirectWorkerUnavailableError extends Error {
   override readonly name = "DirectWorkerUnavailableError";
@@ -376,21 +380,26 @@ export async function runWorkerJob(input: {
 
 export async function fetchWorkerWorkspace(projectId: string): Promise<WorkerWorkspacePayload> {
   if (!isDirectWorkerEnabled()) {
+    const applyHiddenFacts = async (payload: WorkerWorkspacePayload) =>
+      filterWorkspaceHiddenFactChips(projectId, payload);
     const syncedWorkspace = await getWorkspaceSnapshot(projectId);
     if (syncedWorkspace && typeof syncedWorkspace === "object") {
-      return normalizeWorkerWorkspacePayload(
+      const normalized = normalizeWorkerWorkspacePayload(
         syncedWorkspace as Partial<WorkerWorkspacePayload> & {
           project_id: string;
         }
       );
+      return applyHiddenFacts(normalized);
     }
     const stored = await getLatestJobResultForProject(projectId);
     if (stored) {
-      return synthesizeWorkspaceFromJobResult(projectId, stored);
+      return applyHiddenFacts(synthesizeWorkspaceFromJobResult(projectId, stored));
     }
-    return normalizeWorkerWorkspacePayload({
-      project_id: projectId,
-    });
+    return applyHiddenFacts(
+      normalizeWorkerWorkspacePayload({
+        project_id: projectId,
+      })
+    );
   }
 
   const response = await workerFetch(

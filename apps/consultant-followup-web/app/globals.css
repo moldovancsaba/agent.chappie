@@ -1088,6 +1088,29 @@ textarea {
   border-color: rgba(15, 105, 93, 0.18);
 }
 
+.flashcard-deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.flashcard .flashcard-body {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.flashcard-source-link {
+  margin-top: 10px;
+  align-self: flex-start;
+}
+
+.flashcard-actions {
+  margin-top: 14px;
+}
+
 @media (max-width: 980px) {
   .decision-shell {
     grid-template-columns: 1fr;

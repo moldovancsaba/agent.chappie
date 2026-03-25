@@ -400,7 +400,7 @@ function buildExecutionSteps(task: RecommendedTask, sourceLabels: string[]) {
 function buildHumanEvidenceChips(
   task: RecommendedTask,
   evidence: WorkspaceSnapshot["recent_activity"],
-  segments: WorkspaceSnapshot["draft_segments"],
+  facts: WorkspaceSnapshot["fact_chips"],
   sources: SourceCard[]
 ) {
   const chips: string[] = [];
@@ -421,8 +421,8 @@ function buildHumanEvidenceChips(
   for (const activity of evidence) {
     push(activity.summary);
   }
-  for (const segment of segments) {
-    push(segment.segment_text);
+  for (const chip of facts) {
+    push(`${humanizeFactCategory(chip.category)}: ${chip.label}`);
   }
   for (const source of sources) {
     push(source.label);
@@ -635,6 +635,7 @@ export function DemoWorkspace() {
   const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
   const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
   const [knowledgeDeleteReason, setKnowledgeDeleteReason] = useState<Record<string, string>>({});
+  const [flashcardTeachNote, setFlashcardTeachNote] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1195,37 +1196,48 @@ export function DemoWorkspace() {
     });
   }
 
-  async function deleteDraftSegment(
-    segmentId: string,
-    payload: {
-      status: "deleted_silent" | "deleted_with_annotation" | "held_for_later";
-      original_payload?: Record<string, unknown>;
-      reason?: string;
-    }
-  ) {
+  async function actOnFactFlashcard(factId: string, action: "forget" | "teach") {
     if (!projectId) {
       return;
     }
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/draft-segments/${encodeURIComponent(segmentId)}`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      setManagementStatus({ tone: "error", message: body.detail ?? "The draft segment could not be updated." });
+    const teachNote = action === "teach" ? flashcardTeachNote[factId]?.trim() : "";
+    if (action === "teach" && !teachNote) {
+      setManagementStatus({
+        tone: "error",
+        message: "Add a short note for Delete and teach so we know what to avoid next time.",
+      });
       return;
     }
-    setWorkspace(body);
-    setKnowledgeDeleteReason((current) => ({ ...current, [segmentId]: "" }));
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/fact-chips/${encodeURIComponent(factId)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          teach_note: action === "teach" ? teachNote : undefined,
+        }),
+      }
+    );
+    const body = await response.json();
+    if (!response.ok) {
+      setManagementStatus({ tone: "error", message: body.detail ?? "Flashcard action failed." });
+      return;
+    }
+    setWorkspace((current) =>
+      current ? { ...current, fact_chips: current.fact_chips.filter((c) => c.fact_id !== factId) } : current
+    );
+    setFlashcardTeachNote((current) => {
+      const next = { ...current };
+      delete next[factId];
+      return next;
+    });
     setManagementStatus({
       tone: "success",
       message:
-        payload.status === "deleted_with_annotation"
-          ? "Draft segment deleted and recorded as guidance for future generations."
-          : payload.status === "held_for_later"
-            ? "Draft segment held for later."
-            : "Draft segment deleted.",
+        action === "teach"
+          ? "Recorded. We will steer away from this pattern when generating recommendations."
+          : "Removed from your view.",
     });
   }
 
@@ -1373,26 +1385,17 @@ export function DemoWorkspace() {
   const selectedTaskSignalScoreMap = new Map(
     (selectedTask?.supporting_signal_scores ?? []).map((item) => [item.signal_id, item])
   );
-  const selectedTaskDraftSegments = selectedTask
-    ? workspace?.draft_segments.filter(
-        (segment) =>
-          (
-            selectedTask.supporting_segment_ids?.includes(segment.segment_id) ||
-            selectedTask.evidence_refs.includes(`segment::${segment.segment_id}`) ||
-            selectedTask.evidence_refs.includes(segment.segment_id) ||
-            segment.evidence_refs.some((ref) => selectedTask.evidence_refs.includes(ref))
-          ) &&
-          (!taskScopedSourceRefs.length || segment.source_refs.some((ref) => taskScopedSourceRefs.includes(ref)))
-      ) ?? []
+  const selectedTaskFactChips = selectedTask
+    ? (workspace?.fact_chips ?? []).filter(
+        (chip) =>
+          !taskScopedSourceRefs.length || chip.source_refs.some((ref) => taskScopedSourceRefs.includes(ref))
+      )
     : [];
-  const selectedTaskSegmentScoreMap = new Map(
-    (selectedTask?.supporting_segment_scores ?? []).map((item) => [item.segment_id, item])
-  );
   const selectedTaskSourceRefs = Array.from(
     new Set([
       ...((selectedTask?.supporting_source_refs ?? []) as string[]),
       ...selectedTaskEvidence.map((activity) => activity.source_ref),
-      ...selectedTaskDraftSegments.flatMap((segment) => segment.source_refs),
+      ...selectedTaskFactChips.flatMap((chip) => chip.source_refs),
     ])
   );
   const selectedTaskSourceScoreMap = new Map(
@@ -1410,11 +1413,7 @@ export function DemoWorkspace() {
     const rightScore = selectedTaskSignalScoreMap.get(right.signal_id)?.relevance_score ?? 0;
     return rightScore - leftScore;
   });
-  const orderedTaskDraftSegments = [...selectedTaskDraftSegments].sort((left, right) => {
-    const leftScore = selectedTaskSegmentScoreMap.get(left.segment_id)?.relevance_score ?? 0;
-    const rightScore = selectedTaskSegmentScoreMap.get(right.segment_id)?.relevance_score ?? 0;
-    return rightScore - leftScore;
-  });
+  const orderedTaskFactChips = [...selectedTaskFactChips].sort((left, right) => right.confidence - left.confidence);
   const selectedTaskSteps = selectedTask
     ? buildExecutionSteps(
         selectedTask,
@@ -1422,7 +1421,7 @@ export function DemoWorkspace() {
       )
     : [];
   const selectedTaskHumanEvidence = selectedTask
-    ? buildHumanEvidenceChips(selectedTask, orderedTaskEvidence, orderedTaskDraftSegments, selectedTaskSources)
+    ? buildHumanEvidenceChips(selectedTask, orderedTaskEvidence, orderedTaskFactChips, selectedTaskSources)
     : [];
   const navigationItems: Array<{ view: AppView; label: string; description: string }> = [
     { view: "checklist", label: "Checklist", description: "Your next three moves" },
@@ -1434,7 +1433,7 @@ export function DemoWorkspace() {
     activeView === "checklist"
       ? `${tasks.length} ranked moves`
       : activeView === "know-more"
-        ? `${filteredKnowledgeCards.length} intelligence cards`
+        ? `${(workspace?.fact_chips?.length ?? 0) + filteredKnowledgeCards.length} knowledge items`
         : `${workspace?.source_cards.length ?? 0} monitored sources`;
 
   return (
@@ -1699,12 +1698,14 @@ export function DemoWorkspace() {
                     signal was strong enough yet to justify three high-confidence moves this week.
                   </p>
                   <p>{blockedReason}</p>
-                  {workspace?.draft_segments.length ? (
+                  {workspace?.fact_chips.length ? (
                     <div className="task-block">
-                      <span>What we still learned from this source</span>
+                      <span>Atomic facts we still hold from this source</span>
                       <ul>
-                        {workspace.draft_segments.slice(0, 3).map((segment) => (
-                          <li key={segment.segment_id}>{segment.segment_text}</li>
+                        {workspace.fact_chips.slice(0, 6).map((chip) => (
+                          <li key={chip.fact_id}>
+                            {humanizeFactCategory(chip.category)}: {chip.label}
+                          </li>
                         ))}
                       </ul>
                     </div>
@@ -1918,24 +1919,6 @@ export function DemoWorkspace() {
                     )}
                   </div>
 
-                  <div className="task-detail-list">
-                    <h3>Draft segments behind this task</h3>
-                    {orderedTaskDraftSegments.length ? (
-                      orderedTaskDraftSegments.map((segment) => (
-                        <div className="job-item" key={segment.segment_id}>
-                          <strong>{segment.title}</strong>
-                          <span>
-                            {supportStrengthLabel(selectedTaskSegmentScoreMap.get(segment.segment_id)?.relevance_score)} ·{" "}
-                            {humanizeFactCategory(segment.segment_kind)} · {confidenceLabel(segment.confidence)} (
-                            {segment.confidence.toFixed(2)})
-                          </span>
-                          <p>{segment.segment_text}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="surface-summary">No draft segments are linked to this task yet.</p>
-                    )}
-                  </div>
                 </div>
               ) : (
                 <div className="empty-state">
@@ -1958,7 +1941,9 @@ export function DemoWorkspace() {
                   <h2>Structured knowledge from the source set</h2>
                   <p className="section-subcopy">Know More is the knowledge surface. It stays useful even when the checklist is blocked.</p>
                 </div>
-                <span className="section-count-badge">{filteredKnowledgeCards.length} cards</span>
+                <span className="section-count-badge">
+                  {workspace?.fact_chips.length ?? 0} flashcards · {filteredKnowledgeCards.length} cards
+                </span>
               </div>
               {focusedSourceRef ? (
                 <div className="notice success">
@@ -2015,136 +2000,66 @@ export function DemoWorkspace() {
               {workspace?.fact_chips.length ? (
                 <article className="intel-card">
                   <div className="operator-head">
-                    <h3>Business Facts In Play</h3>
-                    <span>{workspace.fact_chips.length} normalized facts</span>
+                    <h3>Knowledge flashcards</h3>
+                    <span>{workspace.fact_chips.length} atomic facts</span>
                   </div>
-                  <p>These chips are business facts we normalized from the current source set. They feed the knowledge cards and future checklist moves.</p>
-                  <div className="evidence-chip-list">
-                    {workspace.fact_chips.map((chip) => (
-                      <button
-                        className={`evidence-chip ${classifyOriginFromSourceRefs(chip.source_refs, autoCollectedSourceRefs)}`}
-                        key={chip.fact_id}
-                        type="button"
-                        onClick={() => setFocusedSourceRef(chip.source_refs[0] ?? null)}
-                      >
-                        {humanizeFactCategory(chip.category)}: {chip.label}
-                      </button>
-                    ))}
-                  </div>
-                </article>
-              ) : null}
-
-              {workspace?.draft_segments.length ? (
-                <article className="intel-card">
-                  <div className="operator-head">
-                    <h3>Draft Knowledge Segments</h3>
-                    <span>{workspace.draft_segments.length} segments</span>
-                  </div>
-                  <p>
-                    These are the editable draft segments the drafter built from the full source set. The writer uses
-                    them to create business-value tasks, and the judge decides which move should surface first.
+                  <p className="section-subcopy" style={{ marginTop: 0 }}>
+                    Each flashcard is the smallest unit of knowledge we store and use when recommending your next best
+                    actions. Only two operations are supported here, as agreed.
                   </p>
-                  <div className="intel-columns">
-                    {workspace.draft_segments.slice(0, 8).map((segment) => (
+                  <div className="flashcard-deck">
+                    {workspace.fact_chips.map((chip) => (
                       <article
-                        className={`intel-card mini ${classifyOriginFromSourceRefs(segment.source_refs, autoCollectedSourceRefs)}`}
-                        key={segment.segment_id}
+                        className={`intel-card mini flashcard ${classifyOriginFromSourceRefs(chip.source_refs, autoCollectedSourceRefs)}`}
+                        key={chip.fact_id}
                       >
                         <div className="operator-head">
-                          <h3>{segment.title}</h3>
+                          <h3>{humanizeFactCategory(chip.category)}</h3>
                           <span>
-                            {humanizeFactCategory(segment.segment_kind)} · {confidenceLabel(segment.confidence)} (
-                            {segment.confidence.toFixed(2)})
+                            {confidenceLabel(chip.confidence)} ({chip.confidence.toFixed(2)})
                           </span>
                         </div>
-                        <p className="surface-summary">{originLabel(classifyOriginFromSourceRefs(segment.source_refs, autoCollectedSourceRefs))}</p>
-                        <p>{segment.segment_text}</p>
-                        <div className="summary-stack">
-                          <div className="summary-row">
-                            <span>Importance</span>
-                            <strong>{segment.importance.toFixed(2)}</strong>
-                          </div>
-                          <div className="summary-row">
-                            <span>Source refs</span>
-                            <strong>{segment.source_refs.length}</strong>
-                          </div>
-                        </div>
-                        <div className="task-actions">
+                        <p className="surface-summary">{originLabel(classifyOriginFromSourceRefs(chip.source_refs, autoCollectedSourceRefs))}</p>
+                        <p className="flashcard-body">{chip.label}</p>
+                        {chip.source_refs[0] ? (
                           <button
-                            className="decision-button reject"
+                            className="button-secondary flashcard-source-link"
                             type="button"
-                            onClick={() =>
-                              void deleteDraftSegment(segment.segment_id, {
-                                status: "deleted_silent",
-                                original_payload: {
-                                  title: segment.title,
-                                  summary: segment.segment_text,
-                                  segment_kind: segment.segment_kind,
-                                  source_refs: segment.source_refs,
-                                },
-                              })
-                            }
+                            onClick={() => setFocusedSourceRef(chip.source_refs[0] ?? null)}
                           >
-                            Delete
+                            View linked source
+                          </button>
+                        ) : null}
+                        <div className="task-actions compact-actions flashcard-actions">
+                          <button
+                            className="decision-button"
+                            type="button"
+                            onClick={() => void actOnFactFlashcard(chip.fact_id, "forget")}
+                          >
+                            Delete and forget
                           </button>
                           <button
                             className="decision-button reject"
                             type="button"
-                            onClick={() =>
-                              void deleteDraftSegment(segment.segment_id, {
-                                status: "deleted_with_annotation",
-                                original_payload: {
-                                  title: segment.title,
-                                  summary: segment.segment_text,
-                                  segment_kind: segment.segment_kind,
-                                  source_refs: segment.source_refs,
-                                },
-                                reason: knowledgeDeleteReason[segment.segment_id]?.trim() || undefined,
-                              })
-                            }
+                            onClick={() => void actOnFactFlashcard(chip.fact_id, "teach")}
                           >
                             Delete and teach
                           </button>
-                          <button
-                            className="decision-button adjust"
-                            type="button"
-                            onClick={() =>
-                              void deleteDraftSegment(segment.segment_id, {
-                                status: "held_for_later",
-                                original_payload: {
-                                  title: segment.title,
-                                  summary: segment.segment_text,
-                                  segment_kind: segment.segment_kind,
-                                  source_refs: segment.source_refs,
-                                },
-                                reason: knowledgeDeleteReason[segment.segment_id]?.trim() || undefined,
-                              })
-                            }
-                          >
-                            Hold for later
-                          </button>
-                          {segment.source_refs[0] ? (
-                            <button
-                              className="decision-button reject"
-                              type="button"
-                              onClick={() => void deleteIngestedSource(segment.source_refs[0])}
-                            >
-                              Remove source and rebuild
-                            </button>
-                          ) : null}
                         </div>
                         <div className="adjust-shell">
-                          <label htmlFor={`segment-reason-${segment.segment_id}`}>What should We avoid?</label>
+                          <label htmlFor={`flashcard-teach-${chip.fact_id}`}>
+                            For <strong>Delete and teach</strong>: what should we avoid next time? (negative signal)
+                          </label>
                           <textarea
-                            id={`segment-reason-${segment.segment_id}`}
-                            value={knowledgeDeleteReason[segment.segment_id] ?? ""}
+                            id={`flashcard-teach-${chip.fact_id}`}
+                            value={flashcardTeachNote[chip.fact_id] ?? ""}
                             onChange={(event) =>
-                              setKnowledgeDeleteReason((current) => ({
+                              setFlashcardTeachNote((current) => ({
                                 ...current,
-                                [segment.segment_id]: event.target.value,
+                                [chip.fact_id]: event.target.value,
                               }))
                             }
-                            placeholder="Optional for Delete and teach or Hold for later."
+                            placeholder="Neutral wrong or irrelevant facts use Delete and forget only. Use this field when the fact is harmful or misleading and similar patterns should be avoided."
                           />
                         </div>
                       </article>

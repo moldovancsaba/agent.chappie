@@ -44,6 +44,8 @@ type MemoryState = {
   feedback: Map<string, Feedback>;
   queue: Map<string, QueuedJobRecord>;
   workspaces: Map<string, Record<string, unknown>>;
+  /** projectId -> factId -> dismiss/teach record (both remove chip from UI) */
+  factFlashcardActions: Map<string, Map<string, { action: "forget" | "teach"; teach_note?: string | null }>>;
 };
 
 declare global {
@@ -59,7 +61,10 @@ function memoryState(): MemoryState {
       feedback: new Map(),
       queue: new Map(),
       workspaces: new Map(),
+      factFlashcardActions: new Map(),
     };
+  } else if (!globalThis.__agentChappieDemoState__.factFlashcardActions) {
+    globalThis.__agentChappieDemoState__.factFlashcardActions = new Map();
   }
   return globalThis.__agentChappieDemoState__;
 }
@@ -105,6 +110,16 @@ async function ensureQueueSchema() {
       project_id text primary key references demo_projects(project_id) on delete cascade,
       payload jsonb not null,
       updated_at timestamptz not null default now()
+    )
+  `;
+  await sql`
+    create table if not exists demo_fact_flashcard_actions (
+      project_id text not null references demo_projects(project_id) on delete cascade,
+      fact_id text not null,
+      action text not null check (action in ('forget', 'teach')),
+      teach_note text,
+      created_at timestamptz not null default now(),
+      primary key (project_id, fact_id)
     )
   `;
   queueSchemaEnsured = true;
@@ -426,6 +441,65 @@ export async function getWorkspaceSnapshot(projectId: string): Promise<Record<st
     limit 1
   `) as Array<{ payload: Record<string, unknown> }>;
   return rows[0]?.payload ?? null;
+}
+
+export type FactFlashcardClientAction = "forget" | "teach";
+
+export async function recordFactFlashcardAction(
+  projectId: string,
+  factId: string,
+  action: FactFlashcardClientAction,
+  teachNote?: string | null
+) {
+  if (!canUseNeon()) {
+    let byProject = memoryState().factFlashcardActions.get(projectId);
+    if (!byProject) {
+      byProject = new Map();
+      memoryState().factFlashcardActions.set(projectId, byProject);
+    }
+    byProject.set(factId, { action, teach_note: teachNote?.trim() || null });
+    return;
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  const note = action === "teach" ? teachNote?.trim() ?? null : null;
+  await sql`
+    insert into demo_fact_flashcard_actions (project_id, fact_id, action, teach_note)
+    values (${projectId}, ${factId}, ${action}, ${note})
+    on conflict (project_id, fact_id) do update
+      set action = excluded.action,
+          teach_note = excluded.teach_note,
+          created_at = now()
+  `;
+}
+
+export async function getHiddenFactChipIds(projectId: string): Promise<Set<string>> {
+  if (!canUseNeon()) {
+    const inner = memoryState().factFlashcardActions.get(projectId);
+    return new Set(inner ? [...inner.keys()] : []);
+  }
+  await ensureQueueSchema();
+  const sql = sqlClient();
+  const rows = (await sql`
+    select fact_id
+    from demo_fact_flashcard_actions
+    where project_id = ${projectId}
+  `) as Array<{ fact_id: string }>;
+  return new Set(rows.map((row) => row.fact_id));
+}
+
+export async function filterWorkspaceHiddenFactChips<T extends { fact_chips: Array<{ fact_id: string }> }>(
+  projectId: string,
+  workspace: T
+): Promise<T> {
+  const hidden = await getHiddenFactChipIds(projectId);
+  if (!hidden.size || !workspace.fact_chips?.length) {
+    return workspace;
+  }
+  return {
+    ...workspace,
+    fact_chips: workspace.fact_chips.filter((chip) => !hidden.has(chip.fact_id)),
+  };
 }
 
 export function normalizeStoredJobResult(result: JobResult): JobResult {
