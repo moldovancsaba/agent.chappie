@@ -316,7 +316,7 @@ def _row_to_card_score(
         "source_refs": source_refs,
         "segment": "signals",
         "competitor": None,
-        "channel": "mlx_trinity",
+        "channel": "key buyer-facing pages",
         "state": "quarantine" if quarantined else "candidate",
         "expires_at": expires_iso,
     }
