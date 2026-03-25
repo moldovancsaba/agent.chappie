@@ -2,6 +2,8 @@
 
 Use this when the hosted app talks to **Neon only** and the Mac Mini **pulls** jobs (no Cloudflare, no `AGENT_API_BASE_URL` on Vercel).
 
+**End-to-end narrative (upload → Trinity flashcards → Know More → 3 tasks → webapp):** see the canonical section **“Webapp input → automatic tasks (end-to-end)”** in [`consultant_followup_web.md`](consultant_followup_web.md). This file covers **env + the three HTTP steps** only.
+
 Generate one long random secret (for example `openssl rand -hex 32`) and use the **same** value for `WORKER_QUEUE_SHARED_SECRET` on Vercel and on the Mac.
 
 ---

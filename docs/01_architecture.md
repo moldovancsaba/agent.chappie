@@ -179,6 +179,28 @@ The current foundation also includes persisted atomic `evidence_units` in the lo
 - multiple sources may strengthen one knowledge card
 The frontend may display draft segments, written tasks, and judged metadata, but it must not generate them.
 
+### MLX Trinity (flashcard intelligence path)
+
+The worker may run an additional **MLX Trinity** pipeline for **intelligence cards**: three small **local** models (drafter → writer → judge) via **MLX-LM**, with JSON handoffs and fused confidence/impact scores. This path is **orthogonal** to the governed orchestrator triad (`StructuredTaskObject` / `ExecutionPlan` / `DecisionRecord`); it applies to **consultant `process_job_payload`** flashcard generation when enabled by environment.
+
+**Documentation:**
+
+- Low-level design, env vars, queue API, SQLite shapes: [`docs/trinity_architecture.md`](trinity_architecture.md)
+- Portable concept + **Appendix A** (committed plan IDs): [`docs/trinity_flow.md`](trinity_flow.md)
+- **Web upload → queue consumer → flashcards → Know More → three tasks in the browser:** [`docs/07_runbooks/consultant_followup_web.md`](07_runbooks/consultant_followup_web.md) § *Webapp input → automatic tasks (end-to-end)*
+
+**Committed implementation plan (architecture direction):**
+
+| ID | Status | Focus |
+| --- | --- | --- |
+| IMP-01 | Shipped | Trinity **healthcheck** script and optional preflight |
+| IMP-02 | Shipped | **Quarantine / reason codes** (SQLite rows + `flashcard_pipeline_runs` + `drop_reason_counts`) |
+| IMP-03 | Shipped | **Hybrid Judge** (rules after LLM) |
+| IMP-04 | Shipped | **Fallback transparency** + **`trinity_strict_blocked`** + workspace pipeline summary |
+| IMP-07 | Shipped | **Timeout / stall** — thread pool and/or **`TRINITY_SUBPROCESS`** hard kill |
+
+**Deferred roadmap:** deepen TR-R05–TR-R09 (resume, section repair, full UI, multi-candidate) — see [`docs/03_roadmap.md`](03_roadmap.md) (*Trinity extended roadmap*).
+
 ## Layered platform boundary
 
 Agent.Chappie is now documented as three layers with explicit boundaries.

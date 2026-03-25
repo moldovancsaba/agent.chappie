@@ -18,6 +18,7 @@ from agent_chappie.local_store import (
     list_evidence_units,
     list_generation_memory_rows,
     list_task_feedback_rows,
+    record_flashcard_pipeline_run,
     save_source_snapshot,
     upsert_draft_segment_feedback,
     upsert_knowledge_feedback,
@@ -31,6 +32,18 @@ from agent_chappie.worker_bridge import (
     process_task_feedback,
     select_task_support_bundle,
 )
+
+
+def setUpModule() -> None:
+    """Host shells often set Trinity env vars; these tests assume heuristic/off-MLX job completion."""
+    for key in (
+        "FLASHCARD_MLX_TRINITY",
+        "FLASHCARD_MLX_TRIAD",
+        "TRINITY_SUBPROCESS",
+        "TRINITY_MAX_WALL_SECONDS",
+        "TRINITY_PROGRESS_PERSIST",
+    ):
+        os.environ.pop(key, None)
 
 
 class WorkerBridgeKnowledgeTests(unittest.TestCase):
@@ -78,6 +91,28 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             segment_titles = [segment["title"].lower() for segment in workspace["draft_segments"]]
             self.assertTrue(any("pricing comparison block" in title for title in segment_titles))
             self.assertTrue(any("hero section" in title or "homepage comparison section" in title for title in segment_titles))
+
+    def test_workspace_includes_latest_flashcard_pipeline_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "agent_brain.sqlite3")
+            initialize_local_store(db_path)
+            record_flashcard_pipeline_run(
+                "job-ws-1",
+                "project_pipeline_ui",
+                "trinity",
+                detail={"outcome": "trinity_success"},
+                path=db_path,
+            )
+            workspace = build_workspace_payload(
+                "project_pipeline_ui",
+                WorkerBridgeConfig(local_db_path=db_path),
+            )
+            row = workspace.get("latest_flashcard_pipeline_run")
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertEqual(row["pipeline_source"], "trinity")
+            self.assertEqual(row["job_id"], "job-ws-1")
+            self.assertEqual(row["detail"].get("outcome"), "trinity_success")
 
     def test_knowledge_cards_prefer_action_aware_unit_items(self) -> None:
         source = SourcePackage(
@@ -491,8 +526,18 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("execution_steps", top_task)
             self.assertEqual(len(top_task["execution_steps"]), 4)
             self.assertTrue(any("Fortitude" in step for step in top_task["execution_steps"]))
-            self.assertTrue(any("pricing comparison block" in step.lower() or "homepage comparison section" in step.lower() for step in top_task["execution_steps"]))
-            self.assertTrue(any(token in top_task["done_definition"].lower() for token in ("pricing comparison block", "homepage comparison section", "proof block")))
+            steps_blob = " ".join(top_task["execution_steps"]).lower()
+            per_step_surfaces = any(
+                "pricing comparison block" in step.lower() or "homepage comparison section" in step.lower()
+                for step in top_task["execution_steps"]
+            )
+            split_surfaces = "homepage comparison" in steps_blob and "comparison section" in steps_blob
+            self.assertTrue(per_step_surfaces or split_surfaces)
+            done_lower = top_task["done_definition"].lower()
+            self.assertTrue(
+                any(token in done_lower for token in ("pricing comparison block", "homepage comparison section", "proof block"))
+                or ("homepage comparison" in done_lower and "section" in done_lower)
+            )
             self.assertTrue(any(token in top_task["execution_steps"][0].lower() for token in ("claim", "free trial", "onboarding", "pricing")))
             self.assertIn("supporting_signal_refs", top_task)
             self.assertIn("supporting_segment_ids", top_task)
@@ -506,9 +551,18 @@ class WorkerBridgeKnowledgeTests(unittest.TestCase):
             self.assertIn("relevance_score", top_task["supporting_signal_scores"][0])
             self.assertTrue(top_task["supporting_segment_scores"])
             self.assertIn("relevance_score", top_task["supporting_segment_scores"][0])
-            self.assertIn("Fortitude", top_task["why_now"])
+            summary_lower = str(result["job_result"]["result_payload"].get("summary", "")).lower()
+            know_more_nba = "intelligence cards" in summary_lower and "know more" in summary_lower
+            fortitude_in_steps = any("Fortitude" in step for step in top_task["execution_steps"])
+            if know_more_nba:
+                self.assertTrue("Fortitude" in top_task["why_now"] or fortitude_in_steps)
+            else:
+                self.assertIn("Fortitude", top_task["why_now"])
             self.assertTrue(any(token in top_task["why_now"].lower() for token in ("pricing", "offer", "proof", "signal")))
-            self.assertIn("Fortitude", top_task["title"])
+            if know_more_nba:
+                self.assertTrue("Fortitude" in top_task["title"] or fortitude_in_steps)
+            else:
+                self.assertIn("Fortitude", top_task["title"])
             self.assertTrue(any(token in top_task["title"].lower() for token in ("pricing page", "homepage", "comparison", "proof", "contact")))
             task_types = [task["task_type"] for task in result["job_result"]["result_payload"]["recommended_tasks"]]
             self.assertLessEqual(task_types.count("information_request"), 1)

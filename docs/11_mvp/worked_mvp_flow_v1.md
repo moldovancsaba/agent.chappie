@@ -129,3 +129,7 @@ The independent consultant uploads meeting notes from a client project review an
 - the scheduler owns interpretation and ordering
 - the core owns execution
 - no app implementation details are pushed into the core
+
+## Implementation mapping (consultant web + queue)
+
+In the **3steps** app, “scheduler / core” for `followup_task_recommendation` is implemented as: **Next.js enqueues** → **Neon `demo_job_queue`** → **`worker_queue_consumer.py` claims** → **`process_job_payload`** (local SQLite + optional Trinity MLX) → **`JobResult` with `recommended_tasks`**. See [`docs/07_runbooks/consultant_followup_web.md`](../07_runbooks/consultant_followup_web.md) § *Webapp input → automatic tasks (end-to-end)* and [`docs/07_runbooks/vercel_mac_queue_env.md`](../07_runbooks/vercel_mac_queue_env.md).

@@ -14,6 +14,17 @@ This is the first thin app layer for Agent.Chappie. It exists to exercise the ac
 - accepts a pasted URL, raw text block, or extracted file text as raw source material
 - submits one `Job Request v1`
 - retrieves one `Job Result v1`
+
+### Automatic pipeline: browser submission → three tasks
+
+The app **does not** compute tasks in the browser or in Next.js logic. Anything that becomes **`recommended_tasks`** flows through a **worker job**:
+
+1. **Enqueue** — `POST /api/jobs` (main composer) or `POST /api/projects/{projectId}/sources` (when `AGENT_BRIDGE_MODE=queue`) calls **`enqueueJobForWorker`**, which writes **`demo_job_queue`** (Neon) or the in-memory queue (local dev).
+2. **Pull + process** — `scripts/worker_queue_consumer.py` claims the job, runs **`process_job_payload`** on the Mac (SQLite brain), including **Trinity or heuristic flashcards → intelligence cards**, **Know More** workspace fields, and **NBA task materialization** from ranked cards when valid.
+3. **Persist + sync** — Consumer posts **`/api/worker/jobs/{id}/complete`** (stores `JobResult`) and **`/api/worker/projects/{id}/workspace`** (intelligence cards, segments, etc.).
+4. **Display** — The UI polls **`GET /api/jobs/{jobId}`** until the job completes; checklist tasks may show **From {knowmore}** when **`intel_card_id`** is set.
+
+Full step table and prerequisites: [`docs/07_runbooks/consultant_followup_web.md`](../07_runbooks/consultant_followup_web.md) § *Webapp input → automatic tasks (end-to-end)*.
 - submits task-level feedback via **[`feedback_v2.md`](../09_contracts/feedback_v2.md)** (unified `action_type` envelope); historical `Feedback v1` shapes may still appear in older examples
 - presents the product as a single decision surface, not a dashboard
 

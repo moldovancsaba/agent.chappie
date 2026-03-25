@@ -1,0 +1,12 @@
+[
+  {
+    "text": "Regional competitor launched a limited-time discount in March.",
+    "d_conf": 0.85,
+    "d_impact": 0.7
+  },
+  {
+    "text": "Membership fees increased for the U14 academy tier.",
+    "d_conf": 0.9,
+    "d_impact": 0.65
+  }
+]

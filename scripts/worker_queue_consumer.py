@@ -20,6 +20,7 @@ from agent_chappie.worker_bridge import (
     load_config,
     process_job_payload,
 )
+from agent_chappie.worker_logging import configure_worker_logging
 
 
 def _required_env(name: str) -> str:
@@ -57,6 +58,7 @@ def _request_json(
 
 
 def main() -> None:
+    configure_worker_logging()
     api_base = _required_env("APP_QUEUE_BASE_URL").rstrip("/")
     secret = _required_env("WORKER_QUEUE_SHARED_SECRET")
     sleep_seconds = int(os.environ.get("WORKER_QUEUE_POLL_SECONDS", "3"))

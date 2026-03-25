@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { feedbackSchema, type JobRequest, type JobResult, type RecommendedTask } from "@/lib/contracts";
 import { generateId } from "@/lib/ids";
@@ -101,6 +101,8 @@ type WorkspaceSnapshot = {
     freshness_score: number;
     evidence_strength: number;
     rank_score: number;
+    quarantine_reason?: string | null;
+    gate_flags?: string[];
   }>;
   visible_intelligence_cards: Array<{
     card_id: string;
@@ -120,7 +122,18 @@ type WorkspaceSnapshot = {
     freshness_score: number;
     evidence_strength: number;
     rank_score: number;
+    quarantine_reason?: string | null;
+    gate_flags?: string[];
   }>;
+  latest_flashcard_pipeline_run?: {
+    run_id: string;
+    job_id: string;
+    project_id: string;
+    pipeline_source: string;
+    reason: string;
+    detail: Record<string, unknown>;
+    created_at: string;
+  } | null;
   draft_segments: Array<{
     segment_id: string;
     project_id: string;
@@ -1537,6 +1550,10 @@ export function DemoWorkspace() {
     workspace && workspace.visible_intelligence_cards.length
       ? workspace.visible_intelligence_cards
       : [];
+  const quarantinedFlashcards = useMemo(
+    () => (workspace?.intelligence_cards ?? []).filter((c) => c.state === "quarantine"),
+    [workspace?.intelligence_cards],
+  );
   const taskScopedSourceRefs = selectedTask?.supporting_source_refs ?? [];
   const selectedTaskEvidence = selectedTask
     ? workspace?.recent_activity.filter(
@@ -1729,6 +1746,18 @@ export function DemoWorkspace() {
                             <div className="task-meta">Best before: {task.best_before ?? "This week"}</div>
                             <div className="task-meta">Confidence: {confidenceLabel(confidence)}{confidence !== undefined ? ` (${confidence.toFixed(2)})` : ""}</div>
                             {task.is_next_best_action ? <div className="task-meta nba">Next best action</div> : null}
+                            {task.intel_card_id ? (
+                              <div className="task-meta">
+                                <button
+                                  type="button"
+                                  className="intel-from-knowmore-pill"
+                                  onClick={() => setActiveView("know-more")}
+                                  title={`Intelligence card ${task.intel_card_id} — open ${"{knowmore}"} to see the source card`}
+                                >
+                                  From {"{knowmore}"}
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                           <div className="task-block impact">
                             <span>Expected impact</span>
@@ -2064,6 +2093,18 @@ export function DemoWorkspace() {
                   <span className="section-kicker">{"{knowmore}"}</span>
                   <h2>Structured knowledge flashcards from the sources</h2>
                   <p className="section-subcopy">{"{knowmore}"} is useful even when the checklist is blocked.</p>
+                  {workspace?.latest_flashcard_pipeline_run ? (
+                    <p className="section-subcopy" style={{ marginTop: "0.35rem" }}>
+                      Flashcard pipeline:{" "}
+                      <strong>{workspace.latest_flashcard_pipeline_run.pipeline_source}</strong>
+                      {workspace.latest_flashcard_pipeline_run.reason
+                        ? ` · ${workspace.latest_flashcard_pipeline_run.reason}`
+                        : ""}{" "}
+                      <span className="surface-summary">
+                        (job {workspace.latest_flashcard_pipeline_run.job_id})
+                      </span>
+                    </p>
+                  ) : null}
                 </div>
                 <span className="section-count-badge">
                   {workspace?.fact_chips.length ?? 0} flashcards · {filteredKnowledgeCards.length} cards
@@ -2181,6 +2222,35 @@ export function DemoWorkspace() {
                             </div>
                           </div>
                         ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </article>
+              ) : null}
+
+              {quarantinedFlashcards.length ? (
+                <article className="intel-card" style={{ marginTop: "1rem" }}>
+                  <div className="operator-head">
+                    <h3>Quarantined flashcards</h3>
+                    <span>
+                      {quarantinedFlashcards.length} not promoted (rank 0 · audit only)
+                    </span>
+                  </div>
+                  <p className="section-subcopy" style={{ marginTop: 0 }}>
+                    These rows are kept for transparency when Trinity or scoring gates reject a candidate. They are excluded
+                    from the visible top 20% and from next-best-action tasks.
+                  </p>
+                  <div className="flashcard-deck">
+                    {quarantinedFlashcards.map((card) => (
+                      <article className="intel-card mini flashcard" key={card.card_id}>
+                        <div className="operator-head">
+                          <h3>Quarantine</h3>
+                          <span className="surface-summary">
+                            {card.quarantine_reason ?? "quarantine"} · {card.channel ?? "—"}
+                          </span>
+                        </div>
+                        <p className="flashcard-body">{card.insight}</p>
+                        <p className="surface-summary">{card.implication}</p>
                       </article>
                     ))}
                   </div>

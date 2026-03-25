@@ -16,7 +16,7 @@ For job submission, the app now follows:
 
 `Vercel app/API -> durable database queue -> Mac mini worker consumer -> result written back to DB -> app polls result`
 
-`POST /api/jobs` enqueues only. It does not synchronously execute the worker.
+`POST /api/jobs` **only enqueues** (`enqueueJobForWorker` → in-memory queue or Neon `demo_job_queue`). It does **not** run the Python worker inside Next.js. A **queue consumer** (`scripts/worker_queue_consumer.py`) must claim jobs and call `process_job_payload`; see **[Webapp input → automatic tasks](#webapp-input--automatic-tasks-end-to-end)** below.
 
 ### Production without Cloudflare (no inbound tunnel)
 
@@ -34,6 +34,35 @@ Workspace panels in the browser are synthesized from the latest stored `JobResul
 
 **Ready-to-paste env blocks:** [`vercel_mac_queue_env.md`](vercel_mac_queue_env.md).
 
+### Webapp input → automatic tasks (end-to-end)
+
+This is the **only** path from “something the operator adds in the browser” to **three `recommended_tasks`** in `JobResult v1`, for the shipped consultant app.
+
+| Operator action (UI) | Next.js route | What gets stored | Who produces tasks |
+| --- | --- | --- | --- |
+| **First-run / main composer:** paste URL, text, or upload a file and run | `POST /api/jobs` | `demo_jobs` row + **`demo_job_queue`** row (`job_request` + `source_package`: raw text, optional base64 file) | Mac (or any host) running **`worker_queue_consumer.py`**: `process_job_payload` |
+| **Sources & Jobs:** add source (same modes: URL / text / file) while `AGENT_BRIDGE_MODE=queue` | `POST /api/projects/{projectId}/sources` | Same queue shape; `source_ref` like `managed_source_*` | Same consumer |
+
+**Not automatic (no new three-task generation by itself):**
+
+- Editing knowledge cards, deleting/holding segments, or task feedback **without** a new ingestion job: those paths update feedback or call regeneration APIs where implemented; they do **not** replace the queue+consumer contract above.
+- `AGENT_BRIDGE_MODE=queue`: CRUD on sources/jobs that would require **direct HTTP** to `worker_bridge.py` on the Mac is **blocked** in the hosted app (see `describeDirectWorkerBlock()`). **Adding a source via the queue path still enqueues a full processing job** and is the supported way to refresh checklist + workspace on production.
+
+**Inside `process_job_payload` (single job run):**
+
+1. **Ingest** — Normalize `source_package` into snapshots, observations, facts, evidence units (local SQLite `AGENT_LOCAL_DB_PATH`).
+2. **Flashcards / {trinity}** — When `FLASHCARD_MLX_TRINITY=1`, Trinity MLX builds **intelligence cards**; otherwise heuristic cards (strict prod may **block** if Trinity is mandatory and fallback is off). Cards are scored, stored, and **top 20%** drive “visible” cards; **all scored cards** feed ranking. See [`trinity_architecture.md`](../trinity_architecture.md).
+3. **{knowmore} corpus** — `knowledge_cards`, `draft_segments`, and **`intelligence_cards`** are written; workspace sync sends them to the hosted app (`POST /api/worker/projects/{projectId}/workspace`).
+4. **Three tasks** — The worker builds a segment-style checklist, then **when valid**, replaces the result with **NBA tasks materialized from ranked intelligence cards**: each top card becomes a synthetic segment → **`segment_to_task`** (same execution steps / validation as the normal checklist) → **`judge_tasks`**, with ordering biased toward primary-signal competitors and comparison-surface language. Tasks may include **`intel_card_id`** and `evidence_refs` entries `intel_card::{id}`; the web checklist shows **From {knowmore}** when `intel_card_id` is present.
+5. **Back to the webapp** — Consumer **`POST`s `/api/worker/jobs/{job_id}/complete`** with `job_result` (Neon `demo_job_results`). The UI polls **`GET /api/jobs/{job_id}`** until status is no longer 202 queued.
+
+**Requirements for “upload a document → tasks appear”:**
+
+- `DEMO_STORAGE_MODE=neon` + `DATABASE_URL` on Vercel (or memory queue for local-only dev with consumer pointed at `localhost`).
+- `AGENT_BRIDGE_MODE=queue` on production.
+- **`WORKER_QUEUE_SHARED_SECRET`** matching on Vercel and the consumer host.
+- Consumer running with `APP_QUEUE_BASE_URL`, `AGENT_LOCAL_DB_PATH`, and (for Trinity) MLX env vars documented in [`trinity_architecture.md`](../trinity_architecture.md).
+
 ### Mac watchdog: queue consumer health
 
 LaunchAgent **`com.agentchappie.watchdog`** runs `scripts/watchdog_agent.py` on an interval (see `ops/com.agentchappie.watchdog.plist`). Flags:
@@ -44,6 +73,8 @@ LaunchAgent **`com.agentchappie.watchdog`** runs `scripts/watchdog_agent.py` on 
 After pulling repo changes to the plist, re-run **`scripts/install_services.sh`**. Exit codes from the script: **4** = no consumer; **5** = duplicate consumers (should clear after remediation). See also [`docs/02_stack.md`](../02_stack.md) for **exact LLM vs non-LLM** roles (orchestrator Ollama drafter/writer/judge vs deterministic consultant worker).
 
 ## Card intelligence pipeline (source -> facts -> cards -> scores -> tasks)
+
+**MLX Trinity (optional):** When `FLASHCARD_MLX_TRINITY=1`, flashcards are produced by the local three-model Trinity path. **Heuristic fallback is off by default:** set `AGENT_ALLOW_HEURISTIC_FLASHCARDS=1` on dev machines if Trinity fails (MLX missing, timeout, empty rows) and you still want legacy heuristic cards instead of a **blocked** job. **Hard timeout kill:** set `TRINITY_SUBPROCESS=1` with `TRINITY_MAX_WALL_SECONDS>0` to run Trinity in a child process (see [`trinity_architecture.md`](../trinity_architecture.md) §8). **Preflight:** `python3 scripts/trinity_healthcheck.py` (optional `--quick`). Architecture, env tables, and roadmap: [`docs/trinity_architecture.md`](../trinity_architecture.md), [`docs/trinity_flow.md`](../trinity_flow.md) Appendix A, [`docs/03_roadmap.md`](../03_roadmap.md).
 
 The worker now runs a strict three-layer flow:
 
@@ -117,16 +148,20 @@ Visibility rule:
 }
 ```
 
-**Final task output (NBA weighted from all cards)**
+**Final task output (NBA from intelligence cards, materialized like segment tasks)**
+
+Ranked cards are turned into **`recommended_tasks`** via **`build_nba_tasks_from_intelligence_cards`**: synthetic draft segment per card → **`segment_to_task`** → **`judge_tasks`**. Shapes match the full checklist task (e.g. `execution_steps`, `target_channel`, `intel_card_id` when card-sourced). If NBA materialization cannot yield three validated tasks, the worker keeps the **segment checklist** result instead.
 
 ```json
 {
   "rank": 1,
-  "title": "Test one recurring offer variant for the highest-likelihood segment.",
-  "why_now": "Recurring pricing can be a potential asymmetry if buyer fit and onboarding friction are handled.",
-  "expected_advantage": "Weighted by confidence 0.82, impact 78, and urgency.",
-  "evidence_refs": ["fact::...::subscription_model_present", "managed_source_src_..."],
-  "best_before": "2026-03-29"
+  "title": "Add pricing comparison block and onboarding FAQ on pricing page this week before …",
+  "why_now": "We detected pricing or onboarding pressure tied to …",
+  "expected_advantage": "Increases conversion for active buyers this week by answering …",
+  "evidence_refs": ["…", "intel_card::card:…"],
+  "intel_card_id": "card:…",
+  "best_before": "2026-03-27",
+  "execution_steps": ["…", "…", "…", "…"]
 }
 ```
 
@@ -149,6 +184,29 @@ Visibility rule:
 
 3. If jobs remain queued, verify worker API auth secret matches between Vercel and Mac worker consumer (`WORKER_QUEUE_SHARED_SECRET`).
 4. If queue claim succeeds but completion fails, inspect consumer output for `complete` / `fail` callback errors.
+
+## Troubleshooting: `{knowmore}` flashcards are empty
+
+In the **{knowmore}** tab, the UI shows:
+
+- a flashcard pipeline line (`Flashcard pipeline: …`) from `latest_flashcard_pipeline_run`
+- a visible flashcard deck (top 20% · `state === "active"`)
+- an optional “Quarantined flashcards” deck (`state === "quarantine"`)
+
+Use this to pinpoint the failure:
+
+1. Check the pipeline line in the UI:
+   - `pipeline_source: trinity_disabled`: heuristic flashcards were used; you should see visible flashcards.
+   - `pipeline_source: heuristic_fallback`: Trinity was on but failed; heuristic fallback generated cards; you should see cards.
+   - `pipeline_source: trinity_strict_blocked`: Trinity is enabled and heuristic fallback is forbidden; the worker returned no usable cards, so **{knowmore} can be empty**.
+2. If the pipeline line shows `trinity_strict_blocked`:
+   - fix MLX/Trinity readiness, or
+   - allow heuristic fallback on the Mac worker by setting `AGENT_ALLOW_HEURISTIC_FLASHCARDS=1`, or
+   - disable Trinity by unsetting `FLASHCARD_MLX_TRINITY`.
+3. If the pipeline line shows `trinity_disabled` / `heuristic_fallback` but still no flashcards:
+   - confirm the Mac worker queue consumer is running (`scripts/worker_queue_consumer.py`)
+   - confirm workspace sync succeeds in the consumer logs (`[sync] workspace pushed …`)
+   - verify your job finishes with `scheduler_state: complete` in `GET /api/jobs/{job_id}`.
 
 ## Local development
 
@@ -314,10 +372,10 @@ launchctl kickstart -k gui/$(id -u)/com.agentchappie.worker
 - framework: Next.js
 - keep the Mac mini worker private
 - **Documented product boundary** (see [`docs/01_architecture.md`](../01_architecture.md)): `Vercel app/API → durable database/job layer → private Mac mini worker`. The Mac is **not** meant to be the public edge; the online DB is the handoff between the app and the worker.
-- **What the shipped app does today:** `POST /api/jobs` still calls **`runWorkerJob`**, which performs a **synchronous HTTP POST from the Next.js server** to `AGENT_API_BASE_URL/jobs`, then writes the result to Neon (when `DEMO_STORAGE_MODE=neon`). There is **no** worker process in this repository yet that **polls Neon** for pending `demo_jobs` and processes them asynchronously. Until that outbox/poller exists, **any** deployment where the server cannot reach the worker URL will fail at job submit time—even if Neon is configured correctly.
-- **Implication for [agent-chappie.doneisbetter.com](https://agent-chappie.doneisbetter.com):** Either implement **enqueue-only + Mac-side Neon consumer** (aligns with the architecture doc), or temporarily use a **reachable** `AGENT_API_BASE_URL` for the current synchronous bridge. Local `127.0.0.1` on Vercel is never the Mac.
+- **What the shipped app does today:** `POST /api/jobs` calls **`enqueueJobForWorker`** only (see [`apps/consultant-followup-web/app/api/jobs/route.ts`](../../apps/consultant-followup-web/app/api/jobs/route.ts)). It does **not** call `runWorkerJob` from that route. With **`AGENT_BRIDGE_MODE=queue`** and **`DEMO_STORAGE_MODE=neon`**, jobs land in **`demo_job_queue`**; **`scripts/worker_queue_consumer.py`** on the Mac **claims** via `POST /api/worker/jobs/claim`, runs **`process_job_payload`**, then **`POST`s complete** and **workspace sync**. The UI waits on **`GET /api/jobs/{jobId}`** (202 while queued/processing).
+- **Legacy / dev alternative:** `AGENT_BRIDGE_MODE=worker` with **`AGENT_API_BASE_URL`** set allows **other** server routes to call the Mac over HTTP (`runWorkerJob` exists in `worker-bridge.ts` for that pattern); production Vercel should prefer **queue** so no inbound tunnel is required.
 - keep app secrets in Vercel env settings only
-- `POST /api/jobs` is the app-side bridge entrypoint
+- `POST /api/jobs` is the app-side **enqueue** entrypoint for the main composer
 - `GET /api/session/[sessionId]/state` restores the latest saved project and result for the current anonymous session
 - if the restored result still contains known stale legacy task phrasing, the app now asks the worker to regenerate the checklist from the current local brain before returning that result
 - `GET /api/projects/[projectId]/workspace` reads worker-generated source and activity state

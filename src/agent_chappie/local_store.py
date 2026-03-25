@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
 from typing import Any
@@ -307,9 +308,57 @@ def initialize_local_store(path: str | None = None) -> str:
         _ensure_column(connection, "evidence_units", "asset", "text")
         _ensure_column(connection, "evidence_units", "claim", "text")
         _ensure_column(connection, "task_feedback", "action_type", "text")
+        _ensure_column(connection, "card_scores", "quarantine_reason", "text")
+        _ensure_column(connection, "card_scores", "gate_flags_json", "text")
+        _ensure_flashcard_pipeline_runs_table(connection)
+        _ensure_trinity_atom_progress_table(connection)
     finally:
         connection.close()
     return db_path
+
+
+def _ensure_flashcard_pipeline_runs_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        create table if not exists flashcard_pipeline_runs (
+          run_id text primary key,
+          job_id text not null,
+          project_id text not null,
+          pipeline_source text not null,
+          reason text,
+          detail_json text,
+          created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+        """
+    )
+    connection.execute(
+        """
+        create index if not exists idx_flashcard_pipeline_runs_project
+          on flashcard_pipeline_runs(project_id, created_at desc)
+        """
+    )
+
+
+def _ensure_trinity_atom_progress_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        create table if not exists trinity_atom_progress (
+          row_id text primary key,
+          project_id text not null,
+          job_id text not null,
+          atom_index integer not null default -1,
+          stage text not null,
+          payload_json text not null,
+          created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+        """
+    )
+    connection.execute(
+        """
+        create index if not exists idx_trinity_progress_project
+          on trinity_atom_progress(project_id, created_at desc)
+        """
+    )
 
 
 @contextmanager
@@ -1680,18 +1729,25 @@ def upsert_intelligence_cards(
             )
             score = score_by_card.get(card_id)
             if score:
+                q_reason = score.get("quarantine_reason")
+                g_flags = score.get("gate_flags_json")
+                if g_flags is not None and not isinstance(g_flags, str):
+                    g_flags = json.dumps(g_flags, ensure_ascii=False)
                 connection.execute(
                     """
                     insert into card_scores (
-                      card_id, project_id, confidence, impact_score, freshness_score, evidence_strength, rank_score
+                      card_id, project_id, confidence, impact_score, freshness_score, evidence_strength, rank_score,
+                      quarantine_reason, gate_flags_json
                     )
-                    values (?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(card_id) do update set
                       confidence = excluded.confidence,
                       impact_score = excluded.impact_score,
                       freshness_score = excluded.freshness_score,
                       evidence_strength = excluded.evidence_strength,
                       rank_score = excluded.rank_score,
+                      quarantine_reason = excluded.quarantine_reason,
+                      gate_flags_json = excluded.gate_flags_json,
                       scored_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                     """,
                     (
@@ -1702,8 +1758,79 @@ def upsert_intelligence_cards(
                         float(score.get("freshness_score", 0.5)),
                         float(score.get("evidence_strength", 0.5)),
                         float(score.get("rank_score", 0.0)),
+                        q_reason,
+                        g_flags,
                     ),
                 )
+
+
+def record_flashcard_pipeline_run(
+    job_id: str,
+    project_id: str,
+    pipeline_source: str,
+    *,
+    reason: str | None = None,
+    detail: dict[str, Any] | None = None,
+    path: str | None = None,
+) -> None:
+    """Persist how flashcards were produced for this job (IMP-04 transparency)."""
+    run_id = str(uuid.uuid4())
+    detail_json = json.dumps(detail or {}, ensure_ascii=False)
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into flashcard_pipeline_runs (
+              run_id, job_id, project_id, pipeline_source, reason, detail_json
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (run_id, job_id, project_id, pipeline_source, reason or "", detail_json),
+        )
+
+
+def record_trinity_atom_progress(
+    project_id: str,
+    job_id: str,
+    stage: str,
+    payload: dict[str, Any],
+    *,
+    atom_index: int = -1,
+    path: str | None = None,
+) -> None:
+    """TR-R05: append-only audit of per-atom Trinity stages (optional; TRINITY_PROGRESS_PERSIST=1)."""
+    row_id = str(uuid.uuid4())
+    blob = json.dumps(payload, ensure_ascii=False)
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            insert into trinity_atom_progress (row_id, project_id, job_id, atom_index, stage, payload_json)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (row_id, project_id, job_id, atom_index, stage, blob),
+        )
+
+
+def latest_flashcard_pipeline_run(project_id: str, path: str | None = None) -> dict[str, Any] | None:
+    """Most recent flashcard pipeline audit row for workspace / API (TR-R08)."""
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            select run_id, job_id, project_id, pipeline_source, reason, detail_json, created_at
+            from flashcard_pipeline_runs
+            where project_id = ?
+            order by created_at desc
+            limit 1
+            """,
+            (project_id,),
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["detail"] = json.loads(d.pop("detail_json") or "{}")
+    except json.JSONDecodeError:
+        d["detail"] = {}
+    return d
 
 
 def list_intelligence_cards(project_id: str, include_hidden: bool = True, path: str | None = None) -> list[dict[str, Any]]:
@@ -1731,7 +1858,9 @@ def list_intelligence_cards(project_id: str, include_hidden: bool = True, path: 
               coalesce(s.impact_score, 0.0) as impact_score,
               coalesce(s.freshness_score, 0.0) as freshness_score,
               coalesce(s.evidence_strength, 0.0) as evidence_strength,
-              coalesce(s.rank_score, 0.0) as rank_score
+              coalesce(s.rank_score, 0.0) as rank_score,
+              s.quarantine_reason as quarantine_reason,
+              s.gate_flags_json as gate_flags_json
             from intelligence_cards c
             left join card_scores s on s.card_id = c.card_id
             {where}
@@ -1745,6 +1874,14 @@ def list_intelligence_cards(project_id: str, include_hidden: bool = True, path: 
         item["potential_moves"] = json.loads(item.pop("potential_moves_json") or "[]")
         item["fact_refs"] = json.loads(item.pop("fact_refs_json") or "[]")
         item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
+        gf_raw = item.pop("gate_flags_json", None)
+        if isinstance(gf_raw, str) and gf_raw.strip():
+            try:
+                item["gate_flags"] = json.loads(gf_raw)
+            except json.JSONDecodeError:
+                item["gate_flags"] = []
+        else:
+            item["gate_flags"] = []
         output.append(item)
     return output
 

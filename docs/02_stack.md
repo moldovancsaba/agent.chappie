@@ -123,16 +123,55 @@ This path does **not** call `OllamaModelAdapter.draft/write/judge`.
 | “Writer” tasks for checklist | `segment_to_task`, `write_tasks_from_segments`, `generate_learning_checklist` — templates and rules | **No** |
 | “Judge” / ranking | `judge_tasks` — filters, `task_priority_score`, diversity selection | **No** — not `ModelAdapter.judge` |
 | Flashcard scores | `score_flashcards` — numeric heuristics | **No** |
+| Flashcards (optional **Trinity**) | `agent_chappie.flashcard_trinity` — MLX **Trinity**: Gemma drafter → Granite writer → Qwen judge via **MLX-LM**; see [`docs/trinity_architecture.md`](trinity_architecture.md) | **Yes** — when **`FLASHCARD_MLX_TRINITY=1`** (legacy: `FLASHCARD_MLX_TRIAD`) and `mlx_lm` is installed |
 
-### MLX
+### MLX Trinity (optional flashcard pipeline)
 
 Layer:
 
-- future Apple Silicon runtime option
+- Apple Silicon inference for consultant-worker flashcards (`process_job_payload` in `worker_bridge.py`)
+
+**Note:** **Trinity** names the **MLX flashcard** product (three MLX models). It is separate from the **governed triad** control-plane language used elsewhere in older docs.
 
 Status:
 
-- planned, not implemented
+- implemented behind **`FLASHCARD_MLX_TRINITY=1`** ( **`FLASHCARD_MLX_TRIAD=1`** still accepted)
+- install **`requirements-mlx-flashcards.txt`** in addition to `requirements.txt` on the Mac worker
+- logger name: **`agent_chappie.flashcard_trinity`**; set **`FLASHCARD_MLX_TRINITY_DEBUG=1`** or legacy **`FLASHCARD_MLX_DEBUG=1`** for DEBUG lines (drafter/writer/judge drop counts, retry accept/reject, threshold filtering)
+- long-running workers call **`configure_worker_logging()`** from `agent_chappie.worker_logging` at startup (`serve()` in `worker_bridge.py`, `main()` in `scripts/worker_queue_consumer.py`)
+- full low-level design, production commands, API flows, and **committed implementation plan (IMP-01, IMP-02, IMP-03, IMP-04, IMP-07):** **[`docs/trinity_architecture.md`](trinity_architecture.md)**
+- portable Trinity narrative + Appendix A (same IMP IDs): **[`docs/trinity_flow.md`](trinity_flow.md)**
+- deferred Trinity items (TR-R05, TR-R06, TR-R08, TR-R09): **[`docs/03_roadmap.md`](03_roadmap.md)** (*Trinity extended roadmap*)
+
+**Checklist (nothing else is vendored in git):**
+
+- Python: **`requirements.txt`** + **`requirements-mlx-flashcards.txt`** (`mlx`, `mlx-lm`, transitive `huggingface_hub`, etc.).
+- Model weights: **not** in the repo; first `mlx_lm.load(...)` downloads to the Hugging Face cache, or prefetch with **`scripts/prefetch_mlx_flashcard_models.py`**.
+- **Apple Silicon** + MLX-supported macOS for real inference (other platforms typically skip MLX at import or runtime).
+- Optional **`HF_TOKEN`** for higher Hub rate limits when downloading.
+- **Disk** for three small MLX repos (on the order of hundreds of MB combined for the default quantized IDs).
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| **`AGENT_WORKER_LOG_LEVEL`** | Root / `agent_chappie` log level for queue consumer and HTTP worker (`DEBUG`, `INFO`, …) | `INFO` |
+| **`FLASHCARD_MLX_TRINITY`** | Enable Trinity MLX path for `intelligence_cards` / `card_scores` | off |
+| **`FLASHCARD_MLX_TRIAD`** | Legacy alias for **`FLASHCARD_MLX_TRINITY`** | off |
+| **`FLASHCARD_MLX_TRINITY_DEBUG`** | Verbose Trinity logs + tracebacks; sets **`agent_chappie.flashcard_trinity`** to **DEBUG** | off |
+| **`FLASHCARD_MLX_DEBUG`** | Legacy alias for **`FLASHCARD_MLX_TRINITY_DEBUG`** | off |
+| **`MLX_DRAFTER_MODEL`** | Hugging Face repo id for MLX drafter | `mlx-community/gemma-3-270m-it-4bit` |
+| **`MLX_WRITER_MODEL`** | MLX writer (Granite 4 H 350M) | `mlx-community/granite-4.0-h-350m-8bit` |
+| **`MLX_JUDGE_MODEL`** | MLX judge | `mlx-community/Qwen2.5-0.5B-Instruct-4bit` |
+| **`FLASHCARD_MLX_CONFIDENCE_THRESHOLD`** | Min product `d_conf * w_conf * j_conf` to keep a card | `0.5` |
+| **`FLASHCARD_MLX_MAX_ATOMS`** | Cap on drafter JSON array length | `24` |
+| **`FLASHCARD_MLX_INPUT_CHARS`** | Max characters fed into the drafter from summary + raw text + facts | `12000` |
+| **`FLASHCARD_MLX_JUDGE_RETRY_THRESHOLD`** | While `j_conf` is below this, run extra writer→judge passes (bounded) | `0.35` |
+| **`FLASHCARD_MLX_WRITER_RETRY_EXTRA`** | Max extra writer+judge rounds per atom after the batch judge | `2` |
+| **`FLASHCARD_MLX_SEQUENTIAL_UNLOAD`** | Unload each MLX model after use to reduce unified-memory pressure | `1` |
+| **`TRINITY_MAX_WALL_SECONDS`** | Max wall-clock seconds for Trinity (`run_trinity`); `0` = no limit (**IMP-07**) | `0` |
+| **`TRINITY_SUBPROCESS`** | `1` + **`TRINITY_MAX_WALL_SECONDS` > 0** → run Trinity in a subprocess and **kill** on timeout | unset |
+| **`AGENT_ALLOW_HEURISTIC_FLASHCARDS`** | When **`FLASHCARD_MLX_TRINITY=1`**, allow heuristic fallback if Trinity yields no promoted cards; **unset = strict** (job **blocked**, `trinity_strict_blocked`) | unset |
+
+If Trinity is enabled but MLX is missing: with **strict** mode (default when Trinity on), the job **blocks** unless **`AGENT_ALLOW_HEURISTIC_FLASHCARDS=1`**. With that env set, the worker logs a **warning** and falls back to heuristics. Use **`FLASHCARD_MLX_TRINITY_DEBUG=1`** for stage-level DEBUG lines.
 
 ### llama.cpp
 

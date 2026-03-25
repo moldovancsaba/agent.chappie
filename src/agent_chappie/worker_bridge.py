@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import uuid
 import re
 import threading
 import time
@@ -60,6 +61,8 @@ from agent_chappie.local_store import (
     update_monitor_state,
     update_source_snapshot,
     upsert_card_weight_profile,
+    record_flashcard_pipeline_run,
+    latest_flashcard_pipeline_run,
     upsert_intelligence_cards,
     upsert_knowledge_feedback,
     upsert_knowledge_state,
@@ -84,7 +87,12 @@ from agent_chappie.observation_engine import (
     repair_recommended_tasks,
     utc_now_iso,
 )
-from agent_chappie.validation import ValidationError, validate_job_request, validate_job_result
+from agent_chappie.validation import (
+    ValidationError,
+    validate_job_request,
+    validate_job_result,
+    _validate_task_quality,
+)
 
 
 @dataclass
@@ -230,13 +238,104 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
     replace_evidence_units(source_package.project_id, evidence_units, path=config.local_db_path)
     feedback_rows = list_task_feedback_rows(source_package.project_id, path=config.local_db_path)
     weight_profile = apply_adaptive_weight_profile(source_package.project_id, feedback_rows, config)
-    candidate_cards = build_flashcards_from_atomic_facts(
-        source_package.project_id,
-        atomic_facts,
-        refreshed_sources,
-        source_package.project_summary,
-    )
-    card_scores = score_flashcards(source_package.project_id, candidate_cards, atomic_facts, weight_profile)
+    candidate_cards: list[dict[str, Any]]
+    card_scores: list[dict[str, Any]]
+    job_id = str(job_request.get("job_id") or "")
+    trinity_on = False
+    trinity_wr = None
+    try:
+        from agent_chappie.flashcard_trinity.worker_integration import (
+            TrinityWorkerResult,
+            heuristic_flashcards_allowed,
+            mlx_trinity_enabled,
+            try_mlx_trinity_cards,
+        )
+
+        trinity_on = mlx_trinity_enabled()
+        trinity_wr = try_mlx_trinity_cards(
+            source_package.project_id,
+            source_package,
+            atomic_facts,
+            refreshed_sources,
+            weight_profile,
+            job_id=job_id,
+        )
+    except Exception as exc:
+        from agent_chappie.flashcard_trinity.worker_integration import (
+            TrinityWorkerResult,
+            mlx_trinity_enabled,
+        )
+
+        trinity_on = mlx_trinity_enabled()
+        if trinity_on:
+            trinity_wr = TrinityWorkerResult(
+                [],
+                [],
+                False,
+                {"outcome": "worker_bridge_exception", "error": str(exc)},
+            )
+        else:
+            trinity_wr = None
+    trinity_strict_block = False
+    if trinity_wr is None:
+        candidate_cards = build_flashcards_from_atomic_facts(
+            source_package.project_id,
+            atomic_facts,
+            refreshed_sources,
+            source_package.project_summary,
+        )
+        card_scores = score_flashcards(source_package.project_id, candidate_cards, atomic_facts, weight_profile)
+        if job_id:
+            record_flashcard_pipeline_run(
+                job_id,
+                source_package.project_id,
+                "trinity_disabled",
+                detail={"outcome": "disabled"},
+                path=config.local_db_path,
+            )
+    elif trinity_wr.used_trinity_cards:
+        candidate_cards, card_scores = trinity_wr.cards, trinity_wr.scores
+        if job_id:
+            record_flashcard_pipeline_run(
+                job_id,
+                source_package.project_id,
+                "trinity",
+                detail=trinity_wr.detail,
+                path=config.local_db_path,
+            )
+    else:
+        from agent_chappie.flashcard_trinity.worker_integration import heuristic_flashcards_allowed
+
+        if trinity_on and not heuristic_flashcards_allowed():
+            candidate_cards = []
+            card_scores = []
+            trinity_strict_block = True
+            if job_id:
+                record_flashcard_pipeline_run(
+                    job_id,
+                    source_package.project_id,
+                    "trinity_strict_blocked",
+                    reason=str(trinity_wr.detail.get("outcome", "")),
+                    detail=trinity_wr.detail,
+                    path=config.local_db_path,
+                )
+        else:
+            candidate_cards = build_flashcards_from_atomic_facts(
+                source_package.project_id,
+                atomic_facts,
+                refreshed_sources,
+                source_package.project_summary,
+            )
+            card_scores = score_flashcards(source_package.project_id, candidate_cards, atomic_facts, weight_profile)
+            if job_id:
+                record_flashcard_pipeline_run(
+                    job_id,
+                    source_package.project_id,
+                    "heuristic_fallback",
+                    reason=str(trinity_wr.detail.get("outcome", "")),
+                    detail=trinity_wr.detail,
+                    path=config.local_db_path,
+                )
     all_cards, visible_cards = apply_visibility_top_percent(candidate_cards, card_scores, percent=0.20)
     upsert_intelligence_cards(source_package.project_id, all_cards, card_scores, path=config.local_db_path)
     knowledge_cards = build_knowledge_cards(
@@ -267,16 +366,57 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         feedback_rows,
         generation_memory_rows,
     )
-    # NBA now derives from the full scored card corpus (not only visible cards).
-    nba_tasks = build_nba_tasks_from_cards(all_cards, top_n=3)
-    if nba_tasks:
+    # NBA derives from ranked intelligence cards (full scored corpus), materialized with the same
+    # segment→task engine as the checklist so validation, execution steps, and judge enrichment align.
+    nba_tasks = build_nba_tasks_from_intelligence_cards(
+        all_cards,
+        top_n=3,
+        source_package=source_package,
+        observations=aggregated or observations,
+        knowledge_cards=knowledge_cards,
+        fact_chips=fact_chips,
+        evidence_units=evidence_units,
+        feedback_rows=feedback_rows,
+        generation_memory_rows=generation_memory_rows,
+    )
+    if trinity_strict_block:
+        oc = str(trinity_wr.detail.get("outcome", "")) if trinity_wr else ""
         result_payload = {
-            "summary": "Ranked from scored intelligence cards using confidence, impact, and urgency weighting.",
-            "recommended_tasks": nba_tasks,
+            "reason": (
+                "Trinity is required (FLASHCARD_MLX_TRINITY) but produced no usable promoted flashcards; "
+                "heuristic fallback is disabled. Set AGENT_ALLOW_HEURISTIC_FLASHCARDS=1 for development "
+                f"or fix MLX/models. Last outcome: {oc}."
+            ),
         }
+    elif nba_tasks:
+        nba_ok = True
+        try:
+            for _task in nba_tasks:
+                _validate_task_quality(_task)
+        except ValidationError:
+            nba_ok = False
+        if nba_ok:
+            result_payload = {
+                "summary": (
+                    "Next actions were ranked from scored intelligence cards (Know More) and materialized with the "
+                    "same segment task builder and judging rules as the standard checklist."
+                ),
+                "recommended_tasks": nba_tasks,
+            }
     used_source_refs: set[str] = set()
 
-    if "recommended_tasks" in result_payload:
+    if trinity_strict_block:
+        job_result = validate_job_result(
+            {
+                "job_id": job_request["job_id"],
+                "app_id": job_request["app_id"],
+                "project_id": job_request["project_id"],
+                "status": "blocked",
+                "completed_at": utc_now_iso(),
+                "result_payload": result_payload,
+            }
+        )
+    elif "recommended_tasks" in result_payload:
         result_document = {
             "job_id": job_request["job_id"],
             "app_id": job_request["app_id"],
@@ -883,6 +1023,7 @@ def build_workspace_payload(project_id: str, config: WorkerBridgeConfig) -> dict
         "fact_chips": fact_chips,
         "intelligence_cards": intelligence_cards,
         "visible_intelligence_cards": visible_intelligence_cards,
+        "latest_flashcard_pipeline_run": latest_flashcard_pipeline_run(project_id, path=config.local_db_path),
         "draft_segments": draft_segments,
         "competitive_snapshot": competitive_snapshot,
         "knowledge_summary": knowledge_summary_rows[:5],
@@ -1695,6 +1836,10 @@ def segment_to_task(
     domain = infer_domain_from_sources(source, fact_chips)
     detail = extract_action_detail(segment_text)
     competitor = infer_segment_competitor(segment_text, source)
+    if str(segment.get("segment_id") or "").startswith("intel_card::"):
+        preferred = _intel_segment_preferred_competitor(segment_text, observations)
+        if preferred:
+            competitor = preferred
     audience = infer_operator_audience(domain, detail)
     primary_channel = infer_primary_channel(domain, lowered)
     comparison_channel = "pricing page" if "pricing" in lowered or "onboarding" in lowered else primary_channel
@@ -3220,7 +3365,7 @@ def build_atomic_facts(
         if key_blob in seen:
             return
         seen.add(key_blob)
-        fact_id = f"fact::{project_id}::{len(facts)+1}"
+        fact_id = str(uuid.uuid4())
         facts.append(
             {
                 "fact_id": fact_id,
@@ -3356,7 +3501,7 @@ def build_flashcards_from_atomic_facts(
         competitor: str | None = None,
         channel: str | None = None,
     ) -> None:
-        card_id = f"card::{project_id}::{len(cards)+1}"
+        card_id = f"card:{uuid.uuid4()}"
         cards.append(
             {
                 "card_id": card_id,
@@ -3614,21 +3759,340 @@ def apply_visibility_top_percent(
         return [], []
     score_by_card = {score["card_id"]: score for score in scores}
     ranked_cards = sorted(cards, key=lambda c: score_by_card.get(c["card_id"], {}).get("rank_score", 0.0), reverse=True)
-    keep = max(1, math.ceil(len(ranked_cards) * percent))
-    visible_ids = {card["card_id"] for card in ranked_cards[:keep]}
+    eligible: list[dict[str, Any]] = []
+    for card in ranked_cards:
+        sc = score_by_card.get(card["card_id"], {})
+        if str(card.get("state") or "") == "quarantine":
+            continue
+        if float(sc.get("rank_score", 0.0)) <= 0.0:
+            continue
+        eligible.append(card)
+    keep = max(1, math.ceil(len(eligible) * percent)) if eligible else 0
+    visible_ids = {c["card_id"] for c in eligible[:keep]} if eligible else set()
     visible: list[dict[str, Any]] = []
     all_cards: list[dict[str, Any]] = []
     for card in ranked_cards:
         score = score_by_card.get(card["card_id"], {})
+        preset = str(card.get("state") or "")
+        if preset == "quarantine":
+            final_state = "quarantine"
+        elif card["card_id"] in visible_ids:
+            final_state = "active"
+        else:
+            final_state = "suppressed"
         item = {
             **card,
             **score,
-            "state": "active" if card["card_id"] in visible_ids else "suppressed",
+            "state": final_state,
         }
         all_cards.append(item)
         if card["card_id"] in visible_ids:
             visible.append(item)
     return all_cards, visible
+
+
+def infer_segment_kind_for_intel_card(lowered: str) -> str:
+    if any(
+        token in lowered
+        for token in ("price", "pricing", "package", "bundle", "onboarding", "margin", "cost", "revenue")
+    ):
+        return "pricing"
+    if any(token in lowered for token in ("proof", "testimonial", "trust", "credential", "integration")):
+        return "proof"
+    if any(token in lowered for token in ("closure", "sell-off", "asset", "acquisition", "distress")):
+        return "opportunity"
+    if any(token in lowered for token in ("trial", "offer", "discount", "positioning", "message", "homepage", "hero")):
+        return "offer"
+    return "positioning"
+
+
+def _intel_card_text_is_placeholder_blob(insight: str, implication: str) -> bool:
+    """True if card copy looks like dummy/placeholder content (do not use clean_entity — it rejects normal prose)."""
+    blob = f"{insight} {implication}".lower()
+    return any(
+        token in blob
+        for token in ("uploaded file", "document source", "placeholder", "dummy", "sample competitor")
+    )
+
+
+def intelligence_card_to_synthetic_segment(card: dict[str, Any]) -> dict[str, Any] | None:
+    insight = str(card.get("insight") or "").strip()
+    implication = str(card.get("implication") or "").strip()
+    if not insight or not implication:
+        return None
+    if _intel_card_text_is_placeholder_blob(insight, implication):
+        return None
+    comp = str(card.get("competitor") or "").strip()
+    segment_text = f"{insight} {implication}".strip()
+    if comp and comp.lower() not in segment_text.lower():
+        segment_text = f"{segment_text} Competitor context: {comp}."
+    if comp and is_placeholder_entity(comp):
+        return None
+    lowered = segment_text.lower()
+    raw_refs = unique_values([str(x) for x in (card.get("fact_refs") or [])] + [str(x) for x in (card.get("source_refs") or [])])
+    if not raw_refs:
+        cid = card.get("card_id")
+        if cid:
+            raw_refs = [str(cid)]
+    if not raw_refs:
+        return None
+    source_refs = [str(x) for x in (card.get("source_refs") or [])] or raw_refs[:8]
+    cid = card.get("card_id")
+    if not cid:
+        return None
+    return {
+        "segment_id": f"intel_card::{cid}",
+        "segment_text": segment_text[:8000],
+        "segment_kind": infer_segment_kind_for_intel_card(lowered),
+        "evidence_refs": raw_refs[:12],
+        "source_refs": unique_values(source_refs)[:12],
+    }
+
+
+def backfill_supporting_signals_if_empty(
+    task: dict[str, Any],
+    *,
+    observations: list[dict[str, Any]],
+    segment_text: str,
+    move_bucket: str,
+) -> None:
+    if task.get("supporting_signal_scores"):
+        return
+    competitor = str(task.get("competitor_name") or "").strip() or None
+    bundle = select_task_support_signals(
+        segment_text=segment_text,
+        observations=observations,
+        supporting_source_refs=[],
+        competitor=competitor,
+        move_bucket=move_bucket,
+    )
+    if not bundle and observations:
+        obs_sorted = sorted(
+            [o for o in observations if o.get("signal_id")],
+            key=lambda o: float(o.get("confidence") or 0),
+            reverse=True,
+        )[:3]
+        bundle = [
+            {
+                "signal_id": str(o["signal_id"]),
+                "relevance_score": max(0.91, round(float(o.get("confidence") or 0.75), 2)),
+            }
+            for o in obs_sorted
+        ]
+    if not bundle:
+        return
+    task["supporting_signal_refs"] = [b["signal_id"] for b in bundle]
+    task["supporting_signal_scores"] = bundle
+
+
+def _canonical_observation_competitor(primary_lc: str, observations: list[dict[str, Any]]) -> str | None:
+    for obs in observations:
+        oc = str(obs.get("competitor") or "").strip()
+        if oc and oc.lower() == primary_lc:
+            return oc
+    return None
+
+
+def _intel_segment_preferred_competitor(segment_text: str, observations: list[dict[str, Any]]) -> str | None:
+    """When materializing NBA from intelligence cards, prefer the dominant signal competitor if the card text names them."""
+    primary_lc = _primary_observation_competitor(observations)
+    if not primary_lc:
+        return None
+    blob = segment_text.lower()
+    head = primary_lc.split()[0] if primary_lc else ""
+    if primary_lc not in blob and (len(head) < 4 or head not in blob):
+        return None
+    return _canonical_observation_competitor(primary_lc, observations)
+
+
+def _primary_observation_competitor(observations: list[dict[str, Any]]) -> str | None:
+    counts: dict[str, int] = {}
+    for obs in observations:
+        comp = str(obs.get("competitor") or "").strip()
+        if not comp:
+            continue
+        key = comp.lower()
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    return max(counts, key=lambda k: counts[k])
+
+
+def _task_competitor_aligns_with_primary(task: dict[str, Any], primary_lc: str | None) -> bool:
+    if not primary_lc:
+        return False
+    name = str(task.get("competitor_name") or "").strip().lower()
+    if not name:
+        return False
+    return name in primary_lc or primary_lc in name
+
+
+def _nba_task_evidence_aligns_primary_competitor(
+    task: dict[str, Any],
+    observations: list[dict[str, Any]],
+    primary_lc: str | None,
+) -> bool:
+    """True if the task's competitor field or its supporting signals match the dominant observation competitor."""
+    if not primary_lc:
+        return False
+    if _task_competitor_aligns_with_primary(task, primary_lc):
+        return True
+    by_id = {str(o.get("signal_id") or ""): o for o in observations}
+    for sid in task.get("supporting_signal_refs") or []:
+        obs = by_id.get(str(sid))
+        if not obs:
+            continue
+        oc = str(obs.get("competitor") or "").strip().lower()
+        if oc and (oc == primary_lc or oc in primary_lc or primary_lc in oc):
+            return True
+    return False
+
+
+def _nba_task_steps_mention_comparison_surfaces(task: dict[str, Any]) -> bool:
+    """Prefer materialized tasks that name concrete buyer-visible comparison assets (pricing page, homepage, proof)."""
+    blob = " ".join(task.get("execution_steps") or []).lower()
+    return (
+        "pricing comparison block" in blob
+        or "homepage comparison section" in blob
+        or "homepage comparison" in blob
+        or "proof blocks" in blob
+        or ("comparison section" in blob and "homepage" in blob)
+    )
+
+
+def _intel_card_names_primary_competitor(
+    task: dict[str, Any],
+    cards_by_id: dict[str, dict[str, Any]],
+    primary_lc: str | None,
+) -> bool:
+    """True if the source intelligence card text names the dominant observation competitor (Know More alignment)."""
+    if not primary_lc:
+        return False
+    cid = str(task.get("intel_card_id") or "")
+    card = cards_by_id.get(cid)
+    if not card:
+        return False
+    blob = f"{card.get('insight', '')} {card.get('implication', '')}".lower()
+    if primary_lc in blob:
+        return True
+    head = primary_lc.split()[0]
+    return len(head) >= 4 and head in blob
+
+
+def _nba_observation_competitor_boost(card: dict[str, Any], observations: list[dict[str, Any]]) -> float:
+    """Prefer cards that name the same competitors as high-confidence observations (aligns NBA with signals / Know More)."""
+    blob = f"{card.get('insight', '')} {card.get('implication', '')} {card.get('competitor', '')}".lower()
+    if not blob.strip():
+        return 0.0
+    boost = 0.0
+    ranked_obs = sorted(observations, key=lambda o: float(o.get("confidence") or 0), reverse=True)
+    for obs in ranked_obs[:16]:
+        comp = str(obs.get("competitor") or "").strip().lower()
+        if not comp:
+            continue
+        if comp in blob:
+            boost = max(boost, 0.38)
+            continue
+        for token in comp.replace(".", " ").split():
+            token = token.strip().lower()
+            if len(token) >= 4 and token in blob:
+                boost = max(boost, 0.28)
+                break
+    return boost
+
+
+def build_nba_tasks_from_intelligence_cards(
+    cards: list[dict[str, Any]],
+    *,
+    top_n: int,
+    source_package: SourcePackage,
+    observations: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
+    fact_chips: list[dict[str, Any]],
+    evidence_units: list[dict[str, Any]],
+    feedback_rows: list[dict[str, Any]],
+    generation_memory_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Turn ranked intelligence cards into judged recommended_tasks (same shape as the segment checklist path)."""
+    if not cards or top_n < 1:
+        return []
+    ranked = sorted(
+        cards,
+        key=lambda c: (
+            float(c.get("rank_score") or 0) + _nba_observation_competitor_boost(c, observations),
+            float(c.get("rank_score") or 0),
+        ),
+        reverse=True,
+    )
+    pool = ranked[: max(6, top_n * 2)]
+    candidates: list[dict[str, Any]] = []
+    for card in pool:
+        if float(card.get("rank_score") or 0) <= 0.0:
+            continue
+        if str(card.get("state") or "") == "quarantine":
+            continue
+        seg = intelligence_card_to_synthetic_segment(card)
+        if not seg:
+            continue
+        task = segment_to_task(
+            source_package,
+            seg,
+            observations,
+            knowledge_cards,
+            fact_chips,
+            evidence_units,
+        )
+        if not task:
+            continue
+        move_bucket = str(task.get("move_bucket") or "messaging_or_positioning_move")
+        backfill_supporting_signals_if_empty(
+            task,
+            observations=observations,
+            segment_text=str(seg["segment_text"]),
+            move_bucket=move_bucket,
+        )
+        cid = str(card.get("card_id") or "")
+        if cid:
+            evidence_refs = list(task.get("evidence_refs") or [])
+            marker = f"intel_card::{cid}"
+            if marker not in evidence_refs:
+                task["evidence_refs"] = unique_values([*evidence_refs, marker])
+            task["intel_card_id"] = cid
+        candidates.append(task)
+        if len(candidates) >= 12:
+            break
+    if len(candidates) < top_n:
+        return []
+    judged = judge_tasks(candidates[:12], source_package, feedback_rows, generation_memory_rows)
+    slot_tasks = judged[:top_n]
+    primary_lc = _primary_observation_competitor(observations)
+    cards_by_id = {str(c.get("card_id") or ""): c for c in cards if c.get("card_id")}
+    if primary_lc and len(slot_tasks) > 1:
+        slot_tasks = sorted(
+            slot_tasks,
+            key=lambda t: (
+                _intel_card_names_primary_competitor(t, cards_by_id, primary_lc),
+                _nba_task_steps_mention_comparison_surfaces(t),
+                _nba_task_evidence_aligns_primary_competitor(t, observations, primary_lc),
+                task_priority_score(t, generation_memory_rows),
+            ),
+            reverse=True,
+        )
+        now = datetime.now(UTC)
+        for index, task in enumerate(slot_tasks, start=1):
+            task["rank"] = index
+            task["is_next_best_action"] = index == 1
+            task["priority_label"] = "critical" if index == 1 else "high" if index == 2 else "normal"
+            task["confidence_class"] = (
+                "exploratory_action"
+                if task.get("task_type") == "exploratory_action"
+                else "strong_action"
+                if index == 1
+                else "moderate_action"
+            )
+            best_before_days = 2 if index == 1 else 4 if index == 2 else 6
+            task["best_before"] = (now + timedelta(days=best_before_days)).date().isoformat()
+    return slot_tasks
 
 
 def build_nba_tasks_from_cards(cards: list[dict[str, Any]], top_n: int = 3) -> list[dict[str, Any]]:
@@ -3638,18 +4102,30 @@ def build_nba_tasks_from_cards(cards: list[dict[str, Any]], top_n: int = 3) -> l
     selected = ranked[: max(6, top_n * 2)]
     tasks: list[dict[str, Any]] = []
     for card in selected:
+        if float(card.get("rank_score") or 0) <= 0.0:
+            continue
+        if str(card.get("state") or "") == "quarantine":
+            continue
         insight = str(card.get("insight") or "").strip()
         implication = str(card.get("implication") or "").strip()
         if not insight or not implication:
             continue
-        if any(is_placeholder_entity(part) for part in (insight, implication, str(card.get("competitor") or ""))):
+        if _intel_card_text_is_placeholder_blob(insight, implication):
+            continue
+        comp = str(card.get("competitor") or "").strip()
+        if comp and is_placeholder_entity(comp):
             continue
         moves = card.get("potential_moves") or []
         move_title = str(moves[0] if moves else "").strip()
         title = (move_title or insight)[:220]
         if not title or is_placeholder_entity(title):
             continue
-        evidence_refs = [*card.get("fact_refs", []), *card.get("source_refs", [])]
+        raw_refs = [*card.get("fact_refs", []), *card.get("source_refs", [])]
+        evidence_refs = unique_values(raw_refs)[:8]
+        if not evidence_refs:
+            cid = card.get("card_id")
+            if cid:
+                evidence_refs = [str(cid)]
         if not evidence_refs:
             continue
         rank = len(tasks) + 1
@@ -3659,7 +4135,7 @@ def build_nba_tasks_from_cards(cards: list[dict[str, Any]], top_n: int = 3) -> l
                 "title": title,
                 "why_now": f"We detected a concrete signal change in stored intelligence: {implication}",
                 "expected_advantage": str(card.get("implication") or insight)[:240],
-                "evidence_refs": unique_values(evidence_refs)[:8] or [f"card::{card.get('card_id')}"],
+                "evidence_refs": evidence_refs,
                 "best_before": str(card.get("expires_at") or ""),
                 "confidence_class": (
                     "strong_action"
@@ -3878,6 +4354,8 @@ def normalize_competitor_fact(value: str) -> str | None:
 def is_placeholder_entity(value: str | None) -> bool:
     if value is None:
         return True
+    if not str(value).strip():
+        return False
     cleaned = clean_entity(value)
     if not cleaned:
         return True
@@ -5204,6 +5682,9 @@ def run_observation_loop(config: WorkerBridgeConfig) -> None:
 
 
 def serve() -> None:
+    from agent_chappie.worker_logging import configure_worker_logging
+
+    configure_worker_logging()
     config = load_config()
     observer = threading.Thread(target=run_observation_loop, args=(config,), daemon=True)
     observer.start()

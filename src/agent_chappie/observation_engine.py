@@ -836,7 +836,9 @@ def extract_uploaded_file_text(source: SourcePackage) -> str:
     if len(normalized) < 40:
         raise ValueError(f"The uploaded file '{file_name}' did not contain enough readable text to analyze.")
 
-    return normalized[:12000]
+    prefix = f"Uploaded file: {file_name}. "
+    combined = prefix + normalized
+    return combined[:12000]
 
 
 def extract_docx_text(raw_bytes: bytes) -> str:

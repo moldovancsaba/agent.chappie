@@ -97,46 +97,43 @@ type SourcePackage = {
   content_base64?: string;
 };
 
+export type IntelligenceCardRow = {
+  card_id: string;
+  project_id: string;
+  insight: string;
+  implication: string;
+  potential_moves: string[];
+  fact_refs: string[];
+  source_refs: string[];
+  segment: string;
+  competitor?: string | null;
+  channel?: string | null;
+  state: string;
+  expires_at?: string | null;
+  confidence: number;
+  impact_score: number;
+  freshness_score: number;
+  evidence_strength: number;
+  rank_score: number;
+  quarantine_reason?: string | null;
+  gate_flags?: string[];
+};
+
+export type FlashcardPipelineRunSummary = {
+  run_id: string;
+  job_id: string;
+  project_id: string;
+  pipeline_source: string;
+  reason: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+};
+
 export type WorkerWorkspacePayload = {
   project_id: string;
-  intelligence_cards: Array<{
-    card_id: string;
-    project_id: string;
-    insight: string;
-    implication: string;
-    potential_moves: string[];
-    fact_refs: string[];
-    source_refs: string[];
-    segment: string;
-    competitor?: string | null;
-    channel?: string | null;
-    state: string;
-    expires_at?: string | null;
-    confidence: number;
-    impact_score: number;
-    freshness_score: number;
-    evidence_strength: number;
-    rank_score: number;
-  }>;
-  visible_intelligence_cards: Array<{
-    card_id: string;
-    project_id: string;
-    insight: string;
-    implication: string;
-    potential_moves: string[];
-    fact_refs: string[];
-    source_refs: string[];
-    segment: string;
-    competitor?: string | null;
-    channel?: string | null;
-    state: string;
-    expires_at?: string | null;
-    confidence: number;
-    impact_score: number;
-    freshness_score: number;
-    evidence_strength: number;
-    rank_score: number;
-  }>;
+  intelligence_cards: IntelligenceCardRow[];
+  visible_intelligence_cards: IntelligenceCardRow[];
+  latest_flashcard_pipeline_run?: FlashcardPipelineRunSummary | null;
   draft_segments: Array<{
     segment_id: string;
     project_id: string;
@@ -344,6 +341,7 @@ export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspace
     knowledge_cards: payload.knowledge_cards ?? [],
     managed_sources: payload.managed_sources ?? [],
     managed_jobs: payload.managed_jobs ?? [],
+    latest_flashcard_pipeline_run: payload.latest_flashcard_pipeline_run ?? null,
   };
 }
 

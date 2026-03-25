@@ -111,6 +111,8 @@ export const recommendedTaskSchema = z.object({
     )
     .optional(),
   strongest_evidence_excerpt: z.string().min(1).optional(),
+  /** Set when the task was materialized from a ranked intelligence card (Know More). */
+  intel_card_id: z.string().min(1).optional(),
 });
 
 export const jobResultCompletePayloadSchema = z.object({

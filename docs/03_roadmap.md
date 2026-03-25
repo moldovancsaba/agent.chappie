@@ -130,6 +130,45 @@ Proof requirements:
 - state model
 - contract examples
 
+## Phase 2.85 - Trinity MLX operational hardening (committed implementation plan)
+
+Status:
+
+- **IMP-01 through IMP-04 and IMP-07 shipped** in code, including **quarantine rows**, **strict Trinity** (no heuristic unless **`AGENT_ALLOW_HEURISTIC_FLASHCARDS=1`**), **subprocess hard-timeout** (**`TRINITY_SUBPROCESS` + `TRINITY_MAX_WALL_SECONDS`**), and **UUID** card/fact ids. See [`docs/trinity_architecture.md`](trinity_architecture.md) §4 and §8.
+
+Scope:
+
+Borrow and implement operational ideas from the concurrent Trinity flow narrative (health, auditability, hybrid validation, transparency, supervision).
+
+Acceptance criteria:
+
+- **IMP-01:** `scripts/trinity_healthcheck.py` exists; documents exit codes; optional launchd hook documented; fails fast when MLX or default models are unusable.
+- **IMP-02:** SQLite stores **failure / quarantine reasons** (`drop_reason_counts`, per-row `quarantine_reason`, `flashcard_pipeline_runs` including **`trinity_strict_blocked`**); migrations reproducible.
+- **IMP-03:** **Deterministic rules** run after the Judge LLM output; unit tests cover at least placeholder and min-length cases.
+- **IMP-04:** When Trinity is enabled but the worker uses **heuristic flashcards**, logs and persisted metadata make **`trinity` vs `heuristic_fallback`** explicit per job or run.
+- **IMP-07:** Wall-clock bound via **`TRINITY_MAX_WALL_SECONDS`**; optional **`TRINITY_SUBPROCESS=1`** for **process kill** on timeout (see [`trinity_architecture.md`](trinity_architecture.md) §4).
+
+Proof requirements:
+
+- script output sample in a runbook (**[`consultant_followup_web.md`](07_runbooks/consultant_followup_web.md)**)
+- migration + integration tests (`tests/test_flashcard_pipeline_run.py`, `tests/test_trinity_quarantine_and_visibility.py`, …)
+- timeout: subprocess path + documented orphan-thread caveat for thread-only mode
+
+## Trinity extended roadmap (deferred)
+
+Status:
+
+- Baseline **TR-R05 / TR-R06 / TR-R08 / TR-R09** pieces exist (progress table + hook, field-repair pass, workspace **`latest_flashcard_pipeline_run`** + Know More quarantine panel, **`scripts/trinity_benchmark.py`**). Remaining work is **deeper** (resume-from-checkpoint, richer repair, full role/model surfacing, multi-candidate Judge).
+
+Items (prioritize after prod burn-in, or in parallel for research):
+
+| ID | Theme | Summary |
+| --- | --- | --- |
+| **TR-R05** | Incremental persistence | **Extend** optional **`trinity_atom_progress`** into **resumable** checkpoints across consumer restarts; optional flush policy. |
+| **TR-R06** | Targeted auto-repair | **Extend** beyond implication/moves thinness to **section-level** Writer hints from Judge. |
+| **TR-R08** | UI / API transparency | Show **model IDs**, revisions, and **per-stage timings** in product/API (beyond latest pipeline row). |
+| **TR-R09** | Research / ideabank | **Multi-candidate** drafts per stage with Judge selection; expand benchmark harness; other items from [`docs/trinity_flow.md`](trinity_flow.md) §10. |
+
 ## Phase 3 - First app-facing MVP contract
 
 Status:

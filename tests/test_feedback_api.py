@@ -24,6 +24,17 @@ from agent_chappie.worker_bridge import (
 )
 
 
+def setUpModule() -> None:
+    for key in (
+        "FLASHCARD_MLX_TRINITY",
+        "FLASHCARD_MLX_TRIAD",
+        "TRINITY_SUBPROCESS",
+        "TRINITY_MAX_WALL_SECONDS",
+        "TRINITY_PROGRESS_PERSIST",
+    ):
+        os.environ.pop(key, None)
+
+
 def _fortitude_job_payload(project_id: str, job_id: str, source_ref: str) -> dict:
     return {
         "job_request": {

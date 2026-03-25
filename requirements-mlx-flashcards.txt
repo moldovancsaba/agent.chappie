@@ -1,0 +1,4 @@
+# Optional: Apple Silicon MLX for Trinity flashcards — FLASHCARD_MLX_TRINITY=1 (see docs/trinity_architecture.md).
+# pip install -r requirements.txt -r requirements-mlx-flashcards.txt
+mlx-lm>=0.18.0
+mlx>=0.20.0
