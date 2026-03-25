@@ -895,6 +895,8 @@ export function DemoWorkspace() {
       adjustedText: overrides?.adjustedText ?? taskDecisions[task.rank]?.adjustedText ?? task.title,
       commentText: overrides?.commentText ?? taskDecisions[task.rank]?.commentText ?? "",
     };
+    const removeFromUiNow =
+      status === "done" || status === "deleted_with_annotation" || status === "deleted_silent";
 
     setTaskDecisions((current) => ({
       ...current,
@@ -965,6 +967,26 @@ export function DemoWorkspace() {
         if (projectId) {
           await reloadWorkspace(projectId);
         }
+      } else if (removeFromUiNow) {
+        setJobResult((current) => {
+          if (!current || !isCompleteResultWithTasks(current)) {
+            return current;
+          }
+          const remaining = current.result_payload.recommended_tasks.filter((item) => item.rank !== task.rank);
+          return {
+            ...current,
+            result_payload: {
+              ...current.result_payload,
+              recommended_tasks: remaining,
+            },
+          };
+        });
+        setTaskDecisions((current) => {
+          const next = { ...current };
+          delete next[task.rank];
+          return next;
+        });
+        setSelectedTask((current) => (current?.rank === task.rank ? null : current));
       }
 
       setFeedbackStatus("Saved automatically. We regenerated the checklist from your action.");
@@ -1330,6 +1352,22 @@ export function DemoWorkspace() {
       return;
     }
     setWorkspace(body);
+    setJobResult((current) => {
+      if (!current || !isCompleteResultWithTasks(current)) {
+        return current;
+      }
+      const remaining = current.result_payload.recommended_tasks.filter(
+        (task) => !(task.supporting_source_refs ?? []).includes(sourceRef)
+      );
+      return {
+        ...current,
+        result_payload: {
+          ...current.result_payload,
+          recommended_tasks: remaining,
+        },
+      };
+    });
+    setSelectedTask((current) => (current && (current.supporting_source_refs ?? []).includes(sourceRef) ? null : current));
     setManagementStatus({ tone: "success", message: "Ingested source deleted." });
   }
 
