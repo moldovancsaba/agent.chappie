@@ -432,6 +432,132 @@ function synthesizeWorkspaceFromPendingQueueJobs(
   });
 }
 
+type WorkspaceKnowledgeCard = WorkerWorkspacePayload["knowledge_cards"][number];
+
+/** Neon / older worker snapshots sometimes persist debug-style key=value insight lines. */
+function looksLikeLegacyKnowledgeKvCopy(text: string | undefined): boolean {
+  if (!text?.trim()) {
+    return false;
+  }
+  const s = text;
+  if (s.includes("knowledge_id=")) {
+    return true;
+  }
+  if (/\bprimary_kind=/.test(s)) {
+    return true;
+  }
+  if (/\btop_unit_kind=/.test(s)) {
+    return true;
+  }
+  if (/\bcluster_size=/.test(s)) {
+    return true;
+  }
+  if (/\bn_units=/.test(s)) {
+    return true;
+  }
+  if (/\bn_facts=/.test(s)) {
+    return true;
+  }
+  if (/\bsample=/.test(s)) {
+    return true;
+  }
+  if (/\bn=\d+/.test(s) && (s.includes(" · ") || s.includes("knowledge_id"))) {
+    return true;
+  }
+  return false;
+}
+
+function firstIntMatch(text: string, pattern: RegExp): number | null {
+  const m = text.match(pattern);
+  if (!m) {
+    return null;
+  }
+  const n = parseInt(m[1] ?? "", 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function legacySanitizedInsightImplication(card: WorkspaceKnowledgeCard): { insight: string; implication: string } {
+  const rawInsight = String(card.insight ?? "");
+  const rawImpl = String(card.implication ?? "");
+  const insightBad = looksLikeLegacyKnowledgeKvCopy(rawInsight);
+  const implBad = looksLikeLegacyKnowledgeKvCopy(rawImpl);
+  if (!insightBad && !implBad) {
+    return { insight: rawInsight, implication: rawImpl };
+  }
+
+  const blob = `${rawInsight} ${rawImpl}`;
+  const nUnits = firstIntMatch(blob, /\bn_units=(\d+)/);
+  const nCompetitors = firstIntMatch(blob, /\bn=(\d+)/);
+  const nFacts = firstIntMatch(blob, /\bn_facts=(\d+)/);
+  const sampleMatch = blob.match(/\bsample=([^·]+)/);
+  const sampleRaw = sampleMatch ? sampleMatch[1].trim() : "";
+  const sample = sampleRaw.length > 120 ? `${sampleRaw.slice(0, 120)}…` : sampleRaw;
+
+  let insight = rawInsight;
+  let implication = rawImpl;
+  const id = card.knowledge_id;
+
+  if (id === "market_summary") {
+    if (insightBad) {
+      insight =
+        nUnits != null
+          ? `We're holding ${nUnits} related evidence line(s) from your sources under this market read. Open the strongest excerpt to sanity-check the framing.`
+          : "Your sources contributed material to this market summary; the on-card narrative was saved in an older format. Re-sync from the latest worker for refreshed wording.";
+    }
+    if (implBad) {
+      implication =
+        "Use this as a working read of what the ingested text emphasizes—not a final judgment. Buyers compare what they can see; align your site and talk track with those comparisons.";
+    }
+  } else if (id === "competitors_detected") {
+    if (insightBad) {
+      if (nCompetitors != null && sample) {
+        insight = `We picked up ${nCompetitors} named competitor candidate(s). Strongest surface signals include ${sample}.`;
+      } else if (nCompetitors != null) {
+        insight = `We picked up ${nCompetitors} named competitor candidate(s) from this material. Verify names against your own list before acting.`;
+      } else {
+        insight =
+          "Named competitor candidates were detected from your sources; re-sync from the latest worker for a fuller narrative.";
+      }
+    }
+    if (implBad) {
+      implication = "Treat this as a draft list to verify; wrong names create wrong tasks downstream.";
+    }
+  } else if (id === "pricing_packaging") {
+    if (insightBad) {
+      insight =
+        nUnits != null
+          ? `Pricing and packaging language shows up in ${nUnits} evidence line(s) from this ingest.`
+          : "Pricing or packaging signals were captured; the on-card narrative was saved in an older format. Re-sync from the latest worker for refreshed wording.";
+    }
+    if (implBad) {
+      implication =
+        nFacts != null
+          ? `We surfaced ${nFacts} concrete pricing or packaging point(s)—buyers will compare numbers and packaging in the wild.`
+          : "Buyers will compare numbers and packaging—make sure your story matches what they see in the wild.";
+    }
+  } else {
+    if (insightBad) {
+      insight =
+        "This card was stored in an older debug format. Re-run processing or re-sync from an updated worker to restore operator-facing copy.";
+    }
+    if (implBad) {
+      implication = "Verify against your sources before acting; refresh this workspace from the worker when convenient.";
+    }
+  }
+
+  return { insight, implication };
+}
+
+function sanitizeKnowledgeCardsForDisplay(cards: WorkspaceKnowledgeCard[]): WorkspaceKnowledgeCard[] {
+  return cards.map((card) => {
+    const { insight, implication } = legacySanitizedInsightImplication(card);
+    if (insight === card.insight && implication === card.implication) {
+      return card;
+    }
+    return { ...card, insight, implication };
+  });
+}
+
 export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspacePayload> & { project_id: string }): WorkerWorkspacePayload {
   return {
     project_id: payload.project_id,
@@ -456,7 +582,7 @@ export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspace
     knowledge_summary: payload.knowledge_summary ?? [],
     monitor_jobs: payload.monitor_jobs ?? [],
     source_cards: payload.source_cards ?? [],
-    knowledge_cards: payload.knowledge_cards ?? [],
+    knowledge_cards: sanitizeKnowledgeCardsForDisplay(payload.knowledge_cards ?? []),
     managed_sources: payload.managed_sources ?? [],
     managed_jobs: payload.managed_jobs ?? [],
     latest_flashcard_pipeline_run: payload.latest_flashcard_pipeline_run ?? null,
