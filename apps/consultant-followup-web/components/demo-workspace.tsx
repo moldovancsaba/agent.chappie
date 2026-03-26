@@ -768,6 +768,18 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     setActiveView(view);
   };
 
+  const isHostedManagementUnavailable = (detail: unknown) =>
+    typeof detail === "string" &&
+    detail.toLowerCase().includes("source management is unavailable in hosted mode");
+
+  const maybeHandleHostedManagementUnavailable = (detail: unknown): boolean => {
+    if (isHostedManagementUnavailable(detail)) {
+      setManagementStatus(null);
+      return true;
+    }
+    return false;
+  };
+
   useEffect(() => {
     setSessionId(readOrCreateSessionId());
   }, []);
@@ -1201,6 +1213,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
           });
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The source could not be created." });
       return;
     }
@@ -1241,6 +1256,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     });
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The source could not be updated." });
       return;
     }
@@ -1257,6 +1275,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     });
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The source could not be deleted." });
       return;
     }
@@ -1294,6 +1315,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
         });
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The job could not be created." });
       return;
     }
@@ -1315,6 +1339,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     });
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The job could not be updated." });
       return;
     }
@@ -1331,6 +1358,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     });
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The job could not be deleted." });
       return;
     }
@@ -1419,6 +1449,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     );
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The ingested source could not be updated." });
       return;
     }
@@ -1443,6 +1476,9 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     );
     const body = await response.json();
     if (!response.ok) {
+      if (maybeHandleHostedManagementUnavailable(body.detail)) {
+        return;
+      }
       setManagementStatus({ tone: "error", message: body.detail ?? "The ingested source could not be deleted." });
       return;
     }
