@@ -1,6 +1,7 @@
 "use client";
 
 import { type ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { feedbackSchema, type JobRequest, type JobResult, type RecommendedTask } from "@/lib/contracts";
 import { generateId } from "@/lib/ids";
@@ -704,8 +705,14 @@ function normalizeWorkspaceSnapshot(payload: Partial<WorkspaceSnapshot> & { proj
   };
 }
 
-export function DemoWorkspace() {
-  const [activeView, setActiveView] = useState<AppView>("checklist");
+type DemoWorkspaceProps = {
+  forcedView?: AppView;
+  useIndividualPages?: boolean;
+};
+
+export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWorkspaceProps = {}) {
+  const router = useRouter();
+  const [activeView, setActiveView] = useState<AppView>(forcedView ?? "checklist");
   const [inputMode, setInputMode] = useState<InputMode>("text");
   const [sessionId, setSessionId] = useState("anonymous-loading");
   const [projectId, setProjectId] = useState("");
@@ -754,6 +761,15 @@ export function DemoWorkspace() {
   const [flashcardModalMode, setFlashcardModalMode] = useState<FlashcardModalMode>("view");
   const [heldFlashcardIds, setHeldFlashcardIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const navigateToView = (view: AppView) => {
+    if (useIndividualPages) {
+      const target = view === "checklist" ? "/checklist" : view === "know-more" ? "/know-more" : "/sources-jobs";
+      router.push(target);
+      return;
+    }
+    setActiveView(view);
+  };
 
   useEffect(() => {
     setSessionId(readOrCreateSessionId());
@@ -805,6 +821,13 @@ export function DemoWorkspace() {
     setFeedbackStatus("");
     setActiveView("checklist");
   }, [jobResult]);
+
+  useEffect(() => {
+    if (!forcedView) {
+      return;
+    }
+    setActiveView(forcedView);
+  }, [forcedView]);
 
   useEffect(() => {
     if (!projectId) {
@@ -1694,7 +1717,7 @@ export function DemoWorkspace() {
             <button
               key={item.view}
               className={`surface-tab sidebar-tab ${activeView === item.view ? "active" : ""}`}
-              onClick={() => setActiveView(item.view)}
+              onClick={() => navigateToView(item.view)}
               type="button"
             >
               <span>{item.label}</span>
@@ -1818,7 +1841,7 @@ export function DemoWorkspace() {
                                 <button
                                   type="button"
                                   className="intel-from-knowmore-pill"
-                                  onClick={() => setActiveView("know-more")}
+                                  onClick={() => navigateToView("know-more")}
                                   title={`Intelligence card ${task.intel_card_id} — open ${"{knowmore}"} to see the source card`}
                                 >
                                   From {"{knowmore}"}
@@ -1964,7 +1987,7 @@ export function DemoWorkspace() {
                     <button
                       className="button-secondary"
                       type="button"
-                      onClick={() => setActiveView("know-more")}
+                      onClick={() => navigateToView("know-more")}
                     >
                       Open {"{knowmore}"}
                     </button>
@@ -1972,7 +1995,7 @@ export function DemoWorkspace() {
                       className="button-secondary"
                       type="button"
                       onClick={() => {
-                        setActiveView("sources-jobs");
+                        navigateToView("sources-jobs");
                       }}
                     >
                       Add another source
@@ -1989,7 +2012,7 @@ export function DemoWorkspace() {
                       type="button"
                       onClick={() => {
                         setInputMode("text");
-                        setActiveView("sources-jobs");
+                        navigateToView("sources-jobs");
                       }}
                     >
                       Add a source
@@ -2863,7 +2886,7 @@ export function DemoWorkspace() {
                           type="button"
                           onClick={() => {
                             setFocusedSourceRef(source.source_ref);
-                            setActiveView("know-more");
+                            navigateToView("know-more");
                           }}
                         >
                           View extracted knowledge

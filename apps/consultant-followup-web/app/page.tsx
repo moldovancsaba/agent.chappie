@@ -1,9 +1,5 @@
-import { DemoWorkspace } from "@/components/demo-workspace";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return (
-    <main className="page-shell app-main">
-      <DemoWorkspace />
-    </main>
-  );
+  redirect("/checklist");
 }
