@@ -4984,7 +4984,9 @@ def knowledge_card(
         "title": feedback.get("corrected_title") if feedback and feedback.get("corrected_title") else title,
         "summary": feedback.get("corrected_summary") if feedback and feedback.get("corrected_summary") else summary,
         "items": feedback.get("corrected_items") if feedback and feedback.get("corrected_items") else items,
-        "insight": feedback_original_payload.get("insight", insight) if isinstance(feedback_original_payload, dict) else insight,
+        # Always use freshly built insight from evidence (do not pin to original_payload.insight—that
+        # snapshot freezes obsolete debug-era copy after any feedback row exists for this knowledge_id).
+        "insight": (str((feedback or {}).get("corrected_insight") or "").strip() or insight),
         "implication": feedback.get("corrected_implication") if feedback and feedback.get("corrected_implication") else implication,
         "potential_moves": feedback.get("corrected_potential_moves") if feedback and feedback.get("corrected_potential_moves") else potential_moves,
         "source_refs": unique_values(source_refs),
