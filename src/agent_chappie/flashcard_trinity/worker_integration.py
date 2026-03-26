@@ -18,6 +18,22 @@ from agent_chappie.observation_engine import SourcePackage
 
 _log = get_logger()
 
+# Intelligence cards surface in a dense grid; keep copy executive-tight (full text still lives in Trinity rows if needed later).
+_FLASHCARD_INSIGHT_MAX = 200
+_FLASHCARD_IMPLICATION_MAX = 140
+_FLASHCARD_MOVE_MAX = 100
+
+
+def _operator_flashcard_clip(text: str, max_len: int) -> str:
+    t = (text or "").strip()
+    if len(t) <= max_len:
+        return t
+    cut = t[: max_len - 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    cut = cut.rstrip(" ,;:")
+    return f"{cut}…" if cut else t[:max_len]
+
 
 @dataclass
 class TrinityWorkerResult:
@@ -306,12 +322,16 @@ def _row_to_card_score(
         confidence = 0.0
 
     gate_flags = row.hybrid_gate_flags or []
+    moves_raw = (row.potential_moves or [])[:3]
     card = {
         "card_id": card_id,
         "project_id": project_id,
-        "insight": row.enriched_text[:2000],
-        "implication": (row.implication or row.enriched_text)[:2000],
-        "potential_moves": (row.potential_moves or [])[:3],
+        "insight": _operator_flashcard_clip(row.enriched_text, _FLASHCARD_INSIGHT_MAX),
+        "implication": _operator_flashcard_clip(
+            (row.implication or row.enriched_text or "").strip(),
+            _FLASHCARD_IMPLICATION_MAX,
+        ),
+        "potential_moves": [_operator_flashcard_clip(str(m), _FLASHCARD_MOVE_MAX) for m in moves_raw if str(m).strip()],
         "fact_refs": fact_refs,
         "source_refs": source_refs,
         "segment": "signals",

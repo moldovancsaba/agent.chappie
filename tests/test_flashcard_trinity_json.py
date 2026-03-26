@@ -44,6 +44,14 @@ class FlashcardTrinityJsonTests(unittest.TestCase):
         with patch.dict(os.environ, {**base, "FLASHCARD_MLX_TRIAD": "true"}, clear=True):
             self.assertTrue(mlx_trinity_enabled())
 
+    def test_operator_flashcard_clip_respects_word_boundary(self) -> None:
+        from agent_chappie.flashcard_trinity.worker_integration import _operator_flashcard_clip
+
+        blob = " ".join(["segment"] * 40)
+        out = _operator_flashcard_clip(blob, 48)
+        self.assertLessEqual(len(out), 49)
+        self.assertTrue(out.endswith("…"))
+
 
 if __name__ == "__main__":
     unittest.main()

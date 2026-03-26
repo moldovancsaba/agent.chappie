@@ -3822,28 +3822,27 @@ def build_flashcards_from_atomic_facts(
         top_examples = [item for item in competitor_items[:6] if isinstance(item, str) and item.strip()][:4]
         if value <= 0:
             insight = _clip_task_copy(
-                "We did not lock onto multiple named competitors in this pass—the text may not name firms clearly enough yet.",
-                320,
+                "We did not lock onto multiple named competitors—your text may not name firms clearly yet.",
+                200,
             )
         elif top_examples:
             insight = _clip_task_copy(
-                f"We counted about {value} named competitor candidate(s) in your material. "
-                f"Examples include: {', '.join(top_examples)}.",
-                400,
+                f"About {value} named competitor candidate(s); examples: {', '.join(top_examples)}.",
+                220,
             )
         else:
             insight = _clip_task_copy(
-                f"We counted about {value} named competitor candidate(s); names are still noisy at this confidence.",
-                320,
+                f"About {value} named competitor candidate(s); names are still noisy at this confidence.",
+                200,
             )
         implication = _clip_task_copy(
-            "Automatic name extraction is imperfect—verify spellings and who you actually compete with before acting.",
-            260,
+            "Verify names and real competitive overlap before acting—extraction is imperfect.",
+            140,
         )
         moves = [
-            "Cross-check this list against your CRM, win/loss notes, or internal battlecards.",
-            "If a name is junk, use Decline and teach so we stop surfacing it.",
-            "Add one short source that explicitly lists who you sell against if this feels thin.",
+            _clip_task_copy("Cross-check against CRM, win/loss notes, or battlecards.", 100),
+            _clip_task_copy("Decline and teach if a name is junk.", 100),
+            _clip_task_copy("Add a source that explicitly lists who you sell against.", 100),
         ]
         card(
             insight=insight,
@@ -3859,27 +3858,27 @@ def build_flashcards_from_atomic_facts(
         value = bool((subscription_fact.get("fact_value") or {}).get("value"))
         insight = _clip_task_copy(
             (
-                "Your sources mention subscription-style language—recurring plans, memberships, or monthly packaging."
+                "Sources mention subscription-style language—recurring plans or monthly packaging."
                 if value
-                else "We did not see strong subscription or recurring-plan language in this ingest."
+                else "No strong subscription or recurring-plan language in this ingest."
             ),
-            280,
+            190,
         )
         implication = _clip_task_copy(
             (
-                "Buyers may benchmark you on renewal friction and plan clarity when that language is present."
+                "Buyers may compare renewal friction and plan clarity when that theme appears."
                 if value
-                else "If subscriptions matter for you, add copy that states how billing and renewals work."
+                else "If subscriptions matter, state billing and renewals plainly on one page."
             ),
-            220,
+            140,
         )
         card(
             insight=insight,
             implication=implication,
             potential_moves=[
-                "Compare your public pricing page to what prospects see in onboarding emails.",
-                "Spell out trial-to-paid and cancellation in one plain paragraph if it is ambiguous.",
-                "Teach the card if this misreads your actual packaging model.",
+                _clip_task_copy("Align public pricing with what onboarding emails promise.", 100),
+                _clip_task_copy("State trial-to-paid and cancellation in one short paragraph.", 100),
+                _clip_task_copy("Teach the card if this misreads your packaging model.", 100),
             ],
             fact_refs=[subscription_fact["fact_id"]],
             source_refs=[subscription_fact.get("source_ref") or ""],
@@ -3896,22 +3895,22 @@ def build_flashcards_from_atomic_facts(
             continue
         kind_label = humanize_evidence_unit_kind(signal_type)
         insight = _clip_task_copy(
-            f"In this material we flagged about {count} snippet(s) that read like {kind_label}.",
-            280,
+            f"About {count} snippet(s) read like {kind_label} in this material.",
+            180,
         )
         if looks_generic_text(insight):
             continue
         implication = _clip_task_copy(
-            "That emphasis shows where the document spends competitive energy—it is a clue, not a final judgment.",
-            220,
+            "Shows where the document stresses competitive themes—a clue, not a verdict.",
+            130,
         )
         card(
             insight=insight,
             implication=implication,
             potential_moves=[
-                "Skim your own homepage and pricing page for the same theme—are you answering it?",
-                "If this is noise for your market, Decline and teach so we weight it down.",
-                "Add a sharper source if you need more than keyword-level confidence.",
+                _clip_task_copy("Check whether your site answers the same theme clearly.", 100),
+                _clip_task_copy("Decline and teach if this is noise for your market.", 100),
+                _clip_task_copy("Add a sharper source if keyword-level signal is not enough.", 100),
             ],
             fact_refs=[fact["fact_id"]],
             source_refs=[fact.get("source_ref") or ""],
@@ -3923,21 +3922,20 @@ def build_flashcards_from_atomic_facts(
         fallback_refs = [fact["fact_id"] for fact in atomic_facts[:3]]
         fallback_source_refs = [fact.get("source_ref") or "" for fact in atomic_facts[:3]]
         ctx = (kyc_context or "").strip()
-        ctx_bit = f"{ctx[:220]}… " if len(ctx) > 220 else (f"{ctx} " if ctx else "")
+        ctx_bit = f"{ctx[:100]}… " if len(ctx) > 100 else (f"{ctx} " if ctx else "")
         card(
             insight=_clip_task_copy(
-                f"{ctx_bit}We could not shape the usual structured flashcards from this pass yet, "
-                f"but {len(atomic_facts)} underlying fact(s) were logged for the project.",
-                320,
-            ),
-            implication=_clip_task_copy(
-                "Try a clearer memo, deck excerpt, or pasted page—then re-run so Know More has richer text to judge.",
+                f"{ctx_bit}Structured flashcards are not ready yet; {len(atomic_facts)} fact(s) were logged.",
                 220,
             ),
+            implication=_clip_task_copy(
+                "Try a tighter memo or key pages—then re-run so Know More has clearer text.",
+                140,
+            ),
             potential_moves=[
-                "Upload material that names competitors, pricing, and proof on one page.",
-                "Shorten very long PDFs to the pages you care about before ingest.",
-                "Use Decline and teach on any card that misreads you once cards appear.",
+                _clip_task_copy("Upload one page that names competitors, pricing, and proof.", 100),
+                _clip_task_copy("Trim long PDFs to the sections you care about before ingest.", 100),
+                _clip_task_copy("Decline and teach any card that misreads you.", 100),
             ],
             fact_refs=fallback_refs,
             source_refs=fallback_source_refs,

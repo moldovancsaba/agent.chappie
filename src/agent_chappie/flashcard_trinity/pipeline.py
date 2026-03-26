@@ -80,6 +80,7 @@ DRAFTER_SYSTEM = (
 
 WRITER_SYSTEM = (
     "You enrich one intelligence atom into clear professional language for executives. "
+    "Keep the rewritten text to at most two crisp sentences and under 220 characters—no preamble, no bullets. "
     "Respond with ONLY one JSON object (no markdown) with keys: "
     '"text" (rewritten, concise), "w_conf" (0-1, language fidelity to the atom), '
     '"w_impact" (0-1, strength of the business point).'
@@ -90,14 +91,14 @@ JUDGE_SYSTEM = (
     "respond with ONLY one JSON object (no markdown): "
     '"j_conf" (0-1, logical consistency and grounding), '
     '"j_impact" (0-1, strategic importance), '
-    '"implication" (one sentence consequence for the business), '
-    '"potential_moves" (array of up to 3 short actionable strings). '
+    '"implication" (one sentence, under 160 characters, calm professional tone—no hype), '
+    '"potential_moves" (array of exactly 3 strings; each under 100 characters, imperative voice, no jargon dumps). '
     "Be strict: low quality → low j_conf."
 )
 
 _FIELD_REPAIR_HINT = (
-    "The judge needs a complete card: write one clear sentence for implication (≥20 chars) "
-    "and exactly 3 short actionable potential_moves. Keep w_conf/w_impact honest."
+    "The judge needs a complete card: one implication sentence (20–160 chars, professional) "
+    "and exactly 3 potential_moves (each under 100 chars). Keep w_conf/w_impact honest."
 )
 
 
