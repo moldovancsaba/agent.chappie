@@ -26,11 +26,7 @@ export function isDirectWorkerEnabled(): boolean {
 export function describeDirectWorkerBlock(): string {
   const mode = env.agentBridgeMode;
   if (mode === "queue") {
-    return (
-      "Queue mode (AGENT_BRIDGE_MODE=queue): Sources & Jobs and similar controls need a direct Mac HTTP bridge, which is intentionally off on the hosted app. " +
-      "Use the main context submission flow; the Mac Mini should run scripts/worker_queue_consumer.py. " +
-      "For full management UI, run locally with AGENT_BRIDGE_MODE=worker and AGENT_API_BASE_URL pointing at worker_bridge.py."
-    );
+    return "Source management is unavailable in hosted mode. Add context from the main flow and the worker queue will process it.";
   }
   if (mode === "demo") {
     return "Demo mode (AGENT_BRIDGE_MODE=demo): worker management APIs are disabled.";
