@@ -270,6 +270,45 @@ function confidenceLabel(confidence: number | undefined) {
   return "Low";
 }
 
+type FlashcardRow = WorkspaceSnapshot["visible_intelligence_cards"][number];
+type FlashcardModalMode = "view" | "decline";
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function flashcardImpactNormalized(card: FlashcardRow) {
+  return clamp01((Number(card.impact_score) || 0) / 100);
+}
+
+function flashcardTitle(card: FlashcardRow) {
+  if (!card.segment || card.segment === "signals") {
+    return "Market Summary";
+  }
+  return titleCaseWords(card.segment.replaceAll("_", " "));
+}
+
+function flashcardPreviewText(card: FlashcardRow, maxChars = 160) {
+  const full = [card.insight, card.implication].filter(Boolean).join(" ").trim();
+  if (full.length <= maxChars) {
+    return full;
+  }
+  const cut = full.slice(0, maxChars - 1);
+  const soft = cut.includes(" ") ? cut.slice(0, cut.lastIndexOf(" ")) : cut;
+  return `${soft.trimEnd()}…`;
+}
+
+function flashcardHeatStyle(card: FlashcardRow) {
+  const impact = flashcardImpactNormalized(card);
+  const confidence = clamp01(Number(card.confidence) || 0);
+  const impactHue = Math.round(220 - 220 * impact);
+  const confidenceHue = Math.round(220 - 220 * confidence);
+  return {
+    borderColor: `hsl(${impactHue} 82% 52%)`,
+    background: `linear-gradient(145deg, hsl(${confidenceHue} 88% 56% / 0.24), hsl(${confidenceHue} 88% 48% / 0.08))`,
+  };
+}
+
 function formatTimestamp(value: string | null | undefined) {
   if (!value) {
     return "Not yet";
@@ -711,7 +750,9 @@ export function DemoWorkspace() {
   const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
   const [knowledgeDeleteReason, setKnowledgeDeleteReason] = useState<Record<string, string>>({});
   const [flashcardTeachNote, setFlashcardTeachNote] = useState<Record<string, string>>({});
-  const [flashcardTeachOpen, setFlashcardTeachOpen] = useState<Record<string, boolean>>({});
+  const [flashcardModalCard, setFlashcardModalCard] = useState<FlashcardRow | null>(null);
+  const [flashcardModalMode, setFlashcardModalMode] = useState<FlashcardModalMode>("view");
+  const [heldFlashcardIds, setHeldFlashcardIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1379,17 +1420,27 @@ export function DemoWorkspace() {
       delete next[factId];
       return next;
     });
-    setFlashcardTeachOpen((current) => {
-      const next = { ...current };
-      delete next[factId];
-      return next;
-    });
+    setFlashcardModalCard((current) => (current?.card_id === factId ? null : current));
     setManagementStatus({
       tone: "success",
       message:
         action === "teach"
           ? "Recorded. We will steer away from this pattern when generating recommendations."
           : "Removed from your view.",
+    });
+  }
+
+  function openFlashcardModal(card: FlashcardRow, mode: FlashcardModalMode = "view") {
+    setFlashcardModalCard(card);
+    setFlashcardModalMode(mode);
+  }
+
+  function holdFlashcardForLater(cardId: string) {
+    setHeldFlashcardIds((current) => (current.includes(cardId) ? current : [...current, cardId]));
+    setFlashcardModalCard(null);
+    setManagementStatus({
+      tone: "success",
+      message: "Held for later. This flashcard is hidden from the current board.",
     });
   }
 
@@ -1546,10 +1597,11 @@ export function DemoWorkspace() {
   const filteredKnowledgeCards = focusedSourceRef
     ? (workspace?.knowledge_cards ?? []).filter((card) => card.source_refs.includes(focusedSourceRef))
     : (workspace?.knowledge_cards ?? []);
-  const visibleFlashcards =
+  const visibleFlashcardsRaw =
     workspace && workspace.visible_intelligence_cards.length
       ? workspace.visible_intelligence_cards
       : [];
+  const visibleFlashcards = visibleFlashcardsRaw.filter((card) => !heldFlashcardIds.includes(card.card_id));
   const quarantinedFlashcards = useMemo(
     () => (workspace?.intelligence_cards ?? []).filter((c) => c.state === "quarantine"),
     [workspace?.intelligence_cards],
@@ -2160,92 +2212,48 @@ export function DemoWorkspace() {
                       <article
                         className={`intel-card mini flashcard ${classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs)}`}
                         key={card.card_id}
+                        style={flashcardHeatStyle(card)}
+                        onClick={() => openFlashcardModal(card, "view")}
                       >
                         <div className="operator-head">
-                          <h3>{titleCaseWords(card.segment || "card")}</h3>
-                          <span>
-                            {confidenceLabel(card.confidence)} ({card.confidence.toFixed(2)}) · impact{" "}
-                            {Math.round(card.impact_score)}
-                          </span>
+                          <h3>{flashcardTitle(card)}</h3>
                         </div>
-                        <p className="surface-summary">{originLabel(classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs))}</p>
-                        <p className="flashcard-body">{card.insight}</p>
-                        <p className="surface-summary">{card.implication}</p>
-                        {card.potential_moves.length ? (
-                          <ul>
-                            {card.potential_moves.slice(0, 2).map((move, index) => (
-                              <li key={`${card.card_id}-move-${index}`}>{move}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        {card.expires_at ? <p className="surface-summary">Expires {formatTimestamp(card.expires_at)}</p> : null}
-                        {card.source_refs[0] ? (
-                          <button
-                            className="button-secondary flashcard-source-link"
-                            type="button"
-                            onClick={() => setFocusedSourceRef(card.source_refs[0] ?? null)}
-                          >
-                            View linked source
-                          </button>
-                        ) : null}
+                        <p className="surface-summary">Impact {Math.round(flashcardImpactNormalized(card) * 100)}%</p>
+                        <p className="surface-summary">Confidence {Math.round((card.confidence || 0) * 100)}%</p>
+                        <p className="surface-summary">pending · extracted</p>
+                        <p className="flashcard-body">{flashcardPreviewText(card, 160)}</p>
                         <div className="task-actions compact-actions flashcard-actions">
                           <button
-                            className="decision-button"
+                            className="decision-button icon-action"
                             type="button"
-                            onClick={() => void actOnFactFlashcard(card.card_id, "forget")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setManagementStatus({ tone: "success", message: "Accepted. Keeping this flashcard active." });
+                            }}
                           >
-                            Delete and forget
+                            ✅
                           </button>
                           <button
-                            className="decision-button reject"
+                            className="decision-button icon-action"
                             type="button"
-                            onClick={() =>
-                              setFlashcardTeachOpen((current) => ({
-                                ...current,
-                                [card.card_id]: !current[card.card_id],
-                              }))
-                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openFlashcardModal(card, "view");
+                            }}
                           >
-                            Delete and teach
+                            📝
+                          </button>
+                          <button
+                            className="decision-button reject icon-action"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openFlashcardModal(card, "decline");
+                            }}
+                          >
+                            ❌
                           </button>
                         </div>
-                        {flashcardTeachOpen[card.card_id] ? (
-                          <div className="adjust-shell">
-                            <label htmlFor={`flashcard-teach-${card.card_id}`}>What should we avoid next time?</label>
-                            <textarea
-                              id={`flashcard-teach-${card.card_id}`}
-                              value={flashcardTeachNote[card.card_id] ?? ""}
-                              onChange={(event) =>
-                                setFlashcardTeachNote((current) => ({
-                                  ...current,
-                                  [card.card_id]: event.target.value,
-                                }))
-                              }
-                              placeholder="Tell us what pattern should be avoided in the future."
-                            />
-                            <div className="task-actions compact-actions">
-                              <button
-                                className="decision-button reject"
-                                type="button"
-                                onClick={() => void actOnFactFlashcard(card.card_id, "teach")}
-                              >
-                                Confirm teach
-                              </button>
-                              <button
-                                className="decision-button"
-                                type="button"
-                                onClick={() =>
-                                  setFlashcardTeachOpen((current) => ({
-                                    ...current,
-                                    [card.card_id]: false,
-                                  }))
-                                }
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
                       </article>
                     ))}
                   </div>
@@ -2979,6 +2987,83 @@ export function DemoWorkspace() {
             </section>
           </aside>
         </section>
+        ) : null}
+        {flashcardModalCard ? (
+          <div
+            className="flashcard-modal-backdrop"
+            onClick={() => setFlashcardModalCard(null)}
+            role="presentation"
+          >
+            <article
+              className="flashcard-modal"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Flashcard details"
+            >
+              <div className="operator-head">
+                <h3>{flashcardTitle(flashcardModalCard)}</h3>
+                <button
+                  className="button-secondary"
+                  type="button"
+                  onClick={() => setFlashcardModalCard(null)}
+                >
+                  Close
+                </button>
+              </div>
+              <p className="surface-summary">Impact {Math.round(flashcardImpactNormalized(flashcardModalCard) * 100)}%</p>
+              <p className="surface-summary">Confidence {Math.round((flashcardModalCard.confidence || 0) * 100)}%</p>
+              <p className="surface-summary">pending · extracted</p>
+              <p>{flashcardModalCard.insight}</p>
+              <p className="surface-summary">{flashcardModalCard.implication}</p>
+              {flashcardModalCard.potential_moves.length ? (
+                <ul>
+                  {flashcardModalCard.potential_moves.map((move, index) => (
+                    <li key={`${flashcardModalCard.card_id}-modal-move-${index}`}>{move}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {flashcardModalMode === "decline" ? (
+                <div className="adjust-shell">
+                  <label htmlFor={`flashcard-teach-${flashcardModalCard.card_id}`}>What should we avoid?</label>
+                  <textarea
+                    id={`flashcard-teach-${flashcardModalCard.card_id}`}
+                    value={flashcardTeachNote[flashcardModalCard.card_id] ?? ""}
+                    onChange={(event) =>
+                      setFlashcardTeachNote((current) => ({
+                        ...current,
+                        [flashcardModalCard.card_id]: event.target.value,
+                      }))
+                    }
+                    placeholder="Tell us what to avoid next time."
+                  />
+                  <div className="task-actions compact-actions">
+                    <button
+                      className="decision-button"
+                      type="button"
+                      onClick={() => holdFlashcardForLater(flashcardModalCard.card_id)}
+                    >
+                      Hold for later
+                    </button>
+                    <button
+                      className="decision-button"
+                      type="button"
+                      onClick={() => void actOnFactFlashcard(flashcardModalCard.card_id, "forget")}
+                    >
+                      Delete
+                    </button>
+                    <button
+                      className="decision-button reject"
+                      type="button"
+                      onClick={() => void actOnFactFlashcard(flashcardModalCard.card_id, "teach")}
+                    >
+                      Delete and teach
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          </div>
         ) : null}
       </div>
     </section>
