@@ -1625,7 +1625,7 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
   const visibleFlashcardsRaw =
     workspace && workspace.visible_intelligence_cards.length
       ? workspace.visible_intelligence_cards
-      : [];
+      : (workspace?.intelligence_cards ?? []).filter((card) => card.state !== "quarantine");
   const visibleFlashcards = visibleFlashcardsRaw.filter((card) => !heldFlashcardIds.includes(card.card_id));
   const quarantinedFlashcards = useMemo(
     () => (workspace?.intelligence_cards ?? []).filter((c) => c.state === "quarantine"),
@@ -2597,9 +2597,7 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
                       <div className="operator-head">
                         <div>
                           <strong>{source.label}</strong>
-                          <span>
-                            {sourceKindLabel(source.source_kind)} · Last update {formatTimestamp(source.created_at)}
-                          </span>
+                          <span>{` · ${sourceKindLabel(source.source_kind)} · Last update ${formatTimestamp(source.created_at)}`}</span>
                         </div>
                         <span className="asset-badge">
                           {originLabel(isAutoCollectedSourceKind(source.source_kind) ? "auto-collected" : "user-provided")} · {source.signal_count} signals
