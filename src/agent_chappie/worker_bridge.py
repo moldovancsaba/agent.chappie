@@ -1517,7 +1517,10 @@ def build_knowledge_cards(
         out: list[str] = []
         seen: set[str] = set()
         for item in items:
-            c = _clip_task_copy(str(item).strip(), 220)
+            raw = str(item).strip()
+            if _looks_like_debug_potential_move_line(raw):
+                raw = _strip_debug_potential_move_prefix(raw)
+            c = _clip_task_copy(raw, 220)
             if not c:
                 continue
             key = c.lower()
@@ -4954,6 +4957,46 @@ def parse_json_list(value: Any) -> list[str]:
     return []
 
 
+_DEBUG_POTENTIAL_MOVE_PREFIX = re.compile(r"^\s*row\[\d+\]\s*=\s*", re.IGNORECASE)
+
+
+def _strip_debug_potential_move_prefix(line: str) -> str:
+    s = str(line).strip()
+    return _DEBUG_POTENTIAL_MOVE_PREFIX.sub("", s, count=1).strip()
+
+
+def _looks_like_debug_potential_move_line(line: str) -> bool:
+    return bool(_DEBUG_POTENTIAL_MOVE_PREFIX.match(str(line).strip()))
+
+
+def normalize_operator_potential_moves(corrected: Any, fresh: list[str]) -> list[str]:
+    """Use feedback-corrected moves when sane; never emit row[]= debug lines."""
+    fresh_list = [str(x).strip() for x in fresh if str(x).strip()]
+    parsed = parse_json_list(corrected) if corrected is not None else []
+    if not parsed:
+        return fresh_list[:3]
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in parsed:
+        line = str(raw).strip()
+        if not line:
+            continue
+        if _looks_like_debug_potential_move_line(line):
+            line = _strip_debug_potential_move_prefix(line)
+        if not line or _looks_like_debug_potential_move_line(line):
+            continue
+        key = line.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(_clip_task_copy(line, 220))
+        if len(cleaned) >= 3:
+            break
+
+    return cleaned[:3] if cleaned else fresh_list[:3]
+
+
 def knowledge_card(
     knowledge_id: str,
     title: str,
@@ -4988,7 +5031,10 @@ def knowledge_card(
         # snapshot freezes obsolete debug-era copy after any feedback row exists for this knowledge_id).
         "insight": (str((feedback or {}).get("corrected_insight") or "").strip() or insight),
         "implication": feedback.get("corrected_implication") if feedback and feedback.get("corrected_implication") else implication,
-        "potential_moves": feedback.get("corrected_potential_moves") if feedback and feedback.get("corrected_potential_moves") else potential_moves,
+        "potential_moves": normalize_operator_potential_moves(
+            feedback.get("corrected_potential_moves") if feedback else None,
+            potential_moves,
+        ),
         "source_refs": unique_values(source_refs),
         "evidence_refs": unique_values([row["signal_id"] for row in evidence_rows]),
         "confidence": round(confidence, 2),
@@ -5173,10 +5219,33 @@ def prettify_auto_research_excerpt(text: str) -> str:
     return t
 
 
-def strongest_unit_excerpt(units: list[dict[str, Any]]) -> str | None:
+def strongest_unit_excerpt(
+    units: list[dict[str, Any]],
+    *,
+    allow_operator_unfriendly_fallback: bool = True,
+) -> str | None:
     if not units:
         return None
-    strongest = max(units, key=lambda unit: float(unit.get("confidence") or 0))
+
+    def _operator_friendly(u: dict[str, Any]) -> bool:
+        blob = f"{u.get('excerpt') or ''} {u.get('label') or ''}".lower().strip()
+        if not blob:
+            return True
+        if is_legal_or_evidentiary_context(blob):
+            return False
+        if is_non_commercial_research_context(blob):
+            return False
+        return True
+
+    preferred = [u for u in units if _operator_friendly(u)]
+    if preferred:
+        pool = preferred
+    elif allow_operator_unfriendly_fallback:
+        pool = units
+    else:
+        return None
+
+    strongest = max(pool, key=lambda unit: float(unit.get("confidence") or 0))
     excerpt = str(strongest.get("excerpt") or "").strip()
     if not excerpt:
         return None
@@ -5473,7 +5542,7 @@ def source_refs_for_competitor_items(items: list[str], evidence_units: list[dict
 def strongest_competitor_excerpt(items: list[str], evidence_units: list[dict[str, Any]]) -> str | None:
     lowered_items = {item.lower() for item in items}
     matched = [unit for unit in evidence_units if str(unit.get("competitor") or "").lower() in lowered_items]
-    return strongest_unit_excerpt(matched)
+    return strongest_unit_excerpt(matched, allow_operator_unfriendly_fallback=False)
 
 
 def missing_evidence_categories(units: list[dict[str, Any]]) -> list[str]:

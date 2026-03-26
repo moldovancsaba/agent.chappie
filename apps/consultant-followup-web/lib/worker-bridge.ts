@@ -548,14 +548,79 @@ function legacySanitizedInsightImplication(card: WorkspaceKnowledgeCard): { insi
   return { insight, implication };
 }
 
-function sanitizeKnowledgeCardsForDisplay(cards: WorkspaceKnowledgeCard[]): WorkspaceKnowledgeCard[] {
-  return cards.map((card) => {
-    const { insight, implication } = legacySanitizedInsightImplication(card);
-    if (insight === card.insight && implication === card.implication) {
-      return card;
+function stripLegacyPotentialMoveRowPrefix(move: string): string {
+  return move.replace(/^\s*row\[\d+\]\s*=\s*/i, "").trim();
+}
+
+const GENERIC_COMPETITOR_POTENTIAL_MOVES = [
+  "Verify each extracted name against who you actually compete with.",
+  "Map one rival to a page you control so comparisons stay fair.",
+  "Decline or teach any name the system got wrong.",
+];
+
+function sanitizePotentialMovesForDisplay(moves: string[], knowledgeId: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let sawRowPrefix = false;
+  for (const m of moves) {
+    const raw = String(m).trim();
+    if (/^\s*row\[\d+\]\s*=/i.test(raw)) {
+      sawRowPrefix = true;
     }
-    return { ...card, insight, implication };
-  });
+    const s = stripLegacyPotentialMoveRowPrefix(raw);
+    if (!s) {
+      continue;
+    }
+    const k = s.toLowerCase();
+    if (seen.has(k)) {
+      continue;
+    }
+    seen.add(k);
+    out.push(s);
+    if (out.length >= 3) {
+      break;
+    }
+  }
+  if (out.length === 0 && sawRowPrefix && knowledgeId === "competitors_detected") {
+    return GENERIC_COMPETITOR_POTENTIAL_MOVES.slice(0, 3);
+  }
+  return out.length ? out : moves;
+}
+
+/** Competitor cards sometimes picked auto-research legal blogs; hide clearly wrong excerpts client-side. */
+function sanitizeStrongestExcerptForDisplay(card: WorkspaceKnowledgeCard): string | null | undefined {
+  const ex = card.strongest_excerpt;
+  if (!ex || card.knowledge_id !== "competitors_detected") {
+    return ex;
+  }
+  if (
+    /\bhearsay\b/i.test(ex) ||
+    /\bnontestimonial\b/i.test(ex) ||
+    /\brule\s+80[12]\b/i.test(ex) ||
+    /pumphreylawfirm\.com/i.test(ex)
+  ) {
+    return null;
+  }
+  return ex;
+}
+
+function sanitizeKnowledgeCardDisplay(card: WorkspaceKnowledgeCard): WorkspaceKnowledgeCard {
+  const { insight, implication } = legacySanitizedInsightImplication(card);
+  const pmIn = card.potential_moves ?? [];
+  const potential_moves = sanitizePotentialMovesForDisplay(pmIn, card.knowledge_id);
+  const strongest_excerpt = sanitizeStrongestExcerptForDisplay(card);
+
+  const pmChanged = JSON.stringify(potential_moves) !== JSON.stringify(pmIn);
+  const exChanged = strongest_excerpt !== card.strongest_excerpt;
+
+  if (insight === card.insight && implication === card.implication && !pmChanged && !exChanged) {
+    return card;
+  }
+  return { ...card, insight, implication, potential_moves, strongest_excerpt };
+}
+
+function sanitizeKnowledgeCardsForDisplay(cards: WorkspaceKnowledgeCard[]): WorkspaceKnowledgeCard[] {
+  return cards.map((card) => sanitizeKnowledgeCardDisplay(card));
 }
 
 export function normalizeWorkerWorkspacePayload(payload: Partial<WorkerWorkspacePayload> & { project_id: string }): WorkerWorkspacePayload {

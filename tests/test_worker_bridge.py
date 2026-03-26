@@ -29,9 +29,13 @@ from agent_chappie.worker_bridge import (
     build_auto_research_sources,
     build_workspace_payload,
     infer_domain_from_sources,
+    knowledge_card,
+    normalize_operator_potential_moves,
     process_job_payload,
     process_task_feedback,
     select_task_support_bundle,
+    strongest_competitor_excerpt,
+    strongest_unit_excerpt,
     synthesize_task_expected_advantage,
     synthesize_task_title,
 )
@@ -1106,6 +1110,75 @@ class WorkerBridgeCopyRegressionTests(unittest.TestCase):
         self.assertNotIn("'s its ", adv)
         self.assertIn("conversion", adv.lower())
         self.assertIn("coachup", adv.lower())
+
+
+class WorkerBridgeKnowledgeCardSanitizationTests(unittest.TestCase):
+    def test_normalize_operator_potential_moves_strips_row_prefix(self) -> None:
+        out = normalize_operator_potential_moves(
+            ["row[0]=CoachUp", "row[1]=Superprof"],
+            ["Check positioning", "Verify pricing", "Review packaging"],
+        )
+        self.assertEqual(out[0], "CoachUp")
+        self.assertEqual(out[1], "Superprof")
+
+    def test_normalize_operator_potential_moves_keeps_real_corrected_lines(self) -> None:
+        out = normalize_operator_potential_moves(
+            ["Verify CoachUp positioning on a sales call"],
+            ["fallback"],
+        )
+        self.assertEqual(out, ["Verify CoachUp positioning on a sales call"])
+
+    def test_knowledge_card_normalizes_debug_corrected_potential_moves(self) -> None:
+        card = knowledge_card(
+            "competitors_detected",
+            "Competitors Detected",
+            "Summary",
+            ["CoachUp"],
+            "Insight",
+            "Implication",
+            ["Map each named rival to a landing page you control.", "Confirm overlap with your ICP.", "Decline bad extractions."],
+            [],
+            ["src1"],
+            0.7,
+            {
+                "competitors_detected": {
+                    "knowledge_id": "competitors_detected",
+                    "status": "pending",
+                    "corrected_potential_moves": ["row[0]=CoachUp", "row[1]=Superprof"],
+                }
+            },
+        )
+        self.assertEqual(card["potential_moves"][0], "CoachUp")
+        self.assertEqual(card["potential_moves"][1], "Superprof")
+
+    def test_strongest_unit_excerpt_prefers_non_legal_when_available(self) -> None:
+        units = [
+            {
+                "excerpt": "Testimonial vs. Nontestimonial Hearsay matter asserted rule 801",
+                "label": "Law blog",
+                "confidence": 0.99,
+            },
+            {
+                "excerpt": "CoachUp lists coaching packages and per-session pricing on the pricing page.",
+                "label": "SaaS",
+                "confidence": 0.55,
+            },
+        ]
+        excerpt = strongest_unit_excerpt(units)
+        self.assertIsNotNone(excerpt)
+        self.assertIn("CoachUp", excerpt)
+        self.assertNotIn("hearsay", excerpt.lower())
+
+    def test_strongest_competitor_excerpt_none_when_only_legal_units(self) -> None:
+        units = [
+            {
+                "competitor": "CoachUp",
+                "excerpt": "Auto Research URL: https://example.com/hearsay\nAuto Research Title: Hearsay rule 802",
+                "label": "x",
+                "confidence": 0.95,
+            },
+        ]
+        self.assertIsNone(strongest_competitor_excerpt(["CoachUp"], units))
 
 
 if __name__ == "__main__":
