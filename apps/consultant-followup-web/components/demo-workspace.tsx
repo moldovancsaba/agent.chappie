@@ -2314,13 +2314,6 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
                 </article>
               ) : null}
 
-              {filteredKnowledgeCards.length ? (
-                <article className="intel-card" style={{ marginTop: "1rem" }}>
-                  <p className="section-subcopy" style={{ margin: 0 }}>
-                    Legacy knowledge cards are hidden on this page so you can focus on flashcards.
-                  </p>
-                </article>
-              ) : null}
             </section>
           </div>
         </section>
