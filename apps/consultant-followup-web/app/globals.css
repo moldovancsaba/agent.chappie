@@ -1053,6 +1053,26 @@ button.intel-from-knowmore-pill:hover {
   line-height: 1.6;
 }
 
+/* Knowledge cards use a 3-column grid; a long meta line + flex-shrink:0 was starving the title width. */
+.intel-columns .operator-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.intel-columns .operator-head h3 {
+  min-width: unset;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.intel-columns .operator-head > span {
+  flex-shrink: 1;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
 .operator-head {
   display: flex;
   justify-content: space-between;
