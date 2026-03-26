@@ -370,7 +370,6 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
             )
         else:
             trinity_wr = None
-    trinity_strict_block = False
     if trinity_wr is None:
         candidate_cards = build_flashcards_from_atomic_facts(
             source_package.project_id,
@@ -398,38 +397,24 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
                 path=config.local_db_path,
             )
     else:
-        from agent_chappie.flashcard_trinity.worker_integration import heuristic_flashcards_allowed
-
-        if trinity_on and not heuristic_flashcards_allowed():
-            candidate_cards = []
-            card_scores = []
-            trinity_strict_block = True
-            if job_id:
-                record_flashcard_pipeline_run(
-                    job_id,
-                    source_package.project_id,
-                    "trinity_strict_blocked",
-                    reason=str(trinity_wr.detail.get("outcome", "")),
-                    detail=trinity_wr.detail,
-                    path=config.local_db_path,
-                )
-        else:
-            candidate_cards = build_flashcards_from_atomic_facts(
+        # Never leave Know More empty: if Trinity returns no usable rows, always fall back
+        # to heuristic flashcards so operators still get cards to confirm/teach.
+        candidate_cards = build_flashcards_from_atomic_facts(
+            source_package.project_id,
+            atomic_facts,
+            refreshed_sources,
+            source_package.project_summary,
+        )
+        card_scores = score_flashcards(source_package.project_id, candidate_cards, atomic_facts, weight_profile)
+        if job_id:
+            record_flashcard_pipeline_run(
+                job_id,
                 source_package.project_id,
-                atomic_facts,
-                refreshed_sources,
-                source_package.project_summary,
+                "heuristic_fallback",
+                reason=str(trinity_wr.detail.get("outcome", "")),
+                detail=trinity_wr.detail,
+                path=config.local_db_path,
             )
-            card_scores = score_flashcards(source_package.project_id, candidate_cards, atomic_facts, weight_profile)
-            if job_id:
-                record_flashcard_pipeline_run(
-                    job_id,
-                    source_package.project_id,
-                    "heuristic_fallback",
-                    reason=str(trinity_wr.detail.get("outcome", "")),
-                    detail=trinity_wr.detail,
-                    path=config.local_db_path,
-                )
     avoid_intel = _avoid_intel_card_pattern_keys(source_package.project_id, config.local_db_path)
     avoid_intel_copy = _avoid_intel_card_copy_patterns(source_package.project_id, config.local_db_path)
     candidate_cards = [
@@ -478,16 +463,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
         feedback_rows=feedback_rows,
         generation_memory_rows=generation_memory_rows,
     )
-    if trinity_strict_block:
-        oc = str(trinity_wr.detail.get("outcome", "")) if trinity_wr else ""
-        result_payload = {
-            "reason": (
-                "Trinity is required (FLASHCARD_MLX_TRINITY) but produced no usable promoted flashcards; "
-                "heuristic fallback is disabled. Set AGENT_ALLOW_HEURISTIC_FLASHCARDS=1 for development "
-                f"or fix MLX/models. Last outcome: {oc}."
-            ),
-        }
-    elif nba_tasks:
+    if nba_tasks:
         nba_ok = True
         try:
             for _task in nba_tasks:
@@ -511,18 +487,7 @@ def process_job_payload(payload: dict[str, Any], config: WorkerBridgeConfig) -> 
             }
     used_source_refs: set[str] = set()
 
-    if trinity_strict_block:
-        job_result = validate_job_result(
-            {
-                "job_id": job_request["job_id"],
-                "app_id": job_request["app_id"],
-                "project_id": job_request["project_id"],
-                "status": "blocked",
-                "completed_at": utc_now_iso(),
-                "result_payload": result_payload,
-            }
-        )
-    elif "recommended_tasks" in result_payload:
+    if "recommended_tasks" in result_payload:
         result_document = {
             "job_id": job_request["job_id"],
             "app_id": job_request["app_id"],
