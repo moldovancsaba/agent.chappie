@@ -310,34 +310,6 @@ function flashcardHeatStyle(card: FlashcardRow) {
   };
 }
 
-function synthesizeFlashcardsFromFactChips(factChips: WorkspaceSnapshot["fact_chips"]): FlashcardRow[] {
-  return factChips.map((chip, index) => ({
-    card_id: `factchip:${chip.fact_id}:${index}`,
-    project_id: "",
-    insight: chip.label,
-    implication: `${humanizeFactCategory(chip.category)} signal extracted from current source material.`,
-    potential_moves: [
-      "Review this signal against your live page copy.",
-      "If this is wrong, delete and teach the system.",
-      "Add a clearer source if the signal is too generic.",
-    ],
-    fact_refs: [chip.fact_id],
-    source_refs: chip.source_refs ?? [],
-    segment: chip.category || "market",
-    competitor: null,
-    channel: "key buyer-facing pages",
-    state: "active",
-    expires_at: null,
-    confidence: Number(chip.confidence) || 0,
-    impact_score: Math.round((Number(chip.confidence) || 0) * 100),
-    freshness_score: 0.5,
-    evidence_strength: 0.5,
-    rank_score: Number(chip.confidence) || 0,
-    quarantine_reason: null,
-    gate_flags: [],
-  }));
-}
-
 function formatTimestamp(value: string | null | undefined) {
   if (!value) {
     return "Not yet";
@@ -781,9 +753,6 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
   const [focusedSourceRef, setFocusedSourceRef] = useState<string | null>(null);
   const [editingIngestedSourceRef, setEditingIngestedSourceRef] = useState<string | null>(null);
   const [ingestedSourceLabel, setIngestedSourceLabel] = useState("");
-  const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
-  const [knowledgeDraft, setKnowledgeDraft] = useState({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
-  const [knowledgeDeleteReason, setKnowledgeDeleteReason] = useState<Record<string, string>>({});
   const [flashcardTeachNote, setFlashcardTeachNote] = useState<Record<string, string>>({});
   const [flashcardModalCard, setFlashcardModalCard] = useState<FlashcardRow | null>(null);
   const [flashcardModalMode, setFlashcardModalMode] = useState<FlashcardModalMode>("view");
@@ -1369,67 +1338,6 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     setManagementStatus({ tone: "success", message: "Job deleted." });
   }
 
-  async function updateKnowledgeCard(
-    knowledgeId: string,
-    payload: {
-      status: "confirmed" | "dismissed" | "edited" | "held" | "held_for_later" | "deleted_with_annotation";
-      confidence_source?: string;
-      original_payload?: Record<string, unknown>;
-      corrected_title?: string;
-      corrected_summary?: string;
-      corrected_implication?: string;
-      corrected_potential_moves?: string[];
-      corrected_items?: string[];
-    }
-  ) {
-    if (!projectId) {
-      return;
-    }
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      setManagementStatus({ tone: "error", message: body.detail ?? "The knowledge card could not be updated." });
-      return;
-    }
-    setWorkspace(body);
-    setEditingKnowledgeId(null);
-    setKnowledgeDraft({ title: "", summary: "", implication: "", potentialMoves: "", items: "" });
-    setManagementStatus({ tone: "success", message: "Knowledge updated." });
-  }
-
-  async function deleteKnowledgeCard(
-    knowledgeId: string,
-    payload: {
-      status: "deleted_silent" | "deleted_with_annotation";
-      original_payload?: Record<string, unknown>;
-      reason?: string;
-    }
-  ) {
-    if (!projectId) {
-      return;
-    }
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      setManagementStatus({ tone: "error", message: body.detail ?? "The knowledge card could not be deleted." });
-      return;
-    }
-    setWorkspace(body);
-    setKnowledgeDeleteReason((current) => ({ ...current, [knowledgeId]: "" }));
-    setManagementStatus({
-      tone: "success",
-      message: payload.status === "deleted_with_annotation" ? "Knowledge card deleted and recorded as guidance for future generations." : "Knowledge card deleted.",
-    });
-  }
-
   async function actOnFactFlashcard(factId: string, action: "forget" | "teach") {
     if (!projectId) {
       return;
@@ -1647,21 +1555,12 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
   const systemStatusLine = workspace?.recent_sources.length
     ? `${workspace.recent_sources.length} source${workspace.recent_sources.length === 1 ? "" : "s"} ingested • last update ${formatTimestamp(workspace.recent_sources[0]?.created_at)}`
     : "System ready — no sources ingested yet";
-  const filteredKnowledgeCards = focusedSourceRef
-    ? (workspace?.knowledge_cards ?? []).filter((card) => card.source_refs.includes(focusedSourceRef))
-    : (workspace?.knowledge_cards ?? []);
   const visibleFlashcardsRaw =
     workspace && workspace.visible_intelligence_cards.length
       ? workspace.visible_intelligence_cards
       : (workspace?.intelligence_cards ?? []).filter((card) => card.state !== "quarantine");
-  const fallbackFactChipCards =
-    !visibleFlashcardsRaw.length && (workspace?.fact_chips.length ?? 0) > 0
-      ? synthesizeFlashcardsFromFactChips(workspace?.fact_chips ?? [])
-      : [];
   const visibleFlashcards = visibleFlashcardsRaw.filter((card) => !heldFlashcardIds.includes(card.card_id));
-  const flashcardsForView = (visibleFlashcards.length ? visibleFlashcards : fallbackFactChipCards).filter(
-    (card) => !heldFlashcardIds.includes(card.card_id)
-  );
+  const flashcardsForView = visibleFlashcards;
   const quarantinedFlashcards = useMemo(
     () => (workspace?.intelligence_cards ?? []).filter((c) => c.state === "quarantine"),
     [workspace?.intelligence_cards],
@@ -1726,7 +1625,7 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     activeView === "checklist"
       ? `${tasks.length} ranked moves`
       : activeView === "know-more"
-        ? `${workspace?.fact_chips.length ?? 0} flashcards · ${filteredKnowledgeCards.length} cards`
+        ? `${flashcardsForView.length} flashcards`
         : `${workspace?.source_cards.length ?? 0} monitored sources`;
   const hasPendingWorkerQueue = (workspace?.source_cards ?? []).some(
     (s) => s.status === "queued_for_worker" || s.status === "processing_on_worker",
@@ -2243,7 +2142,7 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
                   ) : null}
                 </div>
                 <span className="section-count-badge">
-                  {workspace?.fact_chips.length ?? 0} flashcards · {filteredKnowledgeCards.length} cards
+                  {flashcardsForView.length} flashcards
                 </span>
               </div>
               {focusedSourceRef ? (

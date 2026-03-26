@@ -1076,30 +1076,6 @@ export async function deleteWorkerIngestedSource(
   );
 }
 
-export async function updateWorkerKnowledgeCard(
-  projectId: string,
-  knowledgeId: string,
-  payload: Record<string, unknown>
-) {
-  return sendWorkerManagementRequest(
-    `/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`,
-    "PATCH",
-    payload
-  );
-}
-
-export async function deleteWorkerKnowledgeCard(
-  projectId: string,
-  knowledgeId: string,
-  payload: Record<string, unknown>
-) {
-  return sendWorkerManagementRequest(
-    `/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(knowledgeId)}`,
-    "DELETE",
-    payload
-  );
-}
-
 export async function deleteWorkerDraftSegment(
   projectId: string,
   segmentId: string,
