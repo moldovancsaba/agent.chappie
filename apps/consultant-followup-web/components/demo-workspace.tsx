@@ -310,6 +310,34 @@ function flashcardHeatStyle(card: FlashcardRow) {
   };
 }
 
+function synthesizeFlashcardsFromFactChips(factChips: WorkspaceSnapshot["fact_chips"]): FlashcardRow[] {
+  return factChips.map((chip, index) => ({
+    card_id: `factchip:${chip.fact_id}:${index}`,
+    project_id: "",
+    insight: chip.label,
+    implication: `${humanizeFactCategory(chip.category)} signal extracted from current source material.`,
+    potential_moves: [
+      "Review this signal against your live page copy.",
+      "If this is wrong, delete and teach the system.",
+      "Add a clearer source if the signal is too generic.",
+    ],
+    fact_refs: [chip.fact_id],
+    source_refs: chip.source_refs ?? [],
+    segment: chip.category || "market",
+    competitor: null,
+    channel: "key buyer-facing pages",
+    state: "active",
+    expires_at: null,
+    confidence: Number(chip.confidence) || 0,
+    impact_score: Math.round((Number(chip.confidence) || 0) * 100),
+    freshness_score: 0.5,
+    evidence_strength: 0.5,
+    rank_score: Number(chip.confidence) || 0,
+    quarantine_reason: null,
+    gate_flags: [],
+  }));
+}
+
 function formatTimestamp(value: string | null | undefined) {
   if (!value) {
     return "Not yet";
@@ -1626,7 +1654,14 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     workspace && workspace.visible_intelligence_cards.length
       ? workspace.visible_intelligence_cards
       : (workspace?.intelligence_cards ?? []).filter((card) => card.state !== "quarantine");
+  const fallbackFactChipCards =
+    !visibleFlashcardsRaw.length && (workspace?.fact_chips.length ?? 0) > 0
+      ? synthesizeFlashcardsFromFactChips(workspace?.fact_chips ?? [])
+      : [];
   const visibleFlashcards = visibleFlashcardsRaw.filter((card) => !heldFlashcardIds.includes(card.card_id));
+  const flashcardsForView = (visibleFlashcards.length ? visibleFlashcards : fallbackFactChipCards).filter(
+    (card) => !heldFlashcardIds.includes(card.card_id)
+  );
   const quarantinedFlashcards = useMemo(
     () => (workspace?.intelligence_cards ?? []).filter((c) => c.state === "quarantine"),
     [workspace?.intelligence_cards],
@@ -2179,7 +2214,7 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
         {activeView === "know-more" ? (
         <section className="content-grid single">
           <div className="primary-column">
-            {hasPendingWorkerQueue && !visibleFlashcards.length && !(workspace?.fact_chips.length ?? 0) ? (
+            {hasPendingWorkerQueue && !flashcardsForView.length && !(workspace?.fact_chips.length ?? 0) ? (
               <div className="panel notice" style={{ marginBottom: "1rem" }}>
                 <strong>No flashcards yet</strong>
                 <p>
@@ -2222,18 +2257,18 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
                 </div>
               ) : null}
 
-              {visibleFlashcards.length ? (
+              {flashcardsForView.length ? (
                 <article className="intel-card">
                   <div className="operator-head">
                     <h3>Knowledge flashcards</h3>
-                    <span>{visibleFlashcards.length} visible cards (top 20%)</span>
+                    <span>{flashcardsForView.length} visible cards</span>
                   </div>
                   <p className="section-subcopy" style={{ marginTop: 0 }}>
                     Each flashcard is the smallest unit of knowledge we store and use when recommending your next best
                     actions. Only two operations are supported here, as agreed.
                   </p>
                   <div className="flashcard-deck">
-                    {visibleFlashcards.map((card) => (
+                    {flashcardsForView.map((card) => (
                       <article
                         className={`intel-card mini flashcard ${classifyOriginFromSourceRefs(card.source_refs, autoCollectedSourceRefs)}`}
                         key={card.card_id}
