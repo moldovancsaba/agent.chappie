@@ -819,8 +819,10 @@ export function DemoWorkspace({ forcedView, useIndividualPages = false }: DemoWo
     }
     setTaskDecisions(buildDefaultDecisions(jobResult.result_payload.recommended_tasks));
     setFeedbackStatus("");
-    setActiveView("checklist");
-  }, [jobResult]);
+    if (!forcedView) {
+      setActiveView("checklist");
+    }
+  }, [jobResult, forcedView]);
 
   useEffect(() => {
     if (!forcedView) {
