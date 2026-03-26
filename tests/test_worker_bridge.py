@@ -29,8 +29,10 @@ from agent_chappie.worker_bridge import (
     build_auto_research_sources,
     build_workspace_payload,
     infer_domain_from_sources,
+    competitor_operator_potential_moves,
     knowledge_card,
     normalize_operator_potential_moves,
+    plain_operator_potential_moves,
     process_job_payload,
     process_task_feedback,
     select_task_support_bundle,
@@ -1179,6 +1181,30 @@ class WorkerBridgeKnowledgeCardSanitizationTests(unittest.TestCase):
             },
         ]
         self.assertIsNone(strongest_competitor_excerpt(["CoachUp"], units))
+
+    def test_plain_operator_drops_kv_dumps(self) -> None:
+        out = plain_operator_potential_moves(
+            [
+                "unit_kind=offer · competitor=Florida · channel=homepage",
+                "Add a pricing FAQ that states your packaging clearly.",
+            ]
+        )
+        blob = " ".join(out).lower()
+        self.assertNotIn("unit_kind", blob)
+        self.assertIn("pricing", blob)
+
+    def test_normalize_operator_potential_moves_falls_back_when_corrected_is_kv_dump(self) -> None:
+        out = normalize_operator_potential_moves(
+            ["unit_kind=offer · competitor=x"],
+            ["Sanity move one", "Sanity move two", "Sanity move three"],
+        )
+        self.assertIn("Sanity", out[0])
+
+    def test_competitor_operator_moves_are_sentences_not_name_list(self) -> None:
+        out = competitor_operator_potential_moves(["CoachUp", "Superprof"])
+        self.assertEqual(len(out), 3)
+        self.assertTrue(any("side-by-side" in m.lower() for m in out))
+        self.assertFalse(out == ["CoachUp", "Superprof", "Mindbody"])
 
 
 if __name__ == "__main__":

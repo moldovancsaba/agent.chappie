@@ -88,6 +88,13 @@ GENERIC_ENTITY_WORDS = {
 }
 ENTITY_NOISE_WORDS = {
     "add",
+    "how",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
     "briefing",
     "buyers",
     "check",

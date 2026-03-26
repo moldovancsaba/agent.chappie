@@ -1512,36 +1512,6 @@ def build_knowledge_cards(
     fact_chips: list[dict[str, Any]],
     evidence_units: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    def kb_plain_potential_moves(items: list[str]) -> list[str]:
-        """Operator-facing suggestions only—no row[]= / source_ref= debug strings."""
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in items:
-            raw = str(item).strip()
-            if _looks_like_debug_potential_move_line(raw):
-                raw = _strip_debug_potential_move_prefix(raw)
-            c = _clip_task_copy(raw, 220)
-            if not c:
-                continue
-            key = c.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(c)
-            if len(out) >= 3:
-                return out
-        for filler in (
-            "Check this read against your live site and what prospects say on recent calls.",
-            "If it is wrong, use Decline and teach so the system learns your market.",
-            "Pick one concrete homepage or pricing tweak to test against this pattern.",
-        ):
-            if len(out) >= 3:
-                break
-            if filler.lower() not in seen:
-                seen.add(filler.lower())
-                out.append(filler)
-        return out[:3]
-
     feedback_lookup = {row["knowledge_id"]: row for row in feedback_rows}
     entities = unique_entities(source_rows, observation_rows, knowledge_rows)
     cards: list[dict[str, Any]] = []
@@ -1570,7 +1540,7 @@ def build_knowledge_cards(
             market_items or ["No market synthesis has been derived yet."],
             market_summary_insight(market_units, source_rows),
             market_summary_implication(market_units),
-            kb_plain_potential_moves(market_items or []),
+            plain_operator_potential_moves(market_items or []),
             observation_rows[:4],
             flatten_unit_source_refs(market_units[:5]) or [row["source_ref"] for row in source_rows[:4]],
             0.78 if source_rows else 0.22,
@@ -1603,7 +1573,7 @@ def build_knowledge_cards(
                 else "Add a memo, deck, or page that names who you actually compete with.",
                 220,
             ),
-            kb_plain_potential_moves(competitor_items[:6] or ["Name one or two competitors explicitly in your sources so we can track them."]),
+            competitor_operator_potential_moves(competitor_items),
             observation_rows[:4],
             competitor_source_refs or flatten_fact_source_refs(facts_by_category.get("competitor", [])) or [row["source_ref"] for row in source_rows[:4]],
             0.74 if competitor_items else 0.28,
@@ -1645,7 +1615,7 @@ def build_knowledge_cards(
                 else "Upload or paste material that states fees, plans, or packaging more explicitly.",
                 220,
             ),
-            kb_plain_potential_moves(pricing_items[:5] or ["Add clearer pricing or packaging language if this card feels empty."]),
+            plain_operator_potential_moves(pricing_items[:5] or ["Add clearer pricing or packaging language if this card feels empty."]),
             [row for row in observation_rows if row["signal_type"] == "pricing_change"][:4],
             flatten_unit_source_refs(pricing_units[:5]) or flatten_fact_source_refs(pricing_facts[:5]) or source_refs_for_items(pricing_items[:5], source_rows),
             0.71 if pricing_items else 0.24,
@@ -1685,7 +1655,7 @@ def build_knowledge_cards(
                 else "Paste homepage, sales deck, or battlecard excerpts so we can read your positioning.",
                 220,
             ),
-            kb_plain_potential_moves(positioning_items[:5] or ["Add copy that states how you position against alternatives."]),
+            plain_operator_potential_moves(positioning_items[:5] or ["Add copy that states how you position against alternatives."]),
             [row for row in observation_rows if row["signal_type"] in {"offer", "messaging_shift"}][:4],
             flatten_unit_source_refs(positioning_units[:5]) or flatten_fact_source_refs(positioning_facts[:5]) or source_refs_for_items(positioning_items[:5], source_rows),
             0.73 if positioning_items else 0.25,
@@ -1724,7 +1694,7 @@ def build_knowledge_cards(
                 else "Include customer stories, metrics, or third-party validation in the next upload.",
                 220,
             ),
-            kb_plain_potential_moves(proof_items[:5] or ["Add testimonials, logos, or case-study language if proof looks thin."]),
+            plain_operator_potential_moves(proof_items[:5] or ["Add testimonials, logos, or case-study language if proof looks thin."]),
             [row for row in observation_rows if row["signal_type"] == "proof_signal"][:4],
             flatten_unit_source_refs(proof_units[:5]) or flatten_fact_source_refs(proof_facts[:5]) or source_refs_for_items(proof_items[:5], source_rows),
             0.69 if proof_items else 0.21,
@@ -1761,7 +1731,7 @@ def build_knowledge_cards(
                 "These are prompts, not verdicts: fix them with edits, new uploads, or Decline and teach when we misread you.",
                 200,
             ),
-            kb_plain_potential_moves(open_questions),
+            plain_operator_potential_moves(open_questions),
             observation_rows[:2],
             [row["source_ref"] for row in source_rows[:3]],
             0.55,
@@ -4969,32 +4939,135 @@ def _looks_like_debug_potential_move_line(line: str) -> bool:
     return bool(_DEBUG_POTENTIAL_MOVE_PREFIX.match(str(line).strip()))
 
 
-def normalize_operator_potential_moves(corrected: Any, fresh: list[str]) -> list[str]:
-    """Use feedback-corrected moves when sane; never emit row[]= debug lines."""
-    fresh_list = [str(x).strip() for x in fresh if str(x).strip()]
-    parsed = parse_json_list(corrected) if corrected is not None else []
-    if not parsed:
-        return fresh_list[:3]
+def _looks_like_internal_kv_potential_move(line: str) -> bool:
+    """Structured debug blobs (saved feedback, tooling, or model drift)—not operator copy."""
+    s = str(line).strip().lower()
+    if not s:
+        return True
+    if "unit_kind=" in s:
+        return True
+    if "source_ref=" in s or "auto_source_" in s:
+        return True
+    if "gap=" in s and "status=" in s:
+        return True
+    if re.search(r"\b\w+_ref\s*=", s):
+        return True
+    return False
 
-    cleaned: list[str] = []
+
+def sanitize_operator_potential_move_lines(items: list[str]) -> list[str]:
+    """Deduped, clipped lines with debug/kv junk removed—no filler padding (for feedback overlay)."""
+    out: list[str] = []
     seen: set[str] = set()
-    for raw in parsed:
-        line = str(raw).strip()
-        if not line:
+    for item in items:
+        raw = str(item).strip()
+        if _looks_like_internal_kv_potential_move(raw):
             continue
-        if _looks_like_debug_potential_move_line(line):
-            line = _strip_debug_potential_move_prefix(line)
-        if not line or _looks_like_debug_potential_move_line(line):
+        if _looks_like_debug_potential_move_line(raw):
+            raw = _strip_debug_potential_move_prefix(raw)
+        if not raw or _looks_like_internal_kv_potential_move(raw):
             continue
-        key = line.lower()
+        c = _clip_task_copy(raw, 220)
+        if not c:
+            continue
+        key = c.lower()
         if key in seen:
             continue
         seen.add(key)
-        cleaned.append(_clip_task_copy(line, 220))
-        if len(cleaned) >= 3:
+        out.append(c)
+        if len(out) >= 3:
             break
+    return out[:3]
 
-    return cleaned[:3] if cleaned else fresh_list[:3]
+
+def plain_operator_potential_moves(items: list[str]) -> list[str]:
+    """Up to three short operator-facing lines; drops row[]= prefixes and internal key=value dumps."""
+    out = sanitize_operator_potential_move_lines(items)
+    seen = {x.lower() for x in out}
+    for filler in (
+        "Check this read against your live site and what prospects say on recent calls.",
+        "If it is wrong, use Decline and teach so the system learns your market.",
+        "Pick one concrete homepage or pricing tweak to test against this pattern.",
+    ):
+        if len(out) >= 3:
+            break
+        if filler.lower() not in seen:
+            seen.add(filler.lower())
+            out.append(filler)
+    return out[:3]
+
+
+def _competitor_label_is_junk(label: str) -> bool:
+    lo = label.strip().lower()
+    if not lo:
+        return True
+    if is_legal_or_evidentiary_context(lo):
+        return True
+    if re.search(r"\b(dui|manslaughter|expunge|probation|plaintiff|defendant|hearing)\b", lo):
+        return True
+    return False
+
+
+def competitor_operator_potential_moves(competitor_names: list[str]) -> list[str]:
+    """Action sentences—never raw name lists that duplicate the card's items."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in competitor_names:
+        n = clean_entity(str(raw)) or str(raw).strip()
+        if not n or len(n) < 2:
+            continue
+        if _competitor_label_is_junk(n):
+            continue
+        lk = n.lower()
+        if lk in seen:
+            continue
+        seen.add(lk)
+        names.append(n)
+        if len(names) >= 6:
+            break
+    if not names:
+        return plain_operator_potential_moves(
+            ["Name one or two competitors explicitly in your sources so we can track them."]
+        )
+    a = names[0]
+    chunks = [
+        _clip_task_copy(
+            f"Pull a side-by-side: how {a} frames proof, pricing, and onboarding versus your site—then fix the weakest gap.",
+            220,
+        ),
+    ]
+    if len(names) >= 2:
+        b = names[1]
+        chunks.append(
+            _clip_task_copy(
+                f"Add one comparison-ready block for what buyers learn from {b}—without mirror-copying their pages.",
+                220,
+            )
+        )
+    else:
+        chunks.append(
+            "Map which page on your site should answer the “why not them?” question for this name."
+        )
+    if len(names) >= 3:
+        chunks.append(
+            _clip_task_copy(
+                f"You surfaced {len(names)} rival names; confirm priority with sales before investing in battlecards.",
+                220,
+            )
+        )
+    else:
+        chunks.append("Decline or teach any extracted name that is noise—not every capitalized phrase is a competitor.")
+    return plain_operator_potential_moves(chunks)
+
+
+def normalize_operator_potential_moves(corrected: Any, fresh: list[str]) -> list[str]:
+    """Prefer sanitized user-corrected moves (no forced padding); else freshly built lines (with fillers)."""
+    fresh_ok = plain_operator_potential_moves(fresh)
+    parsed = parse_json_list(corrected) if corrected is not None else []
+    if not parsed:
+        return fresh_ok
+    corrected_ok = sanitize_operator_potential_move_lines([str(x).strip() for x in parsed if str(x).strip()])
+    return corrected_ok if corrected_ok else fresh_ok
 
 
 def knowledge_card(
@@ -5504,6 +5577,18 @@ def dedupe_card_items(items: list[str], blocked_signatures: set[str]) -> list[st
     return deduped
 
 
+def _append_competitor_card_value(values: list[str], seen: set[str], label: str | None) -> None:
+    if not label:
+        return
+    if _competitor_label_is_junk(label):
+        return
+    lk = label.lower()
+    if lk in seen:
+        return
+    seen.add(lk)
+    values.append(label)
+
+
 def competitor_card_items(
     evidence_units: list[dict[str, Any]],
     competitor_facts: list[dict[str, Any]],
@@ -5513,19 +5598,13 @@ def competitor_card_items(
     seen: set[str] = set()
     for unit in evidence_units:
         competitor = clean_entity(str(unit.get("competitor") or ""))
-        if competitor and competitor.lower() not in seen:
-            seen.add(competitor.lower())
-            values.append(competitor)
+        _append_competitor_card_value(values, seen, competitor)
     for fact in competitor_facts:
         label = clean_entity(str(fact.get("label") or ""))
-        if label and label.lower() not in seen:
-            seen.add(label.lower())
-            values.append(label)
+        _append_competitor_card_value(values, seen, label)
     for entity in entities:
         label = clean_entity(entity)
-        if label and label.lower() not in seen:
-            seen.add(label.lower())
-            values.append(label)
+        _append_competitor_card_value(values, seen, label)
     return values[:6]
 
 

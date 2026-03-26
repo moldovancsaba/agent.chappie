@@ -558,6 +558,29 @@ const GENERIC_COMPETITOR_POTENTIAL_MOVES = [
   "Decline or teach any name the system got wrong.",
 ];
 
+const GENERIC_KNOWLEDGE_POTENTIAL_MOVES = [
+  "Check this read against your live site and what prospects say on recent calls.",
+  "If it is wrong, use Decline and teach so the system learns your market.",
+  "Pick one concrete homepage or pricing tweak to test against this pattern.",
+];
+
+function looksLikeInternalPotentialMoveDebug(s: string): boolean {
+  const t = s.toLowerCase();
+  if (t.includes("unit_kind=")) {
+    return true;
+  }
+  if (t.includes("source_ref=") || t.includes("auto_source_")) {
+    return true;
+  }
+  if (t.includes("gap=") && t.includes("status=")) {
+    return true;
+  }
+  if (/\b\w+_ref\s*=/.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 function sanitizePotentialMovesForDisplay(moves: string[], knowledgeId: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -567,8 +590,11 @@ function sanitizePotentialMovesForDisplay(moves: string[], knowledgeId: string):
     if (/^\s*row\[\d+\]\s*=/i.test(raw)) {
       sawRowPrefix = true;
     }
+    if (looksLikeInternalPotentialMoveDebug(raw)) {
+      continue;
+    }
     const s = stripLegacyPotentialMoveRowPrefix(raw);
-    if (!s) {
+    if (!s || looksLikeInternalPotentialMoveDebug(s)) {
       continue;
     }
     const k = s.toLowerCase();
@@ -581,10 +607,18 @@ function sanitizePotentialMovesForDisplay(moves: string[], knowledgeId: string):
       break;
     }
   }
-  if (out.length === 0 && sawRowPrefix && knowledgeId === "competitors_detected") {
+  if (out.length > 0) {
+    return out;
+  }
+  if (sawRowPrefix && knowledgeId === "competitors_detected") {
     return GENERIC_COMPETITOR_POTENTIAL_MOVES.slice(0, 3);
   }
-  return out.length ? out : moves;
+  if (moves.some((m) => looksLikeInternalPotentialMoveDebug(String(m)))) {
+    return knowledgeId === "competitors_detected"
+      ? GENERIC_COMPETITOR_POTENTIAL_MOVES.slice(0, 3)
+      : GENERIC_KNOWLEDGE_POTENTIAL_MOVES.slice(0, 3);
+  }
+  return moves;
 }
 
 /** Competitor cards sometimes picked auto-research legal blogs; hide clearly wrong excerpts client-side. */
