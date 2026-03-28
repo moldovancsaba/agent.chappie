@@ -39,20 +39,24 @@ class OllamaClient:
                 "stream": False,
             }
         ).encode("utf-8")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        gateway_secret = os.environ.get("MEIMEI_LLM_GATEWAY_SECRET", "").strip()
+        if gateway_secret:
+            headers["x-meimei-llm-secret"] = gateway_secret
         request = Request(
             self.url,
             data=payload_bytes,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError) as exc:
-            raise RuntimeError(f"Failed to reach Ollama at {self.url}: {exc}") from exc
+            raise RuntimeError(f"Failed to reach model endpoint at {self.url}: {exc}") from exc
         text = payload.get("response")
         if not isinstance(text, str):
-            raise ValueError("Ollama response did not contain a string 'response' field")
+            raise ValueError("Model response did not contain a string 'response' field")
         return text
 
 
